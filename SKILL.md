@@ -1,3 +1,8 @@
+---
+name: git-workflow
+description: "Git workflow best practices for teams and CI/CD pipelines. This skill should be used when establishing branching strategies (Git Flow, GitHub Flow, Trunk-based), implementing Conventional Commits for semantic versioning, configuring pull request workflows, or integrating Git with CI/CD systems. Covers branch protection, code review processes, GitHub Actions, GitLab CI, and advanced Git operations. By Netresearch."
+---
+
 # Git Workflow Skill
 
 Expert patterns for Git version control workflows including branching strategies, commit conventions, collaborative workflows, and CI/CD integration.
