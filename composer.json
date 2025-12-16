@@ -1,0 +1,20 @@
+{
+  "name": "netresearch/agent-git-workflow",
+  "description": "Git workflow best practices for teams and CI/CD pipelines. This skill should be used when establishing branching strategies (Git Flow, GitHub Flow, Trunk-based), implementing Conventional Commits for ",
+  "type": "ai-agent-skill",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Netresearch DTT GmbH",
+      "email": "plugins@netresearch.de",
+      "homepage": "https://www.netresearch.de/",
+      "role": "Manufacturer"
+    }
+  ],
+  "require": {
+    "netresearch/composer-agent-skill-plugin": "*"
+  },
+  "extra": {
+    "ai-agent-skill": "SKILL.md"
+  }
+}
