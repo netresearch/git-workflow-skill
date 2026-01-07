@@ -29,13 +29,15 @@ jobs:
       - name: Create skill package
         run: |
           mkdir -p dist
-          cp SKILL.md dist/
+          # Copy skill files from new structure
+          cp skills/git-workflow/SKILL.md dist/
           cp LICENSE dist/
-          [ -d "references" ] && cp -r references dist/
-          [ -d "scripts" ] && cp -r scripts dist/
-          [ -d "assets" ] && cp -r assets dist/
-          [ -d "templates" ] && cp -r templates dist/
-          [ -d "skills" ] && cp -r skills dist/
+          [ -d "skills/git-workflow/references" ] && cp -r skills/git-workflow/references dist/
+          [ -d "skills/git-workflow/scripts" ] && cp -r skills/git-workflow/scripts dist/
+          [ -d "skills/git-workflow/assets" ] && cp -r skills/git-workflow/assets dist/
+          [ -d "skills/git-workflow/templates" ] && cp -r skills/git-workflow/templates dist/
+          # Include plugin manifest
+          [ -d ".claude-plugin" ] && cp -r .claude-plugin dist/
           cd dist
           zip -r ../git-workflow-${{ steps.version.outputs.version }}.zip .
           tar -czvf ../git-workflow-${{ steps.version.outputs.version }}.tar.gz .
