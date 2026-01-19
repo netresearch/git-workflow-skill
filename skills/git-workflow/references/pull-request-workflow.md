@@ -514,3 +514,167 @@ gh pr list --state merged --json number,title,createdAt,mergedAt,additions,delet
 # PR age analysis
 gh pr list --state open --json number,createdAt | jq 'map({number, age: (now - (.createdAt | fromdateiso8601)) / 86400})'
 ```
+
+## Review Thread Management
+
+### Replying to Review Threads
+
+When addressing review feedback, reply directly to the thread (not a new comment):
+
+```bash
+# Find the thread ID for a comment
+gh api repos/OWNER/REPO/pulls/NUMBER/comments \
+  --jq '.[] | {id, node_id, body}'
+
+# Reply to a review thread via GraphQL
+gh api graphql -f query='
+  mutation($body: String!, $threadId: ID!) {
+    addPullRequestReviewThreadReply(input: {
+      body: $body,
+      pullRequestReviewThreadId: $threadId
+    }) {
+      comment { id }
+    }
+  }' \
+  -f body="Fixed in commit abc123" \
+  -f threadId="PRRT_xxxxx"
+```
+
+### Resolving Review Threads
+
+After addressing feedback and pushing fixes:
+
+```bash
+# Resolve a review thread
+gh api graphql -f query='
+  mutation($threadId: ID!) {
+    resolveReviewThread(input: {threadId: $threadId}) {
+      thread { isResolved }
+    }
+  }' \
+  -f threadId="PRRT_xxxxx"
+
+# List unresolved threads
+gh api graphql -f query='
+  query($owner: String!, $repo: String!, $pr: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pr) {
+        reviewThreads(first: 50) {
+          nodes {
+            id
+            isResolved
+            comments(first: 1) {
+              nodes { body }
+            }
+          }
+        }
+      }
+    }
+  }' -f owner=OWNER -f repo=REPO -F pr=NUMBER
+```
+
+## Merge Requirements Checklist
+
+Before merging any PR, verify ALL requirements:
+
+### Pre-Merge Checklist
+
+- [ ] **All review threads resolved** - No unresolved conversations
+- [ ] **Copilot review complete** (if assigned) - Wait for automated review
+- [ ] **Branch rebased on target** - No merge commits in PR branch
+- [ ] **All CI checks pass** - Green status on all required checks
+- [ ] **Signed commits** - All commits in PR are signed
+
+### Check Programmatically
+
+```bash
+# Get PR merge requirements status
+gh pr view NUMBER --json \
+  reviewDecision,\
+  mergeStateStatus,\
+  mergeable,\
+  statusCheckRollup
+
+# Expected for merge-ready:
+# reviewDecision: APPROVED
+# mergeStateStatus: CLEAN
+# mergeable: MERGEABLE
+# statusCheckRollup: all SUCCESS
+```
+
+## Signed Commits with Rebase Merge
+
+### The Problem
+
+When a repository requires:
+1. Signed commits AND
+2. Only rebase merge (no merge commits, no squash)
+
+GitHub **cannot** sign rebased commits automatically:
+
+```bash
+gh pr merge 123 --rebase
+# Error: Base branch requires signed commits.
+# Rebase merges cannot be automatically signed by GitHub.
+```
+
+### The Solution: Local Fast-Forward Merge
+
+Since commits are already signed locally, merge locally and push:
+
+```bash
+# 1. Ensure local main is up to date
+git checkout main
+git pull origin main
+
+# 2. Verify feature branch is rebased (should be fast-forward)
+git log --oneline main..feature-branch
+
+# 3. Fast-forward merge (preserves original signatures)
+git merge feature-branch --ff-only
+
+# 4. Push to main
+git push origin main
+
+# 5. Close the PR (it will auto-close if commits match)
+# Or manually: gh pr close NUMBER
+```
+
+### Why This Works
+
+- Original commits retain their GPG/SSH signatures
+- Fast-forward merge doesn't create new commits
+- GitHub recognizes the commits and auto-closes the PR
+
+### When to Use
+
+| Scenario | Solution |
+|----------|----------|
+| Signed commits required + squash allowed | `gh pr merge --squash` (GitHub signs) |
+| Signed commits required + merge commit allowed | `gh pr merge --merge` (GitHub signs merge commit) |
+| Signed commits required + rebase only | Local fast-forward merge (this solution) |
+
+### Automation Option
+
+```bash
+#!/bin/bash
+# merge-signed-pr.sh - Merge PR with signed commits via fast-forward
+
+PR_NUMBER=$1
+BRANCH=$(gh pr view $PR_NUMBER --json headRefName -q '.headRefName')
+
+git fetch origin
+git checkout main
+git pull origin main
+
+# Verify it's a fast-forward
+if ! git merge-base --is-ancestor main origin/$BRANCH; then
+    echo "Error: Branch needs rebase first"
+    exit 1
+fi
+
+git merge origin/$BRANCH --ff-only
+git push origin main
+
+echo "PR #$PR_NUMBER merged via fast-forward"
+```
