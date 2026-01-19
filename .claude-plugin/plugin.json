@@ -1,14 +1,15 @@
 {
   "name": "git-workflow",
-  "version": "1.2.0",
-  "description": "Git workflow best practices for teams and CI/CD",
+  "version": "1.3.0",
+  "description": "Git workflow best practices with commit validation hooks",
   "repository": "https://github.com/netresearch/git-workflow-skill",
   "license": "MIT",
   "author": {
     "name": "Netresearch DTT GmbH",
-    "email": "info@netresearch.de"
+    "url": "https://www.netresearch.de"
   },
   "skills": [
     "./skills/git-workflow"
-  ]
+  ],
+  "hooks": "./hooks/hooks.json"
 }

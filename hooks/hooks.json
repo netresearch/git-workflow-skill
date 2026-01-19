@@ -1,0 +1,17 @@
+{
+  "description": "Git workflow hooks for commit message validation and best practices",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/validate_git_command.py",
+            "timeout": 2
+          }
+        ]
+      }
+    ]
+  }
+}
