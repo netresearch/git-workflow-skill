@@ -1,0 +1,171 @@
+# Checkpoints for git-workflow skill
+# Focuses on git repository hygiene and workflow best practices
+
+version: 1
+skill_id: git-workflow
+
+mechanical:
+  # === GITIGNORE ===
+  - id: GW-01
+    type: file_exists
+    target: .gitignore
+    severity: error
+    desc: ".gitignore must exist to prevent committing unwanted files"
+
+  - id: GW-02
+    type: contains
+    target: .gitignore
+    pattern: ".env"
+    severity: warning
+    desc: ".gitignore should exclude .env files"
+
+  - id: GW-03
+    type: contains
+    target: .gitignore
+    pattern: "vendor"
+    severity: warning
+    desc: ".gitignore should exclude vendor directory"
+
+  - id: GW-04
+    type: contains
+    target: .gitignore
+    pattern: "node_modules"
+    severity: info
+    desc: ".gitignore should exclude node_modules if using npm"
+
+  # === PR TEMPLATE ===
+  - id: GW-05
+    type: file_exists
+    target: .github/PULL_REQUEST_TEMPLATE.md
+    severity: warning
+    desc: "PR template should exist for consistent pull requests"
+
+  # === CODEOWNERS ===
+  - id: GW-06
+    type: file_exists
+    target: .github/CODEOWNERS
+    severity: warning
+    desc: "CODEOWNERS should exist for automatic review assignments"
+
+  - id: GW-07
+    type: file_exists
+    target: CODEOWNERS
+    severity: info
+    desc: "CODEOWNERS in root (alternative location)"
+    # Note: This is an alternative to .github/CODEOWNERS
+
+  # === BRANCH PROTECTION INDICATORS ===
+  - id: GW-08
+    type: gh_api
+    endpoint: repos/{owner}/{repo}/branches/main/protection
+    json_path: ".required_status_checks"
+    severity: warning
+    desc: "Main branch should have status check protection enabled"
+
+  - id: GW-09
+    type: gh_api
+    endpoint: repos/{owner}/{repo}/branches/main/protection
+    json_path: ".required_pull_request_reviews"
+    severity: warning
+    desc: "Main branch should require PR reviews before merging"
+
+  - id: GW-10
+    type: gh_api
+    endpoint: repos/{owner}/{repo}/branches/main/protection
+    json_path: ".enforce_admins.enabled"
+    severity: info
+    desc: "Branch protection should apply to admins too"
+
+  # === SIGNED COMMITS REQUIREMENT ===
+  - id: GW-11
+    type: gh_api
+    endpoint: repos/{owner}/{repo}/branches/main/protection
+    json_path: ".required_signatures.enabled"
+    severity: info
+    desc: "Main branch should require signed commits"
+
+llm_reviews:
+  # === CONVENTIONAL COMMITS ===
+  - id: GW-20
+    domain: git-workflow
+    prompt: |
+      Analyze the recent commit history (last 20 commits) for conventional commit format usage.
+
+      Conventional commits follow the pattern: <type>(<scope>): <description>
+      Types include: feat, fix, docs, style, refactor, perf, test, chore, ci, build
+
+      Check:
+      1. What percentage of commits follow conventional commit format?
+      2. Are commit messages descriptive (not just "fix", "update", etc.)?
+      3. Are there any empty or single-word commit messages?
+
+      Use `git log --oneline -20` to analyze.
+
+      Report:
+      - Pass if >80% follow conventional format
+      - Warn if 50-80% follow format
+      - Fail if <50% follow format
+    severity: warning
+    desc: "Recent commits should follow conventional commit format"
+
+  - id: GW-21
+    domain: git-workflow
+    prompt: |
+      Check if the repository has signed commits.
+
+      Use `git log --show-signature -5` to check recent commits for GPG/SSH signatures.
+
+      Report:
+      - How many of the last 5 commits are signed?
+      - Are all commits from the same author signed?
+      - Pass if all commits are signed, warn if some, fail if none
+    severity: info
+    desc: "Commits should be GPG/SSH signed for authenticity"
+
+  - id: GW-22
+    domain: git-workflow
+    prompt: |
+      Analyze commit message quality in the last 10 commits.
+
+      Good commit messages:
+      - Start with a verb in imperative mood (Add, Fix, Update, etc.)
+      - Are 50-72 characters for the subject line
+      - Explain "why" not just "what"
+      - Reference issues when applicable (Fixes #123, Closes #456)
+
+      Use `git log --format="%s" -10` to get subject lines.
+
+      Report on overall quality and specific improvements needed.
+    severity: info
+    desc: "Commit messages should be clear and follow best practices"
+
+  - id: GW-23
+    domain: git-workflow
+    prompt: |
+      Review the CODEOWNERS file if it exists.
+
+      Check:
+      1. Does it cover critical paths (src/, .github/, etc.)?
+      2. Are the owners valid GitHub usernames or teams?
+      3. Is the syntax correct (path followed by @owner)?
+      4. Are there any overly broad patterns like "* @owner"?
+
+      Report issues or confirm proper setup.
+    severity: warning
+    desc: "CODEOWNERS should properly cover critical code paths"
+
+  - id: GW-24
+    domain: git-workflow
+    prompt: |
+      Review the PR template (.github/PULL_REQUEST_TEMPLATE.md) if it exists.
+
+      A good PR template should include:
+      - Description/Summary section
+      - Type of change (feature, fix, breaking, etc.)
+      - Testing checklist
+      - Related issues/tickets
+      - Review guidelines or checklist
+
+      Report on completeness and suggest improvements.
+    severity: info
+    desc: "PR template should guide contributors effectively"
