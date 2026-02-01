@@ -772,6 +772,41 @@ gh api graphql -f query='
   }' -f owner=OWNER -f repo=REPO -F pr=NUMBER
 ```
 
+### Handling Many Review Threads (Pagination)
+
+**Critical:** GitHub GraphQL API has a limit of 100 items per page. For PRs with many
+review comments (e.g., 127+ threads from automated reviewers), you MUST use pagination:
+
+```bash
+# Fetch ALL threads with pagination (handles >100 threads)
+gh api graphql -f query='
+  query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pr) {
+        reviewThreads(first: 100, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            id
+            isResolved
+            comments(first: 1) {
+              nodes { body path }
+            }
+          }
+        }
+      }
+    }
+  }' -f owner=OWNER -f repo=REPO -F pr=NUMBER
+
+# Then fetch next page using endCursor:
+# -f cursor="Y3Vyc29yOnYyOpHOABCD..."
+```
+
+**Real-world lesson (PR #575):** Automated reviewers can generate 100+ comment threads.
+Without pagination, only the first 100 threads are returned, leaving others unaddressed.
+
 ## Diagnosing CI Failures (Annotations First)
 
 > Failure first-step, not pre-merge gate. The Merge Gate below uses `annotations_count` as a *warnings present?* signal after success. This section is the inverse: when a workflow has *failed* and you don't yet know why, read the annotation text **first**, before any other diagnostic action.
