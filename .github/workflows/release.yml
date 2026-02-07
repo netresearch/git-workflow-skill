@@ -15,39 +15,61 @@ jobs:
 
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
         with:
           egress-policy: audit
 
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Get version from tag
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: echo "version=${{GITHUB_REF#refs/tags/}}" >> $GITHUB_OUTPUT
 
-      - name: Create skill package
+      - name: Create git-workflow skill package
         run: |
-          mkdir -p dist
-          # Copy skill files from new structure
-          cp skills/git-workflow/SKILL.md dist/
-          cp LICENSE dist/
-          [ -d "skills/git-workflow/references" ] && cp -r skills/git-workflow/references dist/
-          [ -d "skills/git-workflow/scripts" ] && cp -r skills/git-workflow/scripts dist/
-          [ -d "skills/git-workflow/assets" ] && cp -r skills/git-workflow/assets dist/
-          [ -d "skills/git-workflow/templates" ] && cp -r skills/git-workflow/templates dist/
+          mkdir -p dist-skill
+          cp skills/git-workflow/SKILL.md dist-skill/
+          cp LICENSE dist-skill/
+          [ -d "skills/git-workflow/references" ] && cp -r skills/git-workflow/references dist-skill/
+          [ -d "skills/git-workflow/scripts" ] && cp -r skills/git-workflow/scripts dist-skill/
+          [ -d "skills/git-workflow/assets" ] && cp -r skills/git-workflow/assets dist-skill/
+          [ -d "skills/git-workflow/templates" ] && cp -r skills/git-workflow/templates dist-skill/
+          [ -d "skills/git-workflow/examples" ] && cp -r skills/git-workflow/examples dist-skill/
+          [ -f "skills/git-workflow/checkpoints.yaml" ] && cp skills/git-workflow/checkpoints.yaml dist-skill/
+          cd dist-skill
+          zip -r ../git-workflow-skill-${{ steps.version.outputs.version }}.zip .
+          tar -czvf ../git-workflow-skill-${{ steps.version.outputs.version }}.tar.gz .
+
+      - name: Create git-workflow plugin package
+        run: |
+          mkdir -p dist-plugin
+          # Include git-workflow skill files
+          mkdir -p dist-plugin/skills/git-workflow
+          cp skills/git-workflow/SKILL.md dist-plugin/skills/git-workflow/
+          [ -d "skills/git-workflow/references" ] && cp -r skills/git-workflow/references dist-plugin/skills/git-workflow/
+          [ -d "skills/git-workflow/scripts" ] && cp -r skills/git-workflow/scripts dist-plugin/skills/git-workflow/
+          [ -d "skills/git-workflow/assets" ] && cp -r skills/git-workflow/assets dist-plugin/skills/git-workflow/
+          [ -d "skills/git-workflow/templates" ] && cp -r skills/git-workflow/templates dist-plugin/skills/git-workflow/
+          [ -d "skills/git-workflow/examples" ] && cp -r skills/git-workflow/examples dist-plugin/skills/git-workflow/
+          [ -f "skills/git-workflow/checkpoints.yaml" ] && cp skills/git-workflow/checkpoints.yaml dist-plugin/skills/git-workflow/
+          cp LICENSE dist-plugin/
           # Include plugin manifest
-          [ -d ".claude-plugin" ] && cp -r .claude-plugin dist/
-          cd dist
-          zip -r ../git-workflow-${{ steps.version.outputs.version }}.zip .
-          tar -czvf ../git-workflow-${{ steps.version.outputs.version }}.tar.gz .
+          [ -d ".claude-plugin" ] && cp -r .claude-plugin dist-plugin/
+          [ -d "hooks" ] && cp -r hooks dist-plugin/
+          [ -d "scripts" ] && cp -r scripts dist-plugin/ && find dist-plugin/scripts -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+          cd dist-plugin
+          zip -r ../git-workflow-plugin-${{ steps.version.outputs.version }}.zip .
+          tar -czvf ../git-workflow-plugin-${{ steps.version.outputs.version }}.tar.gz .
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           files: |
-            git-workflow-${{ steps.version.outputs.version }}.zip
-            git-workflow-${{ steps.version.outputs.version }}.tar.gz
+            git-workflow-skill-${{ steps.version.outputs.version }}.zip
+            git-workflow-skill-${{ steps.version.outputs.version }}.tar.gz
+            git-workflow-plugin-${{ steps.version.outputs.version }}.zip
+            git-workflow-plugin-${{ steps.version.outputs.version }}.tar.gz
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
