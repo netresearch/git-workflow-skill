@@ -583,6 +583,7 @@ Before merging any PR, verify ALL requirements:
 - [ ] **Copilot review complete** (if assigned) - Wait for automated review
 - [ ] **Branch rebased on target** - No merge commits in PR branch
 - [ ] **All CI checks pass** - Green status on all required checks
+- [ ] **No CI annotations** - Check job annotations, not just pass/fail (see below)
 - [ ] **Signed commits** - All commits in PR are signed
 
 ### Check Programmatically
@@ -600,7 +601,13 @@ gh pr view NUMBER --json \
 # mergeStateStatus: CLEAN
 # mergeable: MERGEABLE
 # statusCheckRollup: all SUCCESS
+
+# Check for CI annotations (warnings that don't fail the check)
+gh api "repos/OWNER/REPO/commits/SHA/check-runs" \
+  --jq '.check_runs[] | select(.output.annotations_count > 0) | {name: .name, annotations: .output.annotations_count}'
 ```
+
+> **Important:** CI checks can PASS while emitting warning annotations (e.g., actionlint/shellcheck via reviewdog, CodeQL deprecation notices). These are invisible in the PR summary view but visible in the job detail "Annotations" section. Always check for annotations before declaring a PR clean.
 
 ## Signed Commits with Rebase Merge
 
