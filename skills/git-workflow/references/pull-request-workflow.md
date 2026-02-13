@@ -603,7 +603,7 @@ gh pr view NUMBER --json \
 # statusCheckRollup: all SUCCESS
 
 # Check for CI annotations (warnings that don't fail the check)
-gh api "repos/OWNER/REPO/commits/SHA/check-runs" \
+gh api "repos/{owner}/{repo}/commits/SHA/check-runs" \
   --jq '.check_runs[] | select(.output.annotations_count > 0) | {name: .name, annotations: .output.annotations_count}'
 ```
 
