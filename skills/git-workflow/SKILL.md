@@ -1,6 +1,6 @@
 ---
 name: git-workflow
-description: "Agent Skill: Git workflow best practices for teams and CI/CD. This skill should be used when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, managing PR review threads, merging PRs with signed commits, handling merge conflicts, or integrating Git with CI/CD. By Netresearch."
+description: "Use when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, managing PR review threads, merging PRs with signed commits, handling merge conflicts, or integrating Git with CI/CD."
 ---
 
 # Git Workflow Skill
