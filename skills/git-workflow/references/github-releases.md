@@ -224,6 +224,43 @@ attempts during troubleshooting.
 
 ---
 
+## Multi-Branch Releases ("Latest" Badge)
+
+### Problem
+
+GitHub assigns the **"Latest"** badge by **creation timestamp**, NOT by semantic version. Creating a `v11.0.17` release *after* `v13.5.0` will steal the "Latest" badge from v13.5.0.
+
+### Rule
+
+**ALWAYS use `--latest=false`** when releasing from non-default branches (maintenance, LTS, hotfix):
+
+```bash
+# Releasing from a maintenance branch (e.g., TYPO3_12, TYPO3_11)
+gh release create v12.0.5 --latest=false --title "v12.0.5" --notes "..."
+
+# Releasing from the default branch (e.g., main) — omit the flag
+gh release create v13.6.0 --title "v13.6.0" --notes "..."
+```
+
+### When to use `--latest=false`
+
+| Scenario | Flag |
+|----------|------|
+| Release from `main` / default branch | Omit (default: `--latest=true`) |
+| Release from LTS/maintenance branch | `--latest=false` |
+| Hotfix for older version | `--latest=false` |
+| Pre-release (alpha, beta, rc) | `--prerelease` (auto-excludes from Latest) |
+
+### Recovery
+
+If a maintenance release accidentally became "Latest":
+```bash
+# Manually reassign the "Latest" badge to the correct release
+gh release edit v13.5.0 --latest
+```
+
+---
+
 ## Best Practices
 
 ### Do
@@ -232,6 +269,7 @@ attempts during troubleshooting.
 - ✅ Use CI checks for version consistency
 - ✅ Keep releases - never delete published releases
 - ✅ Test publish process in staging first (if possible)
+- ✅ Use `--latest=false` for non-default branch releases
 
 ### Don't
 - ❌ Create release before version is updated in source
@@ -239,6 +277,7 @@ attempts during troubleshooting.
 - ❌ Rush releases without verification
 - ❌ Assume you can recreate a deleted release
 - ❌ Create multiple releases hoping one will work
+- ❌ Omit `--latest=false` when releasing from maintenance branches
 
 ---
 
