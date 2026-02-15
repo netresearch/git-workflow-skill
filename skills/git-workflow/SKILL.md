@@ -1,6 +1,6 @@
 ---
 name: git-workflow
-description: "Use when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, managing PR review threads, merging PRs with signed commits, or integrating Git with CI/CD."
+description: "Use when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, managing PR review threads, merging PRs with signed commits, handling merge conflicts, or integrating Git with CI/CD."
 ---
 
 # Git Workflow Skill
