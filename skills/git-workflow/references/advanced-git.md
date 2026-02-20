@@ -315,6 +315,38 @@ cd ../pr-review
 # Review code
 ```
 
+### Pushing to Fork Remotes (Multiple Remotes Pitfall)
+
+When using worktrees with multiple remotes (e.g., `origin` = upstream, `fork` = your fork),
+`git push fork main` can silently say "Everything up-to-date" even when the fork is behind.
+
+**Why it fails:**
+- Local `main` tracks `origin/main` (upstream), not `fork/main`
+- `git push fork main` resolves the tracking ref, which may already match what git considers current
+- The fork remote never receives the new commits
+
+**Fix: Use explicit refspec with `HEAD:main`**
+
+```bash
+# WRONG - may silently do nothing
+git push fork main
+
+# CORRECT - explicitly pushes current HEAD to fork's main
+git push fork HEAD:main
+```
+
+**Full pattern for syncing a fork:**
+
+```bash
+# In a worktree where origin=upstream, fork=your-fork
+git fetch origin
+git merge --ff-only origin/main   # Update local main from upstream
+git push fork HEAD:main            # Explicitly push to fork
+```
+
+**Rule:** When pushing to a non-tracking remote, always use explicit refspec
+(`HEAD:<branch>` or `<local-branch>:<remote-branch>`) to avoid silent no-ops.
+
 ## Submodules
 
 ### Adding Submodules
