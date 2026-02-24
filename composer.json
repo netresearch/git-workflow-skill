@@ -6,7 +6,6 @@
   "authors": [
     {
       "name": "Netresearch DTT GmbH",
-      "email": "info@netresearch.de",
       "homepage": "https://www.netresearch.de/",
       "role": "Manufacturer"
     }
@@ -16,5 +15,9 @@
   },
   "extra": {
     "ai-agent-skill": "SKILL.md"
+  },
+  "support": {
+    "issues": "https://github.com/netresearch/git-workflow-skill/issues",
+    "source": "https://github.com/netresearch/git-workflow-skill"
   }
 }
