@@ -1,6 +1,9 @@
 {
-  "name": "netresearch/agent-git-workflow",
+  "name": "netresearch/git-workflow-skill",
   "description": "Netresearch AI skill for Git branching strategies, Conventional Commits and CI/CD pipelines",
+  "replace": {
+    "netresearch/agent-git-workflow": "self.version"
+  },
   "type": "ai-agent-skill",
   "license": "MIT",
   "authors": [
