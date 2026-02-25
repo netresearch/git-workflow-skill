@@ -140,17 +140,20 @@ git absorb --and-rebase
 Syntax-aware diff that understands code structure. Shows meaningful changes, ignores formatting.
 
 ```bash
-# Use as git diff tool
+# One-time use (no config change)
 GIT_EXTERNAL_DIFF=difft git diff
 
-# Configure as default git diff tool
+# Configure permanently as default git diff tool
 git config diff.external difft
 
 # Compare two files directly
 difft old_file.py new_file.py
 
-# Use with git log
+# Use with git log (one-time)
 GIT_EXTERNAL_DIFF=difft git log -p --ext-diff
+
+# Use with git log (when configured permanently)
+git log -p --ext-diff
 ```
 
 **When to use:** When reviewing changes that mix formatting with logic changes. difft separates structural changes from whitespace/formatting noise.

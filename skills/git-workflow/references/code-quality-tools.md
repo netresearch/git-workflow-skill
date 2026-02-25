@@ -64,7 +64,7 @@ cd /some/dir || exit 1
 ```yaml
 # GitHub Actions - shellcheck
 - name: Run shellcheck
-  uses: ludeeus/action-shellcheck@master
+  uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # v2.0.0
   with:
     scandir: './scripts'
     severity: warning
@@ -109,7 +109,7 @@ When an `.editorconfig` is present, run `shfmt -w .` without explicit flags.
 ```yaml
 # GitHub Actions - shfmt
 - name: Check shell formatting
-  uses: mvdan/sh@latest
+  uses: mvdan/sh@8202166b7d1e3473a7c65eeac53ddbdb55d5b808 # v3.12.0
   with:
     sh-version: latest
     args: '-d -i 2 .'
@@ -306,7 +306,7 @@ repos:
     hooks:
       - id: shellcheck
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.10.0
+    rev: v3.12.0-2
     hooks:
       - id: shfmt
         args: ['-i', '2', '-w']
@@ -343,7 +343,7 @@ jobs:
 
       - name: shellcheck
         run: |
-          fd -e sh -e bash --exec shellcheck {} \;
+          git ls-files '*.sh' '*.bash' | xargs --no-run-if-empty shellcheck
 
       - name: shfmt
         run: |
