@@ -26,6 +26,7 @@ Detailed documentation for each area:
 | `references/ci-cd-integration.md` | CI/CD automation, GitHub Actions |
 | `references/advanced-git.md` | Rebasing, cherry-picking, bisecting |
 | `references/github-releases.md` | Release management, immutable releases |
+| `references/code-quality-tools.md` | Shell linting, formatting, smart fixups, structural diffs |
 
 ### Explicit Content Triggers
 
@@ -75,6 +76,87 @@ git checkout -b feature/my-feature
 git push -u origin HEAD
 gh pr create && gh pr merge --squash
 ```
+
+## Code Quality Tools
+
+### shellcheck - Shell Script Linter
+
+Static analysis for bash/sh/zsh scripts. Catches common bugs, quoting issues, and portability problems.
+
+```bash
+# Lint a script
+shellcheck script.sh
+
+# Lint all shell scripts in repo
+fd -e sh -e bash | xargs shellcheck
+
+# Specify shell dialect
+shellcheck --shell=bash script.sh
+
+# Exclude specific rules
+shellcheck --exclude=SC2086 script.sh
+```
+
+**Rule:** Always run `shellcheck` on shell scripts before committing. Catches real bugs that cause CI failures.
+
+### shfmt - Shell Script Formatter
+
+Consistent formatting for shell scripts (like gofmt for Go).
+
+```bash
+# Format in-place with 2-space indent
+shfmt -w -i 2 script.sh
+
+# Format all shell scripts
+fd -e sh -e bash | xargs shfmt -w -i 2
+
+# Check formatting without modifying (CI mode)
+shfmt -d -i 2 script.sh
+
+# Use EditorConfig settings
+shfmt -w .
+```
+
+**Rule:** Run `shfmt -w -i 2` on shell scripts for consistent formatting.
+
+### git-absorb - Smart Fixup Commits
+
+Automatically creates fixup commits and absorbs them into the correct parent commits. Replaces the manual workflow of `git commit --fixup=<SHA>` + `git rebase --autosquash`.
+
+```bash
+# Stage your fixes, then absorb
+git add -p           # Stage changes
+git absorb           # Auto-create fixup commits for correct parents
+git rebase --autosquash main  # Apply the fixups
+
+# Or with auto-rebase
+git absorb --and-rebase
+```
+
+**When to use:** After code review, when you have fixes that belong to specific earlier commits. Instead of manually identifying which commit each fix belongs to, git-absorb figures it out automatically.
+
+### difft (difftastic) - Structural Diff
+
+Syntax-aware diff that understands code structure. Shows meaningful changes, ignores formatting.
+
+```bash
+# One-time use (no config change)
+GIT_EXTERNAL_DIFF=difft git diff
+
+# Configure permanently as default git diff tool
+git config diff.external difft
+
+# Compare two files directly
+difft old_file.py new_file.py
+
+# Use with git log (one-time)
+GIT_EXTERNAL_DIFF=difft git log -p --ext-diff
+
+# Use with git log (when configured permanently)
+git log -p --ext-diff
+```
+
+**When to use:** When reviewing changes that mix formatting with logic changes. difft separates structural changes from whitespace/formatting noise.
 
 ## Verification
 
