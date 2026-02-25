@@ -14,7 +14,7 @@
     "netresearch/composer-agent-skill-plugin": "*"
   },
   "extra": {
-    "ai-agent-skill": "SKILL.md"
+    "ai-agent-skill": "skills/git-workflow/SKILL.md"
   },
   "support": {
     "issues": "https://github.com/netresearch/git-workflow-skill/issues",
