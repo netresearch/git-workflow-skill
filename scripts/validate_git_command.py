@@ -9,7 +9,9 @@ import re
 import json
 
 # Conventional commit pattern
-CONVENTIONAL_COMMIT_PATTERN = r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?:\s.+"
+CONVENTIONAL_COMMIT_PATTERN = (
+    r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?:\s.+"
+)
 
 # Git command patterns to check
 CHECKS = [
