@@ -1,6 +1,6 @@
 {
   "name": "git-workflow",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Git workflow best practices with commit validation hooks",
   "repository": "https://github.com/netresearch/git-workflow-skill",
   "license": "MIT",
