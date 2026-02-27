@@ -685,3 +685,89 @@ git push origin main
 
 echo "PR #$PR_NUMBER merged via fast-forward"
 ```
+
+## Full PR Lifecycle Checklist
+
+Complete end-to-end workflow for merging a PR, from CI verification through post-merge cleanup.
+
+### 1. Verify CI Status
+
+```bash
+# Check all checks
+gh pr checks <NUMBER>
+
+# If failing, get detailed error logs
+gh run view <RUN_ID> --log-failed 2>&1 | grep "There were"
+
+# Check annotations (warnings that don't block but should be fixed)
+gh api "repos/OWNER/REPO/commits/SHA/check-runs" \
+  --jq '.check_runs[] | select(.output.annotations_count > 0) | {name, annotations: .output.annotations_count}'
+```
+
+### 2. Resolve Review Comments
+
+```bash
+# List unresolved threads
+gh api graphql -f query='query {
+  repository(owner: "OWNER", name: "REPO") {
+    pullRequest(number: NUMBER) {
+      reviewThreads(first: 30) {
+        nodes {
+          id
+          isResolved
+          comments(first: 1) {
+            nodes { body author { login } }
+          }
+        }
+      }
+    }
+  }
+}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {id, author: .comments.nodes[0].author.login, comment: .comments.nodes[0].body[:100]}'
+
+# Reply to a thread
+gh api graphql -f query='mutation($body: String!, $id: ID!) {
+  addPullRequestReviewThreadReply(input: {body: $body, pullRequestReviewThreadId: $id}) {
+    comment { id }
+  }
+}' -f body="Fixed in latest commit." -f id="PRRT_xxx"
+
+# Resolve a thread
+gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "PRRT_xxx"}) { thread { isResolved } } }'
+```
+
+### 3. Merge
+
+```bash
+# Auto-detect merge strategy and queue
+STRATEGY=$(gh api "repos/OWNER/REPO" --jq '
+  if .allow_squash_merge then "--squash"
+  elif .allow_merge_commit then "--merge"
+  elif .allow_rebase_merge then "--rebase"
+  else "--squash" end')
+gh pr merge <NUMBER> --auto $STRATEGY
+
+# For repos with merge queue, just queue it
+gh pr merge <NUMBER> --auto
+```
+
+### 4. Post-Merge Cleanup
+
+```bash
+# Switch to main and pull
+git checkout main && git pull
+
+# Delete local feature branch
+git branch -d <branch-name>
+
+# Remote branch is auto-deleted if repo setting enabled, otherwise:
+git push origin --delete <branch-name>
+```
+
+### Common Blockers
+
+| Blocker | Diagnosis | Fix |
+|---------|-----------|-----|
+| `REVIEW_REQUIRED` but no pending reviewers | Auto-approve raced with Copilot review | Re-run PR Quality Gates workflow |
+| `BLOCKED` with all checks green | Unresolved review threads (even from old commits) | Resolve all threads via GraphQL |
+| Auto-merge dropped after push | New commits nullify `autoMergeRequest` | Re-queue with `gh pr merge --auto` |
+| CI annotations but status green | Reviewdog warnings don't block by default | Fix annotations or set `fail_level: error` |
