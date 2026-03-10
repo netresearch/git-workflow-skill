@@ -1,26 +1,26 @@
 {
-  "name": "netresearch/git-workflow-skill",
-  "description": "Netresearch AI skill for Git branching strategies, Conventional Commits and CI/CD pipelines",
-  "replace": {
-    "netresearch/agent-git-workflow": "self.version"
-  },
-  "type": "ai-agent-skill",
-  "license": "MIT",
-  "authors": [
-    {
-      "name": "Netresearch DTT GmbH",
-      "homepage": "https://www.netresearch.de/",
-      "role": "Manufacturer"
+    "name": "netresearch/git-workflow-skill",
+    "description": "Netresearch AI skill for Git branching strategies, Conventional Commits and CI/CD pipelines",
+    "replace": {
+        "netresearch/agent-git-workflow": "self.version"
+    },
+    "type": "ai-agent-skill",
+    "license": "(MIT AND CC-BY-SA-4.0)",
+    "authors": [
+        {
+            "name": "Netresearch DTT GmbH",
+            "homepage": "https://www.netresearch.de/",
+            "role": "Manufacturer"
+        }
+    ],
+    "require": {
+        "netresearch/composer-agent-skill-plugin": "*"
+    },
+    "extra": {
+        "ai-agent-skill": "skills/git-workflow/SKILL.md"
+    },
+    "support": {
+        "issues": "https://github.com/netresearch/git-workflow-skill/issues",
+        "source": "https://github.com/netresearch/git-workflow-skill"
     }
-  ],
-  "require": {
-    "netresearch/composer-agent-skill-plugin": "*"
-  },
-  "extra": {
-    "ai-agent-skill": "skills/git-workflow/SKILL.md"
-  },
-  "support": {
-    "issues": "https://github.com/netresearch/git-workflow-skill/issues",
-    "source": "https://github.com/netresearch/git-workflow-skill"
-  }
 }
