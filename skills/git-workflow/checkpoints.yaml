@@ -84,6 +84,20 @@ mechanical:
     severity: info
     desc: "Main branch should require signed commits"
 
+  # === EDITORCONFIG ===
+  - id: GW-12
+    type: file_exists
+    target: .editorconfig
+    severity: info
+    desc: ".editorconfig should exist for consistent formatting across editors"
+
+  # === CONTRIBUTING GUIDE ===
+  - id: GW-13
+    type: file_exists
+    target: CONTRIBUTING.md
+    severity: info
+    desc: "CONTRIBUTING.md should exist with workflow guidelines"
+
 llm_reviews:
   # === CONVENTIONAL COMMITS ===
   - id: GW-20
