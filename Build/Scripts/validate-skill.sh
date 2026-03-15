@@ -97,7 +97,7 @@ else
 fi
 
 # --- Required files ---
-for file in README.md LICENSE .gitignore; do
+for file in README.md LICENSE-MIT LICENSE-CC-BY-SA-4.0 .gitignore; do
     if [[ -f "$REPO_DIR/$file" ]]; then
         success "$file exists"
     else

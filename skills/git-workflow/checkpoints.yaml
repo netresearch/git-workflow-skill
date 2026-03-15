@@ -36,7 +36,7 @@ mechanical:
   # === PR TEMPLATE ===
   - id: GW-05
     type: file_exists
-    target: .github/PULL_REQUEST_TEMPLATE.md
+    target: "{.github/PULL_REQUEST_TEMPLATE.md,.github/pull_request_template.md}"
     severity: warning
     desc: "PR template should exist for consistent pull requests"
 
@@ -51,8 +51,8 @@ mechanical:
     type: file_exists
     target: CODEOWNERS
     severity: info
-    desc: "CODEOWNERS in root (alternative location)"
-    # Note: This is an alternative to .github/CODEOWNERS
+    desc: "CODEOWNERS in root (fallback location; .github/CODEOWNERS is the primary per GitHub docs)"
+    # Note: Root CODEOWNERS is the fallback; .github/CODEOWNERS (GW-06) is the standard primary location
 
   # === BRANCH PROTECTION INDICATORS ===
   - id: GW-08
