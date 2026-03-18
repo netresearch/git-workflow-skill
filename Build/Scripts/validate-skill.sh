@@ -49,13 +49,14 @@ if [[ -n "$SKILL_FILE" ]]; then
         # Extract frontmatter fields (between first two --- lines)
         FRONTMATTER=$(sed -n '2,/^---$/{ /^---$/d; p; }' "$SKILL_FILE")
 
-        # Check only name + description allowed in frontmatter
-        EXTRA_FIELDS=$(echo "$FRONTMATTER" | grep -E "^[a-z_-]+:" | grep -vE "^(name|description):" || true)
+        # Check frontmatter fields match Agent Skills spec
+        # Allowed: name, description, license, compatibility, metadata, allowed-tools
+        EXTRA_FIELDS=$(echo "$FRONTMATTER" | grep -E "^[a-z_-]+:" | grep -vE "^(name|description|license|compatibility|metadata|allowed-tools):" || true)
         if [[ -z "$EXTRA_FIELDS" ]]; then
-            success "Frontmatter has only name + description"
+            success "Frontmatter fields are valid per Agent Skills spec"
         else
             FIELD_NAMES=$(echo "$EXTRA_FIELDS" | sed 's/:.*//' | tr '\n' ', ' | sed 's/,$//')
-            error "Frontmatter has disallowed fields: $FIELD_NAMES"
+            error "Frontmatter has non-spec fields: $FIELD_NAMES (allowed: name, description, license, compatibility, metadata, allowed-tools)"
         fi
 
         # Check name field
@@ -73,10 +74,10 @@ if [[ -n "$SKILL_FILE" ]]; then
         # Check description field and prefix
         if echo "$FRONTMATTER" | grep -q "^description:"; then
             DESC=$(echo "$FRONTMATTER" | grep "^description:" | head -1 | sed 's/description: *//' | sed 's/^"//' | sed 's/"$//')
-            if [[ "$DESC" == Use\ when* ]]; then
-                success "Description starts with 'Use when'"
+            if [[ "$DESC" == Use\ when* ]] || [[ "$DESC" == USE\ THIS\ SKILL\ when* ]]; then
+                success "Description starts with 'Use when' or 'USE THIS SKILL when'"
             else
-                error "Description must start with 'Use when': ${DESC:0:60}..."
+                error "Description must start with 'Use when' or 'USE THIS SKILL when': ${DESC:0:60}..."
             fi
         else
             error "SKILL.md missing 'description' field"

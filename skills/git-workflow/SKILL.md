@@ -1,6 +1,13 @@
 ---
 name: git-workflow
-description: "Use when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, or integrating Git with CI/CD."
+description: "USE THIS SKILL when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, creating releases, or integrating Git with CI/CD."
+license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
+compatibility: "Requires git, gh CLI."
+metadata:
+  author: Netresearch DTT GmbH
+  version: "1.7.0"
+  repository: https://github.com/netresearch/git-workflow-skill
+allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 ---
 
 # Git Workflow Skill
@@ -26,29 +33,12 @@ Expert patterns for Git version control: branching, commits, collaboration, and 
 | `references/github-releases.md` | Release management, immutable releases |
 | `references/code-quality-tools.md` | Shell linting, formatting, smart fixups, structural diffs |
 
-### Explicit Content Triggers
+### Content Triggers
 
-When creating pull requests, load `references/pull-request-workflow.md` for PR structure, size guidelines, and template patterns.
-
-When reviewing PRs or responding to review comments, load `references/pull-request-workflow.md` for review comment levels (blocking/suggestion/nit) and the code review checklist.
-
-When replying to PR review threads or resolving threads, load `references/pull-request-workflow.md` for the GraphQL API patterns for thread replies and resolution.
-
-When merging PRs, load `references/pull-request-workflow.md` for the merge requirements checklist (resolved threads, Copilot review, rebased branch, CI checks).
-
-When merging in repos requiring signed commits with rebase-only strategy, load `references/pull-request-workflow.md` for the local fast-forward merge workflow.
-
-When handling merge conflicts, load `references/pull-request-workflow.md` for conflict resolution strategies.
-
-When choosing a branching strategy, load `references/branching-strategies.md` for Git Flow, GitHub Flow, and Trunk-based patterns.
-
-When writing commit messages, load `references/commit-conventions.md` for Conventional Commits format and semantic versioning rules.
-
-When creating releases, load `references/github-releases.md` for immutable release warnings and recovery patterns.
-
-When running a full PR lifecycle (CI check → resolve comments → merge → cleanup), load `references/pull-request-workflow.md` for the complete PR merge checklist.
-
-When CI is failing on a PR and you need to fix it before merging, load `references/pull-request-workflow.md` for the CI verification and annotation checking patterns.
+- **PR operations** (create, review, merge, thread resolution, conflicts, CI checks): load `references/pull-request-workflow.md`
+- **Branching strategy**: load `references/branching-strategies.md`
+- **Commit messages**: load `references/commit-conventions.md`
+- **Releases**: load `references/github-releases.md`
 
 ## Conventional Commits (Quick Reference)
 

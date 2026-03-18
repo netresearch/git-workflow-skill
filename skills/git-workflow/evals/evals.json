@@ -1,0 +1,31 @@
+[
+  {
+    "name": "setup_conventional_commits",
+    "prompt": "Set up conventional commits for this project with commit message validation",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(conventional commit|commitlint|commit-msg|feat:|fix:)"
+      },
+      {
+        "type": "content",
+        "pattern": "(hook|husky|pre-commit|validation)"
+      }
+    ]
+  },
+  {
+    "name": "create_and_merge_pr",
+    "prompt": "Create and merge a PR for the current branch changes",
+    "assertions": [
+      {
+        "type": "tool_use",
+        "tool": "Bash",
+        "pattern": "gh pr (create|merge)"
+      },
+      {
+        "type": "content",
+        "pattern": "(pull request|PR|merge)"
+      }
+    ]
+  }
+]
