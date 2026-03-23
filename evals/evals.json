@@ -1,0 +1,17 @@
+{
+  "skill_name": "git-workflow",
+  "evals": [
+    {
+      "id": 1,
+      "name": "recommend-hooks-go",
+      "prompt": "What git hooks should I set up for a Go project? Give me a ready-to-use config.",
+      "expected_output": "Should recommend lefthook with a template config covering pre-commit, commit-msg, pre-push"
+    },
+    {
+      "id": 2,
+      "name": "recommend-hooks-php",
+      "prompt": "What git hooks framework should I use for a TYPO3 PHP extension?",
+      "expected_output": "Should recommend captainhook with setup instructions"
+    }
+  ]
+}
