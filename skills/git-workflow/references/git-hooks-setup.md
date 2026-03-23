@@ -15,14 +15,18 @@ prevent secrets, and ensure code quality without requiring the agent to "remembe
 | **husky** | Node.js | `.husky/` | `npm install` (auto via prepare) |
 | **pre-commit** | Python | `.pre-commit-config.yaml` | `pip install pre-commit && pre-commit install` |
 
-## Detection
+## Detection — One Command
 
-Check which framework a repo uses:
-1. `lefthook.yml` or `.lefthook.yml` → lefthook
-2. `captainhook.json` → captainhook
-3. `.husky/` directory → husky
-4. `.pre-commit-config.yaml` → pre-commit
-5. None → hooks not configured (suggest adding)
+```bash
+ls lefthook.yml .lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null || echo "No hook framework configured"
+```
+
+Then install based on what's found:
+- `lefthook.yml` → `lefthook install` (or `make setup`)
+- `captainhook.json` → `composer install` (auto)
+- `.husky/` → `npm install` (auto)
+- `.pre-commit-config.yaml` → `pre-commit install`
+- Nothing → suggest adding one based on project language
 
 ## Recommended Hooks by Stage
 

@@ -40,7 +40,7 @@ Expert patterns for Git version control: branching, commits, collaboration, and 
 - **Branching strategy**: load `references/branching-strategies.md`
 - **Commit messages**: load `references/commit-conventions.md`
 - **Releases**: load `references/github-releases.md`
-- **Git hooks** (setup, install, frameworks): load `references/git-hooks-setup.md`
+- **Git hooks**: detect with `ls lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null`. Details in `references/git-hooks-setup.md`
 
 ## Conventional Commits (Quick Reference)
 
