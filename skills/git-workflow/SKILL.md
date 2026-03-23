@@ -5,7 +5,7 @@ license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
 compatibility: "Requires git, gh CLI."
 metadata:
   author: Netresearch DTT GmbH
-  version: "1.8.0"
+  version: "1.9.0"
   repository: https://github.com/netresearch/git-workflow-skill
 allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 ---
@@ -31,6 +31,7 @@ Expert patterns for Git version control: branching, commits, collaboration, and 
 | `references/ci-cd-integration.md` | CI/CD automation, GitHub Actions |
 | `references/advanced-git.md` | Rebasing, cherry-picking, bisecting |
 | `references/github-releases.md` | Release management, immutable releases |
+| `references/git-hooks-setup.md` | Hook frameworks, detection, recommended hooks |
 | `references/code-quality-tools.md` | Shell linting, formatting, smart fixups, structural diffs |
 
 ### Content Triggers
@@ -39,6 +40,7 @@ Expert patterns for Git version control: branching, commits, collaboration, and 
 - **Branching strategy**: load `references/branching-strategies.md`
 - **Commit messages**: load `references/commit-conventions.md`
 - **Releases**: load `references/github-releases.md`
+- **Git hooks** (setup, install, frameworks): load `references/git-hooks-setup.md`
 
 ## Conventional Commits (Quick Reference)
 
@@ -68,6 +70,8 @@ git checkout -b feature/my-feature
 git push -u origin HEAD
 gh pr create && gh pr merge --squash
 ```
+
+Before first commit, install git hooks — see `references/git-hooks-setup.md`.
 
 For code quality tools (shellcheck, shfmt, git-absorb, difft), see `references/code-quality-tools.md`.
 

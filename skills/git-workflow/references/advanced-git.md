@@ -399,6 +399,9 @@ rm -rf .git/modules/libs/repo
 
 ## Git Hooks
 
+> **Comprehensive guide**: See [`git-hooks-setup.md`](git-hooks-setup.md) for hook framework
+> comparison (lefthook, captainhook, husky, pre-commit), detection logic, and agent rules.
+
 ### Client-Side Hooks
 
 ```bash
@@ -432,7 +435,7 @@ npm run test:e2e
 # Per-branch validation
 ```
 
-### Hook Management with Husky
+### Hook Management with Husky (Node.js)
 
 ```json
 // package.json
@@ -449,6 +452,9 @@ npm run test:e2e
   }
 }
 ```
+
+Other frameworks: **lefthook** (Go, `lefthook.yml`), **captainhook** (PHP, `captainhook.json`),
+**pre-commit** (Python, `.pre-commit-config.yaml`). See [`git-hooks-setup.md`](git-hooks-setup.md).
 
 ## Advanced Merging
 

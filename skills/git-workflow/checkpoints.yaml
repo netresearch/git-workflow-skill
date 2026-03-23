@@ -98,6 +98,13 @@ mechanical:
     severity: info
     desc: "CONTRIBUTING.md should exist with workflow guidelines"
 
+  # === GIT HOOKS ===
+  - id: GW-14
+    type: file_exists
+    target: "{lefthook.yml,.lefthook.yml,captainhook.json,.husky,.pre-commit-config.yaml}"
+    severity: warning
+    desc: "A git hook framework config should exist (lefthook, captainhook, husky, or pre-commit)"
+
 llm_reviews:
   # === CONVENTIONAL COMMITS ===
   - id: GW-20
@@ -183,3 +190,23 @@ llm_reviews:
       Report on completeness and suggest improvements.
     severity: info
     desc: "PR template should guide contributors effectively"
+
+  - id: GW-25
+    domain: git-workflow
+    prompt: |
+      Check if the repository has git hooks configured with a hook framework
+      (lefthook, captainhook, husky, or pre-commit).
+
+      Look for config files: lefthook.yml, .lefthook.yml, captainhook.json,
+      .husky/ directory, .pre-commit-config.yaml.
+
+      If hooks are configured, verify they cover at minimum:
+      1. pre-commit stage (formatting, linting, or validation)
+      2. commit-msg stage (message format validation)
+
+      Report:
+      - Pass if both pre-commit and commit-msg hooks are configured
+      - Warn if only one stage is covered
+      - Fail if no hook framework is found
+    severity: warning
+    desc: "Git hooks should cover pre-commit and commit-msg stages at minimum"
