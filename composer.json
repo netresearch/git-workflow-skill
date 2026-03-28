@@ -21,6 +21,7 @@
     },
     "support": {
         "issues": "https://github.com/netresearch/git-workflow-skill/issues",
-        "source": "https://github.com/netresearch/git-workflow-skill"
+        "source": "https://github.com/netresearch/git-workflow-skill",
+        "security": "https://github.com/netresearch/git-workflow-skill/security"
     }
 }
