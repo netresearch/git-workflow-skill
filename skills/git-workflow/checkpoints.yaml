@@ -105,6 +105,13 @@ mechanical:
     severity: warning
     desc: "A git hook framework config should exist (lefthook, captainhook, husky, or pre-commit)"
 
+  # === UNRELEASED COMMITS ===
+  - id: GW-15
+    type: command
+    pattern: 'tag=$(git describe --tags --abbrev=0 2>/dev/null); [ -z "$tag" ] || test "$(git rev-list ${tag}..HEAD --count)" -le 20'
+    severity: warning
+    desc: "Main branch should not accumulate >20 unreleased commits since last tag"
+
 llm_reviews:
   # === CONVENTIONAL COMMITS ===
   - id: GW-20
@@ -210,3 +217,38 @@ llm_reviews:
       - Fail if no hook framework is found
     severity: warning
     desc: "Git hooks should cover pre-commit and commit-msg stages at minimum"
+
+  # === RELEASE HYGIENE ===
+  - id: GW-26
+    domain: release
+    severity: warning
+    desc: "Feature and fix commits on main should be released promptly"
+    prompt: |
+      Audit unreleased commits on main:
+      1. Run `git describe --tags --abbrev=0 2>/dev/null` to find latest tag.
+         If git describe fails (no tags), the check passes — skip remaining steps.
+      2. Run `git log <tag>..HEAD --oneline` to see unreleased commits
+      3. How many days since the last tag? (use `git log -1 --format=%ci <tag>`)
+      4. Do unreleased commits contain feat: or fix: types?
+      5. Flag as warning if feat/fix unreleased >7 days, error if >30 days
+
+  - id: GW-27
+    domain: release
+    severity: warning
+    desc: "GitHub releases should have non-duplicated content and meaningful descriptions"
+    prompt: |
+      Audit the 3 most recent GitHub releases:
+      1. Run `gh release list --limit 3 --json body` to fetch release bodies in one call
+      2. Check for DUPLICATE CONTENT (body repeated twice - common with generate_release_notes + body)
+      3. Check QUALITY: narrative summary vs just auto-generated lists
+      4. Flag duplicate content as error, missing narrative as info
+
+  - id: GW-28
+    domain: release
+    severity: warning
+    desc: "Release workflows should include workflow_dispatch for manual re-triggering"
+    prompt: |
+      Scan all workflow files in .github/workflows/.
+      Identify release workflows by filename (release, publish) or content (gh release create, semantic-release).
+      For each, check for workflow_dispatch trigger.
+      Flag missing workflow_dispatch as warning.
