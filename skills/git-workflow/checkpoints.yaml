@@ -108,7 +108,7 @@ mechanical:
   # === UNRELEASED COMMITS ===
   - id: GW-15
     type: command
-    pattern: 'tag=$(git describe --tags --abbrev=0 2>/dev/null) && test -n "$tag" && test "$(git rev-list ${tag}..HEAD --count)" -lt 20'
+    pattern: 'tag=$(git describe --tags --abbrev=0 2>/dev/null); [ -z "$tag" ] || test "$(git rev-list ${tag}..HEAD --count)" -lt 20'
     severity: warning
     desc: "Main branch should not accumulate >20 unreleased commits since last tag"
 
@@ -226,7 +226,8 @@ llm_reviews:
     desc: "Feature and fix commits on main should be released promptly"
     prompt: |
       Audit unreleased commits on main:
-      1. Run `git describe --tags --abbrev=0` to find latest tag
+      1. Run `git describe --tags --abbrev=0 2>/dev/null` to find latest tag.
+         If git describe fails (no tags), the check passes — skip remaining steps.
       2. Run `git log <tag>..HEAD --oneline` to see unreleased commits
       3. How many days since the last tag? (use `git log -1 --format=%ci <tag>`)
       4. Do unreleased commits contain feat: or fix: types?
@@ -239,7 +240,7 @@ llm_reviews:
     desc: "GitHub releases should have non-duplicated content and meaningful descriptions"
     prompt: |
       Audit the 3 most recent GitHub releases:
-      1. `gh release list --limit 3` then `gh release view <tag> --json body -q .body`
+      1. Run `gh release list --limit 3 --json body` to fetch release bodies in one call
       2. Check for DUPLICATE CONTENT (body repeated twice - common with generate_release_notes + body)
       3. Check QUALITY: narrative summary vs just auto-generated lists
       4. Flag duplicate content as error, missing narrative as info
@@ -250,6 +251,7 @@ llm_reviews:
     severity: warning
     desc: "Release workflows should include workflow_dispatch for manual re-triggering"
     prompt: |
-      Check .github/workflows/release.yml for workflow_dispatch trigger.
-      Without it, failed releases cannot be manually re-triggered.
+      Scan all workflow files in .github/workflows/.
+      Identify release workflows by filename (release, publish) or content (gh release create, semantic-release).
+      For each, check for workflow_dispatch trigger.
       Flag missing workflow_dispatch as warning.
