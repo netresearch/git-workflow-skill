@@ -108,7 +108,7 @@ mechanical:
   # === UNRELEASED COMMITS ===
   - id: GW-15
     type: command
-    pattern: 'tag=$(git describe --tags --abbrev=0 2>/dev/null); [ -z "$tag" ] || test "$(git rev-list ${tag}..HEAD --count)" -lt 20'
+    pattern: 'tag=$(git describe --tags --abbrev=0 2>/dev/null); [ -z "$tag" ] || test "$(git rev-list ${tag}..HEAD --count)" -le 20'
     severity: warning
     desc: "Main branch should not accumulate >20 unreleased commits since last tag"
 
@@ -220,7 +220,6 @@ llm_reviews:
 
   # === RELEASE HYGIENE ===
   - id: GW-26
-    type: llm_review
     domain: release
     severity: warning
     desc: "Feature and fix commits on main should be released promptly"
@@ -234,7 +233,6 @@ llm_reviews:
       5. Flag as warning if feat/fix unreleased >7 days, error if >30 days
 
   - id: GW-27
-    type: llm_review
     domain: release
     severity: warning
     desc: "GitHub releases should have non-duplicated content and meaningful descriptions"
@@ -246,7 +244,6 @@ llm_reviews:
       4. Flag duplicate content as error, missing narrative as info
 
   - id: GW-28
-    type: llm_review
     domain: release
     severity: warning
     desc: "Release workflows should include workflow_dispatch for manual re-triggering"
