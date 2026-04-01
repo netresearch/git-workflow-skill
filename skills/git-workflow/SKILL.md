@@ -5,7 +5,7 @@ license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
 compatibility: "Requires git, gh CLI."
 metadata:
   author: Netresearch DTT GmbH
-  version: "1.10.0"
+  version: "1.11.0"
   repository: https://github.com/netresearch/git-workflow-skill
 allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 ---
@@ -14,35 +14,22 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 
 Expert patterns for Git version control: branching, commits, collaboration, and CI/CD.
 
-## Expertise Areas
-
-- **Branching**: Git Flow, GitHub Flow, Trunk-based development
-- **Commits**: Conventional Commits, semantic versioning
-- **Collaboration**: PR workflows, code review, merge strategies, thread resolution
-- **CI/CD**: GitHub Actions, GitLab CI, branch protection
-
 ## Reference Files
 
-| Reference | When to Load |
-|-----------|--------------|
-| `references/branching-strategies.md` | Managing branches, choosing branching model |
-| `references/commit-conventions.md` | Writing commits, semantic versioning |
-| `references/pull-request-workflow.md` | Creating/reviewing PRs, thread resolution, merging |
-| `references/ci-cd-integration.md` | CI/CD automation, GitHub Actions |
-| `references/advanced-git.md` | Rebasing, cherry-picking, bisecting |
-| `references/github-releases.md` | Release management, immutable releases |
-| `references/git-hooks-setup.md` | Hook frameworks, detection, recommended hooks |
-| `references/code-quality-tools.md` | Shell linting, formatting, smart fixups, structural diffs |
+Load references on demand based on the task at hand:
 
-### Content Triggers
+| Reference | Content Triggers |
+|-----------|-----------------|
+| `references/branching-strategies.md` | Branching model, Git Flow, GitHub Flow, trunk-based, branch protection |
+| `references/commit-conventions.md` | Commit messages, conventional commits, semantic versioning, commitlint |
+| `references/pull-request-workflow.md` | PR create/review/merge, thread resolution, merge strategies, CODEOWNERS, signed commits + rebase |
+| `references/ci-cd-integration.md` | GitHub Actions, GitLab CI, semantic release, deployment |
+| `references/advanced-git.md` | Rebase, cherry-pick, bisect, stash, worktrees, reflog, submodules, recovery |
+| `references/github-releases.md` | Release management, immutable releases, `--latest=false`, multi-branch |
+| `references/git-hooks-setup.md` | Hook frameworks, detection, recommended hooks per stage |
+| `references/code-quality-tools.md` | shellcheck, shfmt, git-absorb, difftastic |
 
-- **PR operations** (create, review, merge, thread resolution, conflicts, CI checks): load `references/pull-request-workflow.md`
-- **Branching strategy**: load `references/branching-strategies.md`
-- **Commit messages**: load `references/commit-conventions.md`
-- **Releases**: load `references/github-releases.md`
-- **Git hooks**: detect with `ls lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null`. Details in `references/git-hooks-setup.md`
-
-## Conventional Commits (Quick Reference)
+## Conventional Commits
 
 ```
 <type>[scope]: <description>
@@ -54,32 +41,32 @@ Expert patterns for Git version control: branching, commits, collaboration, and 
 
 ## Branch Naming
 
-```bash
+```
 feature/TICKET-123-description
 fix/TICKET-456-bug-name
 release/1.2.0
 hotfix/1.2.1-security-patch
 ```
 
-## GitHub Flow (Default)
+## Hook Detection
+
+Before first commit, detect and install hooks:
 
 ```bash
-git checkout main && git pull
-git checkout -b feature/my-feature
-# ... work ...
-git push -u origin HEAD
-gh pr create && gh pr merge --squash
+ls lefthook.yml .lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null || echo "No hooks"
 ```
 
-Before first commit, install git hooks — see `references/git-hooks-setup.md`.
+Install: lefthook.yml -> `lefthook install` | captainhook.json -> `composer install` | .husky/ -> `npm install` | .pre-commit-config.yaml -> `pre-commit install`
 
-For code quality tools (shellcheck, shfmt, git-absorb, difft), see `references/code-quality-tools.md`.
+## Critical Release Rules
 
-## GitHub Immutable Releases
+1. **Immutable releases**: Deleted GitHub releases block tag names PERMANENTLY. Never delete releases to "fix" issues -- bump version instead.
+2. **Multi-branch releases**: Always use `--latest=false` when releasing from non-default branches (LTS, maintenance, hotfix).
+3. **Pre-release checklist**: Version updated in source files, CI passes, CHANGELOG updated, `git pull` on main -- verify BEFORE `gh release create`.
 
-**CRITICAL**: Deleted releases block tag names PERMANENTLY. Get releases right first time.
+## PR Merge Requirements
 
-See `references/github-releases.md` for prevention and recovery patterns.
+Before merging: all threads resolved, CI checks green (including annotations), branch rebased, commits signed (if required). For signed commits + rebase-only repos, use local `git merge --ff-only`.
 
 ## Verification
 

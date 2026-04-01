@@ -9,7 +9,7 @@
       },
       {
         "type": "content",
-        "pattern": "(hook|husky|pre-commit|validation)"
+        "pattern": "(hook|husky|pre-commit|lefthook|captainhook|validation)"
       }
     ]
   },
@@ -25,6 +25,262 @@
       {
         "type": "content",
         "pattern": "(pull request|PR|merge)"
+      }
+    ]
+  },
+  {
+    "name": "choose_branching_strategy",
+    "prompt": "We're a small team doing continuous deployment of a web app. What branching strategy should we use?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(GitHub Flow|trunk.based)"
+      },
+      {
+        "type": "content",
+        "pattern": "(continuous deploy|small team|feature branch)"
+      }
+    ]
+  },
+  {
+    "name": "write_breaking_change_commit",
+    "prompt": "Write a commit message for removing the deprecated /api/v1 endpoints. This is a breaking change.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(feat!|fix!|BREAKING CHANGE)"
+      },
+      {
+        "type": "content",
+        "pattern": "(v1|deprecated|endpoint|API)"
+      }
+    ]
+  },
+  {
+    "name": "resolve_pr_review_threads",
+    "prompt": "A reviewer left 3 comments on my PR #42. I've fixed all the issues. How do I reply to and resolve the review threads?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(gh api|graphql|resolveReviewThread|addPullRequestReviewThreadReply)"
+      },
+      {
+        "type": "content",
+        "pattern": "(thread|resolve|reply)"
+      }
+    ]
+  },
+  {
+    "name": "setup_github_actions_ci",
+    "prompt": "Set up a basic CI pipeline with GitHub Actions for a Node.js project that runs lint, test, and build.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(github.com/actions|actions/checkout|actions/setup-node|workflows)"
+      },
+      {
+        "type": "content",
+        "pattern": "(lint|test|build)"
+      }
+    ]
+  },
+  {
+    "name": "cherry_pick_hotfix",
+    "prompt": "I need to backport a bug fix commit abc1234 from main to the release/1.0 branch. How?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "cherry-pick"
+      },
+      {
+        "type": "content",
+        "pattern": "(release|backport|branch)"
+      }
+    ]
+  },
+  {
+    "name": "recover_deleted_branch",
+    "prompt": "I accidentally deleted my feature branch. How do I recover it?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "reflog"
+      },
+      {
+        "type": "content",
+        "pattern": "(recover|checkout|branch)"
+      }
+    ]
+  },
+  {
+    "name": "immutable_release_recovery",
+    "prompt": "I created a GitHub release v1.2.3 but the TER publish failed. I deleted the release to recreate it and now I can't. What happened and how do I fix it?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(immutable|permanently blocked|cannot.*reuse)"
+      },
+      {
+        "type": "content",
+        "pattern": "(v?1\\.2\\.4|next version|skip|bump)"
+      }
+    ]
+  },
+  {
+    "name": "detect_git_hooks_framework",
+    "prompt": "How do I detect which git hooks framework is configured in a project?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(lefthook\\.yml|captainhook\\.json|pre-commit-config\\.yaml|\\.husky)"
+      },
+      {
+        "type": "content",
+        "pattern": "(ls |detect|check|find)"
+      }
+    ]
+  },
+  {
+    "name": "recommend_hooks_go",
+    "prompt": "What git hooks should I set up for a Go project? Give me a ready-to-use config.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(lefthook|pre-commit)"
+      },
+      {
+        "type": "content",
+        "pattern": "(gofmt|golangci-lint|go vet)"
+      }
+    ]
+  },
+  {
+    "name": "recommend_hooks_php",
+    "prompt": "What git hooks framework should I use for a TYPO3 PHP extension?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "captainhook"
+      },
+      {
+        "type": "content",
+        "pattern": "(php-cs-fixer|phpstan|composer)"
+      }
+    ]
+  },
+  {
+    "name": "squash_vs_rebase_merge",
+    "prompt": "When should I use squash merge vs rebase merge for PRs?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(squash|--squash)"
+      },
+      {
+        "type": "content",
+        "pattern": "(rebase|--rebase|linear history|messy|clean)"
+      }
+    ]
+  },
+  {
+    "name": "signed_commits_rebase_merge",
+    "prompt": "My repo requires signed commits and only allows rebase merge. gh pr merge --rebase fails with 'Base branch requires signed commits'. How do I merge?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(fast-forward|--ff-only|local.*merge)"
+      },
+      {
+        "type": "content",
+        "pattern": "(sign|signature|GPG|SSH)"
+      }
+    ]
+  },
+  {
+    "name": "setup_codeowners",
+    "prompt": "Set up a CODEOWNERS file for our project. Frontend is in src/components/, backend in src/api/, and DevOps owns .github/ and docker/.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "CODEOWNERS"
+      },
+      {
+        "type": "content",
+        "pattern": "(src/components|src/api|.github|docker)"
+      }
+    ]
+  },
+  {
+    "name": "git_bisect_find_bug",
+    "prompt": "Tests pass on v2.0.0 but fail on current HEAD. How do I find the commit that introduced the bug?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "bisect"
+      },
+      {
+        "type": "content",
+        "pattern": "(good|bad|start|run)"
+      }
+    ]
+  },
+  {
+    "name": "multi_branch_release_latest",
+    "prompt": "I maintain TYPO3 v12 and v13 branches. When I release v12.0.5 after v13.5.0, the Latest badge moves to v12. How do I prevent this?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "--latest=false"
+      },
+      {
+        "type": "content",
+        "pattern": "(maintenance|non-default|badge)"
+      }
+    ]
+  },
+  {
+    "name": "setup_shellcheck_shfmt",
+    "prompt": "Add shellcheck and shfmt to our CI and pre-commit hooks for shell script quality.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "shellcheck"
+      },
+      {
+        "type": "content",
+        "pattern": "shfmt"
+      }
+    ]
+  },
+  {
+    "name": "git_absorb_workflow",
+    "prompt": "I have review feedback requiring changes across 3 different commits in my branch. How do I fix each commit cleanly without manual interactive rebase?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(git.absorb|git absorb|--fixup)"
+      },
+      {
+        "type": "content",
+        "pattern": "(autosquash|rebase|fixup)"
+      }
+    ]
+  },
+  {
+    "name": "pr_merge_checklist",
+    "prompt": "What should I verify before merging a PR? Give me the complete checklist.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(CI|checks|status|pass)"
+      },
+      {
+        "type": "content",
+        "pattern": "(review|thread|resolved|approved)"
+      },
+      {
+        "type": "content",
+        "pattern": "(rebase|signed|annotation)"
       }
     ]
   }

@@ -5,13 +5,91 @@
       "id": 1,
       "name": "recommend-hooks-go",
       "prompt": "What git hooks should I set up for a Go project? Give me a ready-to-use config.",
-      "expected_output": "Should recommend lefthook with a template config covering pre-commit, commit-msg, pre-push"
+      "expected_output": "Should recommend lefthook with a template config covering pre-commit (gofmt, go vet), commit-msg, pre-push (golangci-lint)"
     },
     {
       "id": 2,
       "name": "recommend-hooks-php",
       "prompt": "What git hooks framework should I use for a TYPO3 PHP extension?",
-      "expected_output": "Should recommend captainhook with setup instructions"
+      "expected_output": "Should recommend captainhook with setup instructions including php-cs-fixer and phpstan"
+    },
+    {
+      "id": 3,
+      "name": "choose-branching-strategy",
+      "prompt": "We're a 4-person team shipping a SaaS product with continuous deployment. Which branching strategy fits best?",
+      "expected_output": "Should recommend GitHub Flow or trunk-based development, explain why Git Flow is overkill for small continuous-deploy teams"
+    },
+    {
+      "id": 4,
+      "name": "breaking-change-commit",
+      "prompt": "Write a conventional commit message for removing the deprecated /api/v1 endpoints.",
+      "expected_output": "Should use feat! or fix! prefix and include BREAKING CHANGE footer explaining migration path"
+    },
+    {
+      "id": 5,
+      "name": "resolve-review-threads",
+      "prompt": "How do I programmatically reply to and resolve PR review threads using the gh CLI?",
+      "expected_output": "Should show gh api graphql mutations for addPullRequestReviewThreadReply and resolveReviewThread"
+    },
+    {
+      "id": 6,
+      "name": "immutable-release-recovery",
+      "prompt": "I deleted a GitHub release v2.0.0 and now I can't recreate it. What happened?",
+      "expected_output": "Should explain GitHub immutable releases (GA Oct 2024), that deleted release tags are permanently blocked, and advise bumping to v2.0.1"
+    },
+    {
+      "id": 7,
+      "name": "signed-commits-rebase",
+      "prompt": "gh pr merge --rebase fails with 'Base branch requires signed commits'. How do I merge this PR?",
+      "expected_output": "Should explain GitHub can't sign rebased commits, recommend local fast-forward merge with --ff-only to preserve original signatures"
+    },
+    {
+      "id": 8,
+      "name": "multi-branch-latest-badge",
+      "prompt": "When I release v11.0.17 after v13.5.0, the Latest badge moves to v11. How to prevent?",
+      "expected_output": "Should recommend --latest=false for non-default branch releases, show gh release edit to reassign badge"
+    },
+    {
+      "id": 9,
+      "name": "git-bisect-automated",
+      "prompt": "Tests pass on v1.0 but fail on HEAD. How do I automate finding the breaking commit?",
+      "expected_output": "Should show git bisect start + git bisect run with test command for automated binary search"
+    },
+    {
+      "id": 10,
+      "name": "cherry-pick-backport",
+      "prompt": "How do I backport a security fix from main to the release/2.x branch?",
+      "expected_output": "Should show git cherry-pick workflow with -x flag, conflict resolution, and force-push if needed"
+    },
+    {
+      "id": 11,
+      "name": "pr-merge-full-lifecycle",
+      "prompt": "Walk me through the complete PR merge lifecycle from CI verification to post-merge cleanup.",
+      "expected_output": "Should cover: gh pr checks, annotation inspection, thread resolution, merge strategy selection, post-merge branch cleanup"
+    },
+    {
+      "id": 12,
+      "name": "setup-branch-protection",
+      "prompt": "Set up branch protection for main requiring 2 reviews, CI checks, and signed commits.",
+      "expected_output": "Should show GitHub branch protection configuration with required_approving_reviews, required_status_checks, and signed commits"
+    },
+    {
+      "id": 13,
+      "name": "semantic-release-setup",
+      "prompt": "Configure semantic release for automated versioning based on conventional commits.",
+      "expected_output": "Should show .releaserc config with commit-analyzer, release-notes-generator, and GitHub Actions integration"
+    },
+    {
+      "id": 14,
+      "name": "git-absorb-review-fixes",
+      "prompt": "I need to fix code in 3 different commits from review feedback. How do I avoid messy interactive rebase?",
+      "expected_output": "Should recommend git-absorb for automatic fixup commit creation, then autosquash rebase"
+    },
+    {
+      "id": 15,
+      "name": "worktree-review-workflow",
+      "prompt": "How do I review a PR without stashing my current work?",
+      "expected_output": "Should recommend git worktree to create separate working directory for the review branch"
     }
   ]
 }
