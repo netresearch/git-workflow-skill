@@ -14,6 +14,17 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 
 Expert patterns for Git version control: branching, commits, collaboration, and CI/CD.
 
+## Critical Rules (Non-Negotiable)
+
+1. **No direct push to main** — always open a PR.
+2. **No merge before all review threads are resolved** — run the merge gate in `references/pull-request-workflow.md`.
+3. **No squash unless user asked** — atomic commits preserved; keeps GPG signatures and bisection.
+4. **No "tested/verified/working" without pasted command output** — if you cannot run the check, say so.
+5. **No edits to installed skill/plugin cache paths** (`~/.claude/skills/`, `~/.claude/plugins/cache/`, `**/.bare/**`) — always the repo worktree. Verify `pwd` first.
+6. **Force-push only with `--force-with-lease`** — never plain `--force`.
+
+See `references/pull-request-workflow.md` for the merge-gate command, atomic-commit guidance, and review-thread SHA-citation pattern.
+
 ## Reference Files
 
 Load references on demand based on the task at hand:
@@ -27,6 +38,7 @@ Load references on demand based on the task at hand:
 | `references/advanced-git.md` | Rebase, cherry-pick, bisect, stash, worktrees, reflog, submodules, recovery |
 | `references/github-releases.md` | Release management, immutable releases, `--latest=false`, multi-branch |
 | `references/git-hooks-setup.md` | Hook frameworks, detection, recommended hooks per stage |
+| `references/claude-code-hooks.md` | Claude Code `settings.json` hooks — merge gate, cache-path rejection, auto-lint |
 | `references/code-quality-tools.md` | shellcheck, shfmt, git-absorb, difftastic |
 
 ## Conventional Commits
@@ -60,9 +72,9 @@ Install: lefthook.yml -> `lefthook install` | captainhook.json -> `composer inst
 
 ## Critical Release Rules
 
-1. **Immutable releases**: Deleted GitHub releases block tag names PERMANENTLY. Never delete releases to "fix" issues -- bump version instead.
-2. **Multi-branch releases**: Always use `--latest=false` when releasing from non-default branches (LTS, maintenance, hotfix).
-3. **Pre-release checklist**: Version updated in source files, CI passes, CHANGELOG updated, `git pull` on main -- verify BEFORE `gh release create`.
+1. **Immutable releases**: Deleted releases permanently block tag reuse; bump version instead.
+2. **Multi-branch releases**: Use `--latest=false` from non-default branches.
+3. **Pre-release**: Version bumped, CI green, CHANGELOG updated, `git pull` BEFORE `gh release create`.
 
 ## PR Merge Requirements
 
