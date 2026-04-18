@@ -38,6 +38,7 @@ Load references on demand based on the task at hand:
 | `references/advanced-git.md` | Rebase, cherry-pick, bisect, stash, worktrees, reflog, submodules, recovery |
 | `references/github-releases.md` | Release management, immutable releases, `--latest=false`, multi-branch |
 | `references/git-hooks-setup.md` | Hook frameworks, detection, recommended hooks per stage |
+| `references/claude-code-hooks.md` | Claude Code `settings.json` hooks — merge gate, cache-path rejection, auto-lint |
 | `references/code-quality-tools.md` | shellcheck, shfmt, git-absorb, difftastic |
 
 ## Conventional Commits
