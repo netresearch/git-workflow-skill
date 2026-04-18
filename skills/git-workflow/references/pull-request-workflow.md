@@ -209,6 +209,80 @@ Nice catch handling the edge case where the array might be empty!
 - [ ] CHANGELOG entry added
 ```
 
+## Atomic Commits (Default — No Squash Unless Asked)
+
+**The project default is atomic commits preserved end-to-end.** Squash is destructive: it loses GPG signatures, collapses bisection granularity, and destroys narrative. Never squash unless the user asks for it in this task.
+
+### What "atomic" means
+
+- One commit = one self-contained logical change
+- Each commit builds and passes tests independently
+- No "WIP", "fixup", or "oops" commits in final history — rebase them away before merge
+- Mixed changes get split (`git add -p`, `git commit --fixup`, `git rebase --autosquash`)
+
+### Preferred merge strategies (in order)
+
+1. **Rebase + merge commit** (`gh pr merge --merge` after `git rebase origin/main`): linear feature history with an explicit merge point. Preserves signatures. This is the default for Netresearch repos.
+2. **Fast-forward merge** (local `git merge --ff-only`): when signed commits are required AND only rebase is allowed (see "Signed Commits with Rebase Merge" below).
+3. **Squash**: only when the user explicitly asks.
+
+### If you catch yourself typing `--squash`
+
+Stop. Re-read the task. Did the user say "squash"? If not, use `--merge` or `--rebase` (with the signed-commits caveat). The correction "no squash! atomic commits!" is a repeat interruption — prevent it by defaulting to merge-commit.
+
+## Review Thread Resolution (SHA Citation Required)
+
+**Never reply with "Addressed" or "Fixed" without citing the resolving commit SHA.** Review threads are resolved on GitHub's side, not by agent assertion.
+
+### Correct reply pattern
+
+```bash
+# After pushing the fix
+SHA=$(git rev-parse HEAD)
+
+gh api graphql -f query='
+  mutation($body: String!, $id: ID!) {
+    addPullRequestReviewThreadReply(input: {body: $body, pullRequestReviewThreadId: $id}) {
+      comment { id }
+    }
+  }' \
+  -f body="Fixed in ${SHA:0:7} — <1-sentence explanation of what changed and why>." \
+  -f id="PRRT_xxx"
+
+# Then resolve the thread
+gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "PRRT_xxx"}) { thread { isResolved } } }'
+```
+
+### Refusing the lazy pattern
+
+These replies are banned:
+- `Addressed` (no SHA, no explanation)
+- `Fixed — merged` (merged what? where?)
+- `Done` (done how?)
+- `Good point, updated` (updated what, in which commit?)
+
+Every resolving reply must include: commit SHA (7+ chars), one sentence of what changed, one sentence of why if not obvious from the diff.
+
+### Verifying thread state from GitHub, not memory
+
+Before declaring a PR review-complete, re-fetch thread state from GitHub. Never trust your own belief about what you resolved:
+
+```bash
+gh api graphql -f query='
+  query($owner: String!, $repo: String!, $pr: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pr) {
+        reviewThreads(first: 100) {
+          nodes { id isResolved comments(first: 1) { nodes { body author { login } } } }
+        }
+      }
+    }
+  }' -f owner=OWNER -f repo=REPO -F pr=NUMBER \
+  | jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {id, first_comment: .comments.nodes[0].body[:80]}'
+```
+
+If that returns any rows, the PR is not merge-ready.
+
 ## Merge Strategies
 
 ### Merge Commit

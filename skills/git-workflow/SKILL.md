@@ -14,6 +14,17 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 
 Expert patterns for Git version control: branching, commits, collaboration, and CI/CD.
 
+## Critical Rules (Non-Negotiable)
+
+1. **No direct push to main** — always open a PR.
+2. **No merge before all review threads are resolved** — run the merge gate in `references/pull-request-workflow.md`.
+3. **No squash unless user asked** — atomic commits preserved; keeps GPG signatures and bisection.
+4. **No "tested/verified/working" without pasted command output** — if you cannot run the check, say so.
+5. **No edits to installed skill/plugin cache paths** (`~/.claude/skills/`, `~/.claude/plugins/cache/`, `**/.bare/**`) — always the repo worktree. Verify `pwd` first.
+6. **Force-push only with `--force-with-lease`** — never plain `--force`.
+
+See `references/pull-request-workflow.md` for the merge-gate command, atomic-commit guidance, and review-thread SHA-citation pattern.
+
 ## Reference Files
 
 Load references on demand based on the task at hand:
