@@ -72,9 +72,9 @@ Install: lefthook.yml -> `lefthook install` | captainhook.json -> `composer inst
 
 ## Critical Release Rules
 
-1. **Immutable releases**: Deleted GitHub releases block tag names PERMANENTLY. Never delete releases to "fix" issues -- bump version instead.
-2. **Multi-branch releases**: Always use `--latest=false` when releasing from non-default branches (LTS, maintenance, hotfix).
-3. **Pre-release checklist**: Version updated in source files, CI passes, CHANGELOG updated, `git pull` on main -- verify BEFORE `gh release create`.
+1. **Immutable releases**: Deleted releases permanently block tag reuse; bump version instead.
+2. **Multi-branch releases**: Use `--latest=false` from non-default branches.
+3. **Pre-release**: Version bumped, CI green, CHANGELOG updated, `git pull` BEFORE `gh release create`.
 
 ## PR Merge Requirements
 

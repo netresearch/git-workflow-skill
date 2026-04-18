@@ -18,6 +18,8 @@ Merge carefully — read the existing `hooks:` block, add to arrays, never repla
 
 Blocks any `gh pr merge` invocation that would merge a PR with unresolved threads or missing approval.
 
+Because the merge-gate logic is non-trivial, keep it as an external script rather than inline JSON. Install `scripts/merge-gate.sh` and reference it:
+
 ```json
 {
   "hooks": {
@@ -28,7 +30,7 @@ Blocks any `gh pr merge` invocation that would merge a PR with unresolved thread
           {
             "type": "command",
             "if": "Bash(gh pr merge *)",
-            "command": "jq -r '.tool_input.command' | awk 'match($0, /gh pr merge[[:space:]]+([0-9]+)/, a) {print a[1]; exit}' | { read -r PR; [ -z \"$PR\" ] && exit 0; STATE=$(gh pr view \"$PR\" --json reviewDecision,mergeStateStatus,reviewThreads 2>/dev/null || echo '{}'); UNRES=$(echo \"$STATE\" | jq '[.reviewThreads.nodes[]? | select(.isResolved==false)] | length'); DEC=$(echo \"$STATE\" | jq -r '.reviewDecision // \"null\"'); MSS=$(echo \"$STATE\" | jq -r '.mergeStateStatus // \"null\"'); if [ \"$UNRES\" -gt 0 ] || [ \"$DEC\" != \"APPROVED\" ] || [ \"$MSS\" != \"CLEAN\" ]; then echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PreToolUse\\\",\\\"permissionDecision\\\":\\\"deny\\\",\\\"permissionDecisionReason\\\":\\\"merge-gate fail: unresolved=$UNRES, review=$DEC, mergeState=$MSS\\\"}}\"; fi; }"
+            "command": "~/.claude/hooks/merge-gate.sh"
           }
         ]
       }
@@ -37,7 +39,47 @@ Blocks any `gh pr merge` invocation that would merge a PR with unresolved thread
 }
 ```
 
-The hook runs the `gh pr view` gate and denies the tool call if any gate fails. The reason string surfaces in the permission prompt.
+`~/.claude/hooks/merge-gate.sh`:
+
+```bash
+#!/usr/bin/env bash
+# Reads the Claude Code hook payload on stdin; emits a PreToolUse deny if the
+# target PR has unresolved review threads, pending/rejected review, or a
+# non-CLEAN merge state.
+set -euo pipefail
+CMD=$(jq -r '.tool_input.command // ""')
+
+# Extract PR identifier. Supports the three forms that cover all real usage:
+#   gh pr merge 123
+#   gh pr merge --auto 123
+#   gh pr merge https://github.com/owner/repo/pull/123
+#   gh pr merge owner/repo#123
+PR=""; REPO_FLAG=()
+if [[ "$CMD" =~ gh[[:space:]]+pr[[:space:]]+merge[[:space:]]+(--[a-z-]+[[:space:]]+)*([0-9]+)([[:space:]]|$) ]]; then
+  PR="${BASH_REMATCH[2]}"
+elif [[ "$CMD" =~ gh[[:space:]]+pr[[:space:]]+merge[[:space:]]+(--[a-z-]+[[:space:]]+)*https?://github\.com/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
+  PR="${BASH_REMATCH[3]}"; REPO_FLAG=(--repo "${BASH_REMATCH[2]}")
+elif [[ "$CMD" =~ gh[[:space:]]+pr[[:space:]]+merge[[:space:]]+(--[a-z-]+[[:space:]]+)*([^/[:space:]]+/[^#[:space:]]+)#([0-9]+) ]]; then
+  PR="${BASH_REMATCH[3]}"; REPO_FLAG=(--repo "${BASH_REMATCH[2]}")
+fi
+
+# Could not parse a PR id — let the call through rather than false-positive block.
+[[ -z "$PR" ]] && exit 0
+
+STATE=$(gh pr view "$PR" "${REPO_FLAG[@]}" \
+  --json reviewDecision,mergeStateStatus,reviewThreads 2>/dev/null) || exit 0
+UNRES=$(echo "$STATE" | jq '[.reviewThreads.nodes[]? | select(.isResolved==false)] | length')
+DEC=$(echo "$STATE" | jq -r '.reviewDecision // "null"')
+MSS=$(echo "$STATE" | jq -r '.mergeStateStatus // "null"')
+
+if [[ "$UNRES" -gt 0 || "$DEC" != "APPROVED" || "$MSS" != "CLEAN" ]]; then
+  jq -cn \
+    --arg r "merge-gate fail: unresolved=$UNRES, review=$DEC, mergeState=$MSS" \
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
+fi
+```
+
+The hook denies `gh pr merge` when any of: review threads unresolved, `reviewDecision != APPROVED`, or `mergeStateStatus != CLEAN`. It parses the three PR-reference forms `gh pr merge` accepts (plain number, full URL, `owner/repo#N`); if parsing fails, the hook allows the call rather than producing false-positive denies.
 
 ## Recipe 2: Reject Edits to Installed Cache Paths
 
