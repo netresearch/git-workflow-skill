@@ -647,39 +647,44 @@ gh api graphql -f query='
   }' -f owner=OWNER -f repo=REPO -F pr=NUMBER
 ```
 
-## Merge Requirements Checklist
+## Merge Gate
 
-Before merging any PR, verify ALL requirements:
+Before merging any PR, run this gate. If any check fails, stop and fix the underlying issue rather than overriding.
 
 ### Pre-Merge Checklist
 
-- [ ] **All review threads resolved** - No unresolved conversations
-- [ ] **Copilot review complete** (if assigned) - Wait for automated review
-- [ ] **Branch rebased on target** - No merge commits in PR branch
-- [ ] **All CI checks pass** - Green status on all required checks
-- [ ] **No CI annotations** - Check job annotations, not just pass/fail (see below)
-- [ ] **Signed commits** - All commits in PR are signed
+- [ ] **All review threads resolved** — no unresolved conversations
+- [ ] **Copilot review complete** (if assigned) — wait for automated review
+- [ ] **Branch rebased on target** — no stray merge commits in PR branch
+- [ ] **All CI checks pass** — green status on every required check
+- [ ] **No CI annotations** — check job annotations, not just pass/fail (see below)
+- [ ] **Signed commits** — every commit in the PR is signed
 
-### Check Programmatically
+### Merge-Gate Command
 
 ```bash
-# Get PR merge requirements status
+# Single command that surfaces every gate input
 gh pr view NUMBER --json \
   reviewDecision,\
   mergeStateStatus,\
   mergeable,\
-  statusCheckRollup
+  statusCheckRollup,\
+  reviewThreads
 
-# Expected for merge-ready:
-# reviewDecision: APPROVED
-# mergeStateStatus: CLEAN
-# mergeable: MERGEABLE
-# statusCheckRollup: all SUCCESS
+# Merge-ready requires ALL of:
+#   reviewDecision      == "APPROVED"
+#   mergeStateStatus    == "CLEAN"
+#   mergeable           == "MERGEABLE"
+#   every statusCheckRollup[].conclusion == "SUCCESS"
+#   every reviewThreads.nodes[].isResolved == true
 
-# Check for CI annotations (warnings that don't fail the check)
+# Check for CI annotations (warnings that don't fail the check but still
+# need addressing — actionlint/shellcheck reviewdog, CodeQL deprecations)
 gh api "repos/{owner}/{repo}/commits/SHA/check-runs" \
   --jq '.check_runs[] | select(.output.annotations_count > 0) | {name: .name, annotations: .output.annotations_count}'
 ```
+
+For automated enforcement at tool-invocation time, see the `merge-gate.sh` hook recipe in `references/claude-code-hooks.md` — it runs this same command via a `PreToolUse` hook and denies `gh pr merge` calls that don't clear every gate.
 
 > **Important:** CI checks can PASS while emitting warning annotations (e.g., actionlint/shellcheck via reviewdog, CodeQL deprecation notices). These are invisible in the PR summary view but visible in the job detail "Annotations" section. Always check for annotations before declaring a PR clean.
 
