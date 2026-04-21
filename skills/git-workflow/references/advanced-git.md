@@ -299,6 +299,60 @@ git worktree remove ../project-feature
 git worktree prune
 ```
 
+### Bare-Worktree Project Layout (Recommended)
+
+**One directory per branch; never switch branches in the same folder.**
+
+Rationale: IDEs that index the tree (gopls, Intellij, VS Code) choke on in-place branch switches, and running parallel work on feature branches without losing the main-branch state is painful. Using a bare repo with per-branch subdirectories gives you parallel checkouts, cheap hotfix spin-ups, and a main checkout that's never "dirty because I was exploring".
+
+```
+/projects/<repo>/
+├── .bare/          # bare git repository (clone --bare)
+├── main/           # main branch worktree
+├── feature-x/      # optional feature branch worktree
+└── bugfix-y/       # optional bugfix branch worktree
+```
+
+**Setup a new project this way:**
+
+```bash
+cd ~/projects
+mkdir <repo> && cd <repo>
+git clone --bare <repository-url> .bare
+
+# Make the bare clone behave like a regular origin fetch target.
+cd .bare && git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" && cd ..
+
+# Check out main into a named subdirectory.
+git -C .bare worktree add ../main main
+```
+
+**Work on a new branch = create a new folder:**
+
+```bash
+git -C .bare worktree add ../feature-x feature-x    # or -b for a new branch
+cd feature-x
+# ... edit, commit, push ...
+cd ..
+git -C .bare worktree list          # audit trail of what's checked out
+git -C .bare worktree remove feature-x   # clean up when the PR merges
+```
+
+When removing a worktree leaves a dangling branch reference (e.g., after deleting the physical directory manually), `git worktree prune` in `.bare/` cleans up the metadata.
+
+**Batch cleanup after a session of PRs:**
+
+```bash
+# For each branch whose PR landed, delete the worktree + local branch:
+for wt in feature-x bugfix-y sync/template-foo; do
+  git -C /projects/<repo>/.bare worktree remove --force /projects/<repo>/$wt 2>&1 | tail -1
+  git -C /projects/<repo>/main branch -D "$wt" 2>&1 | tail -1
+done
+
+# Remote-side pruning (delete stale remote-tracking refs):
+git -C /projects/<repo>/main fetch --prune origin
+```
+
 ### Use Cases
 
 ```bash
