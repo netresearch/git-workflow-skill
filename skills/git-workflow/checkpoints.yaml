@@ -110,7 +110,10 @@ mechanical:
     target: composer.json
     pattern: "captainhook/hook-installer"
     severity: info
-    desc: "If captainhook/hook-installer is in composer.json, document the git-worktree workaround (composer install --no-plugins) in README — see references/git-hooks-setup.md 'CaptainHook + git worktrees'"
+    desc: >-
+      If captainhook/hook-installer is in composer.json, document the
+      git-worktree workaround (composer install --no-plugins) in README —
+      see references/git-hooks-setup.md 'CaptainHook + git worktrees'
 
   # === UNRELEASED COMMITS ===
   - id: GW-15
