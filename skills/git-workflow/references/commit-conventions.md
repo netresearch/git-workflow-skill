@@ -446,7 +446,7 @@ Run every commit with both flags explicit:
 git commit -S --signoff -m "feat: add login endpoint"
 ```
 
-**Why explicit `-S`.** Even with `commit.gpgsign=true` set globally, signing can silently fail in subprocess environments where the SSH agent isn't accessible. An explicit `-S` makes that failure visible instead of shipping an unsigned commit and finding out when branch protection rejects the push.
+**Why explicit `-S`.** Even with `commit.gpgsign=true` set globally, signing can silently fail in subprocess environments where the signing agent (gpg-agent, or ssh-agent when using `gpg.format=ssh`) or its pinentry prompt isn't accessible. An explicit `-S` makes that failure visible instead of shipping an unsigned commit and finding out when branch protection rejects the push.
 
 **Why `--signoff`.** Adds the `Signed-off-by:` trailer. Required for DCO compliance on any repo that has the DCO check enabled (most netresearch repos do).
 
@@ -459,7 +459,9 @@ git config user.email
 
 **Never amend a commit with pre-commit-hook failures.** If the pre-commit hook fails, the commit **did not happen**. Running `git commit --amend` then modifies the PREVIOUS commit, which can destroy work. Fix the hook issue, re-stage, and create a new commit.
 
-**Never skip hooks** unless explicitly told to. `--no-verify`, `--no-gpg-sign`, and `-c commit.gpgsign=false` all bypass enforcement that exists for good reasons. If a hook fails, diagnose the root cause.
+**Never skip hooks** unless explicitly told to. `--no-verify` bypasses hook enforcement that exists for good reasons. If a hook fails, diagnose the root cause.
+
+**Never bypass signing** unless explicitly told to. `--no-gpg-sign` and `-c commit.gpgsign=false` disable commit signing; the result will fail branch-protection or policy checks that require signed commits later.
 
 ## Atomic Commits
 

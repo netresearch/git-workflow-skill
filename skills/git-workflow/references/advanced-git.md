@@ -303,7 +303,7 @@ git worktree prune
 
 **One directory per branch; never switch branches in the same folder.**
 
-Rationale: IDEs that index the tree (gopls, Intellij, VS Code) choke on in-place branch switches, and running parallel work on feature branches without losing the main-branch state is painful. Using a bare repo with per-branch subdirectories gives you parallel checkouts, cheap hotfix spin-ups, and a main checkout that's never "dirty because I was exploring".
+Rationale: IDEs that index the tree (gopls, IntelliJ, VS Code) choke on in-place branch switches, and running parallel work on feature branches without losing the main-branch state is painful. Using a bare repo with per-branch subdirectories gives you parallel checkouts, cheap hotfix spin-ups, and a main checkout that's never "dirty because I was exploring".
 
 ```
 /projects/<repo>/
@@ -313,7 +313,7 @@ Rationale: IDEs that index the tree (gopls, Intellij, VS Code) choke on in-place
 └── bugfix-y/       # optional bugfix branch worktree
 ```
 
-**Setup a new project this way:**
+**Set up a new project this way:**
 
 ```bash
 cd ~/projects
@@ -335,7 +335,7 @@ cd feature-x
 # ... edit, commit, push ...
 cd ..
 git -C .bare worktree list          # audit trail of what's checked out
-git -C .bare worktree remove feature-x   # clean up when the PR merges
+git -C .bare worktree remove ../feature-x   # clean up when the PR merges
 ```
 
 When removing a worktree leaves a dangling branch reference (e.g., after deleting the physical directory manually), `git worktree prune` in `.bare/` cleans up the metadata.
