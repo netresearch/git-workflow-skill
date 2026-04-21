@@ -446,7 +446,7 @@ Run every commit with both flags explicit:
 git commit -S --signoff -m "feat: add login endpoint"
 ```
 
-**Why explicit `-S`.** Even with `commit.gpgsign=true` set globally, signing can silently fail in subprocess environments where the signing agent (gpg-agent, or ssh-agent when using `gpg.format=ssh`) or its pinentry prompt isn't accessible. An explicit `-S` makes that failure visible instead of shipping an unsigned commit and finding out when branch protection rejects the push.
+**Why explicit `-S`.** Git honors `commit.gpgsign=true` only when the global config is actually loaded. Subprocess environments (CI runners, some IDEs, tools that set their own `$HOME` or scrub env) can miss it — you get an unsigned commit with no error, because from git's perspective signing was never requested. An explicit `-S` pins the requirement to the invocation: if the signing agent (gpg-agent, or ssh-agent when using `gpg.format=ssh`) or its pinentry prompt is unreachable, git aborts the commit with an error instead of silently shipping unsigned. You find out now, not when branch protection rejects the push later.
 
 **Why `--signoff`.** Adds the `Signed-off-by:` trailer. Required for DCO compliance on any repo that has the DCO check enabled (most netresearch repos do).
 
