@@ -63,15 +63,19 @@ Then install based on what's found:
 - **Cause**: Git worktrees use a `.git` *pointer file* (e.g. `gitdir: /path/to/bare/worktrees/NAME`),
   not a directory. `captainhook/hook-installer` ≤ 1.x does not resolve the pointer correctly
   and aborts.
-- **Fix (recommended)**: `composer install --no-plugins` — skips captainhook's hook install
-  (and any other composer plugins). Hooks still work in the primary worktree where `.git` is
-  a real directory.
-- **Fix (alternative)**: `mkdir -p "$(git rev-parse --git-dir)/hooks" && composer install` —
-  creates the hooks dir at the actual git-dir location. May or may not work depending on the
-  captainhook version; try `--no-plugins` first.
-- **When this matters**: Netresearch extension repos use a bare-repo + worktrees layout
-  (see the "Git Worktree Convention" in the user's global `CLAUDE.md`). Most dev work happens
-  in feature-branch worktrees where this fires on every `composer install`.
+- **Fix (recommended)**: `mkdir -p "$(git rev-parse --git-path hooks)" && composer install` —
+  creates the hooks dir at the effective hooks path (honors `core.hooksPath` if configured,
+  falls back to `<git-dir>/hooks` otherwise). Works with captainhook's plugin in place, so other
+  Composer plugins (phpstan/extension-installer, TYPO3 composer installers, etc.) continue to
+  auto-register normally.
+- **Fix (last-resort fallback)**: `composer install --no-plugins` — only if the hooks-dir
+  workaround above doesn't resolve it. Be aware this disables *all* Composer plugins for that
+  install, which has broader side effects: phpstan extensions won't auto-register, TYPO3
+  composer installers won't place extensions, and captainhook itself won't install hooks. Hooks
+  still work in the primary worktree where `.git` is a real directory.
+- **When this matters**: Repos using a bare-repo + worktrees layout (see
+  [git-worktree(1)](https://git-scm.com/docs/git-worktree)) hit this on every `composer install`
+  in a secondary worktree, since `.git` is a pointer file rather than a directory.
 - **Cross-reference**: The `netresearch/typo3-ci-workflows` meta-package bundles
   `captainhook/hook-installer`; its README section "Git Worktree + captainhook Workaround"
   is the canonical source.
