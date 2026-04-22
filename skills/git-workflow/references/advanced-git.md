@@ -338,6 +338,45 @@ git -C .bare worktree list          # audit trail of what's checked out
 git -C .bare worktree remove ../feature-x   # clean up when the PR merges
 ```
 
+**Path is resolved relative to `.bare/`, not your current directory.** If you pass a bare name without a prefix:
+
+```bash
+# WRONG — new branch 'feature-x' lands INSIDE the bare repo
+git -C .bare worktree add -b feature-x feature-x main
+# → creates .bare/feature-x as a worktree of the bare repo — the
+#   worktree is functional (it has a .git file pointing at .bare),
+#   but it violates the sibling-layout convention and confuses any
+#   tooling that walks up looking for the repository root
+```
+
+Note on the branch argument: plain `worktree add <path> <branch>` requires the branch to already exist. To create a fresh branch at the same time, use `worktree add -b <branch> <path> <start>` as shown above, or create the branch separately first. Both forms have the same path-resolution behaviour.
+
+Use `../feature-x` (sibling-relative) or an absolute path:
+
+```bash
+# RIGHT — sibling of .bare
+git -C .bare worktree add -b feature-x ../feature-x main
+
+# ALSO RIGHT — absolute path
+git -C /projects/<repo>/.bare worktree add -b feature-x /projects/<repo>/feature-x main
+```
+
+**Recovery if you already created the worktree in the wrong place:**
+
+```bash
+# Use absolute paths for BOTH source and destination. The -C .bare
+# flag makes `worktree move` resolve relative paths against .bare/,
+# so `.bare/feature-x` would be interpreted as `.bare/.bare/feature-x`
+# and wouldn't find the misplaced worktree.
+git -C /projects/<repo>/.bare worktree move \
+  /projects/<repo>/.bare/feature-x \
+  /projects/<repo>/feature-x
+```
+
+(Alternatively, drop `-C .bare` and run from the repo parent; then the
+source `.bare/feature-x` resolves against that parent rather than
+against `.bare/`.)
+
 When removing a worktree leaves a dangling branch reference (e.g., after deleting the physical directory manually), `git worktree prune` in `.bare/` cleans up the metadata.
 
 **Batch cleanup after a session of PRs:**
