@@ -41,18 +41,19 @@ mechanical:
     desc: "PR template should exist for consistent pull requests"
 
   # === CODEOWNERS ===
+  # GitHub looks for CODEOWNERS in this order: .github/CODEOWNERS, root,
+  # docs/CODEOWNERS. Either of the first two satisfies the requirement;
+  # `.github/CODEOWNERS` is the Netresearch standard. The previous GW-07
+  # ("root CODEOWNERS as fallback") was redundant info noise — collapsed
+  # into GW-06's brace-target.
   - id: GW-06
     type: file_exists
-    target: .github/CODEOWNERS
+    target: "{.github/CODEOWNERS,CODEOWNERS,docs/CODEOWNERS}"
     severity: warning
-    desc: "CODEOWNERS should exist for automatic review assignments"
-
-  - id: GW-07
-    type: file_exists
-    target: CODEOWNERS
-    severity: info
-    desc: "CODEOWNERS in root (fallback location; .github/CODEOWNERS is the primary per GitHub docs)"
-    # Note: Root CODEOWNERS is the fallback; .github/CODEOWNERS (GW-06) is the standard primary location
+    desc: >-
+      CODEOWNERS should exist for automatic review assignments.
+      Netresearch standard: .github/CODEOWNERS (GitHub's primary lookup
+      location). Root and docs/ are fallbacks per GitHub docs.
 
   # === BRANCH PROTECTION INDICATORS ===
   - id: GW-08
@@ -99,11 +100,19 @@ mechanical:
     desc: "CONTRIBUTING.md should exist with workflow guidelines"
 
   # === GIT HOOKS ===
+  # Accept all common git-hook framework locations including the Netresearch
+  # standard `Build/captainhook.json` (configured via composer.json
+  # extra.captainhook.config — the official captainhook/hook-installer
+  # plugin pattern). Same brace target as TT-71 in typo3-testing-skill.
   - id: GW-14
     type: file_exists
-    target: "{lefthook.yml,.lefthook.yml,captainhook.json,.husky,.pre-commit-config.yaml}"
+    target: "{Build/captainhook.json,captainhook.json,.captainhook/captainhook.json,lefthook.yml,.lefthook.yml,.husky,.pre-commit-config.yaml}"
     severity: warning
-    desc: "A git hook framework config should exist (lefthook, captainhook, husky, or pre-commit)"
+    desc: >-
+      A git hook framework config should exist. Netresearch standard for
+      TYPO3 extensions: Build/captainhook.json (declared in composer.json
+      extra.captainhook.config). Also accepts root captainhook.json,
+      lefthook, husky, pre-commit.
 
   - id: GW-14a
     type: contains
