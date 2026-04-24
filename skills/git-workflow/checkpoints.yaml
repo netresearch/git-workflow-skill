@@ -50,7 +50,10 @@ mechanical:
     type: file_exists
     target: "{.github/CODEOWNERS,CODEOWNERS,docs/CODEOWNERS}"
     severity: warning
-    desc: "CODEOWNERS should exist for automatic review assignments. Netresearch standard: .github/CODEOWNERS (GitHub's primary lookup location). Root and docs/ are fallbacks per GitHub docs."
+    desc: >-
+      CODEOWNERS should exist for automatic review assignments.
+      Netresearch standard: .github/CODEOWNERS (GitHub's primary lookup
+      location). Root and docs/ are fallbacks per GitHub docs.
 
   # === BRANCH PROTECTION INDICATORS ===
   - id: GW-08
@@ -105,7 +108,11 @@ mechanical:
     type: file_exists
     target: "{Build/captainhook.json,captainhook.json,.captainhook/captainhook.json,lefthook.yml,.lefthook.yml,.husky,.pre-commit-config.yaml}"
     severity: warning
-    desc: "A git hook framework config should exist. Netresearch standard for TYPO3 extensions: Build/captainhook.json (declared in composer.json extra.captainhook.config). Also accepts root captainhook.json, lefthook, husky, pre-commit."
+    desc: >-
+      A git hook framework config should exist. Netresearch standard for
+      TYPO3 extensions: Build/captainhook.json (declared in composer.json
+      extra.captainhook.config). Also accepts root captainhook.json,
+      lefthook, husky, pre-commit.
 
   - id: GW-14a
     type: contains
