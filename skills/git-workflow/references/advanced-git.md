@@ -338,11 +338,12 @@ git -C .bare worktree list          # audit trail of what's checked out
 git -C .bare worktree remove ../feature-x   # clean up when the PR merges
 ```
 
-**Path is resolved relative to `.bare/`, not your current directory.** If you pass a bare name without a prefix:
+**Any relative path argument is resolved relative to `.bare/`, not your shell's current directory** — `git -C <dir>` makes `<dir>` git's working directory for the whole command, including how it interprets the `<path>` argument to `worktree add`. This applies to every form of the command, regardless of whether `-b` comes before or after the path:
 
 ```bash
-# WRONG — new branch 'feature-x' lands INSIDE the bare repo
+# WRONG — both of these land INSIDE the bare repo
 git -C .bare worktree add -b feature-x feature-x main
+git -C .bare worktree add feature-x -b feature-x main
 # → creates .bare/feature-x as a worktree of the bare repo — the
 #   worktree is functional (it has a .git file pointing at .bare),
 #   but it violates the sibling-layout convention and confuses any
@@ -351,14 +352,15 @@ git -C .bare worktree add -b feature-x feature-x main
 
 Note on the branch argument: plain `worktree add <path> <branch>` requires the branch to already exist. To create a fresh branch at the same time, use `worktree add -b <branch> <path> <start>` as shown above, or create the branch separately first. Both forms have the same path-resolution behaviour.
 
-Use `../feature-x` (sibling-relative) or an absolute path:
+**Prefer absolute paths.** They're unambiguous regardless of where the command runs from — important when scripts, agents, or `/loop`-style sessions construct the command without a fixed cwd. Sibling-relative `../` works for humans typing from the repo parent but is brittle anywhere else.
 
 ```bash
-# RIGHT — sibling of .bare
-git -C .bare worktree add -b feature-x ../feature-x main
-
-# ALSO RIGHT — absolute path
+# RIGHT — absolute path (preferred; works from any cwd)
 git -C /projects/<repo>/.bare worktree add -b feature-x /projects/<repo>/feature-x main
+
+# Also fine when you're certain of cwd — sibling-relative resolves
+# against .bare/, so '..' lands next to it.
+git -C .bare worktree add -b feature-x ../feature-x main
 ```
 
 **Recovery if you already created the worktree in the wrong place:**
