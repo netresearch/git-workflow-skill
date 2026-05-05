@@ -647,6 +647,60 @@ gh api graphql -f query='
   }' -f owner=OWNER -f repo=REPO -F pr=NUMBER
 ```
 
+## Diagnosing CI Failures (Annotations First)
+
+> Failure first-step, not pre-merge gate. The Merge Gate below uses `annotations_count` as a *warnings present?* signal after success. This section is the inverse: when a workflow has *failed* and you don't yet know why, read the annotation text **first**, before any other diagnostic action.
+
+### Anti-pattern
+
+When a GitHub Actions run fails — especially with `startup_failure`, "no jobs ran", "config invalid", or any failure where the PR summary view shows just a red X with no detail — do **not**:
+
+- Speculate about transient infra issues
+- Blame upstream commits or reusable-workflow regressions
+- Diff the workflow YAML against the last known good revision
+- Re-run the workflow hoping it passes
+
+…before reading the check-runs annotations. The literal validator error is almost always sitting there in one line. Annotations are **invisible in the PR summary view** — they're only rendered in the Actions UI under each job's "Annotations" panel, easy to miss.
+
+### Recipe
+
+```bash
+SHA=$(git rev-parse HEAD)  # or the failing commit SHA
+
+# 1. Find every check run on that commit that has annotations
+#    {owner}/{repo} are gh api placeholders — auto-resolved from cwd or $GH_REPO
+gh api "repos/{owner}/{repo}/commits/$SHA/check-runs" --paginate \
+  --jq '.check_runs[] | select(.output?.annotations_count? // 0 > 0) | "\(.id)\t\(.name)"' |
+while IFS=$'\t' read -r run_id name; do
+  echo "=== $name ==="
+  # 2. Print the annotation text (level, file, line, message).
+  #    --paginate guards against runs with > 100 annotations (rare for startup
+  #    failures, common for linters like reviewdog).
+  gh api "repos/{owner}/{repo}/check-runs/$run_id/annotations" --paginate \
+    --jq '.[] | "[\(.annotation_level)] \(.path):\(.start_line) \(.message)"'
+  echo ""
+done
+```
+
+Drop this into the troubleshooting flow as **step 0**. If the annotations are empty, *then* fall back to logs (`gh run view RUN_ID --log-failed`) and YAML diffs.
+
+### Real-world example
+
+A reusable-workflow caller failed with `startup_failure` and zero jobs. Multiple turns were spent blaming upstream `netresearch/typo3-ci-workflows@main` commits and even pinning to a known-good SHA as a workaround. The annotation said the actual cause in one line:
+
+> Error calling workflow '...'. The nested job 'preflight' is requesting 'actions: read', but is only allowed 'actions: none'.
+
+Fix: one-line `actions: read` add to the caller's `permissions:` block ([t3x-nr-passkeys-be@0533835](https://github.com/netresearch/t3x-nr-passkeys-be/commit/0533835)). Reading the annotations first would have collapsed a 6-step diagnostic loop into a 2-step fix.
+
+### Relationship to the Merge Gate annotations check
+
+| Stage | Question | Endpoint |
+|-------|----------|----------|
+| Failure diagnosis (this section) | "Why did the run fail?" | `/check-runs/{id}/annotations` (read messages) |
+| Pre-merge gate (below) | "Are there warnings to clear before merging green CI?" | `/commits/{sha}/check-runs` (count > 0) |
+
+Same endpoint family, different question — read the annotation text on failure, count it on success.
+
 ## Merge Gate
 
 Before merging any PR, run this gate. If any check fails, stop and fix the underlying issue rather than overriding.
@@ -851,3 +905,4 @@ git push origin --delete <branch-name>
 | `BLOCKED` with all checks green | Unresolved review threads (even from old commits) | Resolve all threads via GraphQL |
 | Auto-merge dropped after push | New commits nullify `autoMergeRequest` | Re-queue with `gh pr merge --auto` |
 | CI annotations but status green | Reviewdog warnings don't block by default | Fix annotations or set `fail_level: error` |
+| `startup_failure` / "no jobs ran" / config invalid | Workflow validator rejected the run before any job started | Read annotations first (see [Diagnosing CI Failures (Annotations First)](#diagnosing-ci-failures-annotations-first) above) — the literal validator error is in one line |
