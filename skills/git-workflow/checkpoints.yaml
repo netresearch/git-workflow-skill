@@ -75,7 +75,10 @@ mechanical:
     endpoint: repos/{owner}/{repo}/branches/main/protection
     json_path: ".enforce_admins.enabled"
     severity: info
-    desc: "Branch protection should apply to admins too"
+    desc: >-
+      Branch protection MAY apply to admins too. Org default at netresearch
+      leaves this off so admins keep bypass for emergency response; tighten
+      to true only if your policy requires admin-bind.
 
   # === SIGNED COMMITS REQUIREMENT ===
   - id: GW-11
