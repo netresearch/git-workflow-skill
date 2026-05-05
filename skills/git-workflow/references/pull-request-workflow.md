@@ -668,12 +668,15 @@ When a GitHub Actions run fails — especially with `startup_failure`, "no jobs 
 SHA=$(git rev-parse HEAD)  # or the failing commit SHA
 
 # 1. Find every check run on that commit that has annotations
-gh api "repos/OWNER/REPO/commits/$SHA/check-runs" --paginate \
-  --jq '.check_runs[] | select(.output.annotations_count > 0) | "\(.id)\t\(.name)"' |
+#    {owner}/{repo} are gh api placeholders — auto-resolved from cwd or $GH_REPO
+gh api "repos/{owner}/{repo}/commits/$SHA/check-runs" --paginate \
+  --jq '.check_runs[] | select(.output?.annotations_count? // 0 > 0) | "\(.id)\t\(.name)"' |
 while IFS=$'\t' read -r run_id name; do
   echo "=== $name ==="
-  # 2. Print the annotation text (level, file, line, message)
-  gh api "repos/OWNER/REPO/check-runs/$run_id/annotations" \
+  # 2. Print the annotation text (level, file, line, message).
+  #    --paginate guards against runs with > 100 annotations (rare for startup
+  #    failures, common for linters like reviewdog).
+  gh api "repos/{owner}/{repo}/check-runs/$run_id/annotations" --paginate \
     --jq '.[] | "[\(.annotation_level)] \(.path):\(.start_line) \(.message)"'
   echo ""
 done
@@ -902,4 +905,4 @@ git push origin --delete <branch-name>
 | `BLOCKED` with all checks green | Unresolved review threads (even from old commits) | Resolve all threads via GraphQL |
 | Auto-merge dropped after push | New commits nullify `autoMergeRequest` | Re-queue with `gh pr merge --auto` |
 | CI annotations but status green | Reviewdog warnings don't block by default | Fix annotations or set `fail_level: error` |
-| `startup_failure` / "no jobs ran" / config invalid | Workflow validator rejected the run before any job started | Read annotations first (see "Diagnosing CI Failures" above) — the literal validator error is in one line |
+| `startup_failure` / "no jobs ran" / config invalid | Workflow validator rejected the run before any job started | Read annotations first (see [Diagnosing CI Failures (Annotations First)](#diagnosing-ci-failures-annotations-first) above) — the literal validator error is in one line |
