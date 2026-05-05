@@ -277,7 +277,7 @@ llm_reviews:
 
   # === BARE-WORKTREE LAYOUT ===
   - id: GW-29
-    domain: branching
+    domain: git-workflow
     severity: warning
     desc: "Bare-worktree layout: never switch branches in an existing worktree — use `git worktree add`"
     prompt: |
@@ -286,13 +286,20 @@ llm_reviews:
       Standard discovery: `ls -d .bare/ 2>/dev/null && git -C .bare worktree list`.
 
       If the layout is in use, verify the working pattern:
-      1. Recent reflog of any worktree should NOT show `git checkout -b <newbranch>`
-         or `git switch -c <newbranch>` events (those create branches in place).
+      1. Recent reflog of any worktree should NOT show in-place branch switch
+         events such as `checkout: moving from <a> to <b>` or
+         `switch: moving from <a> to <b>` (these are recorded by `git checkout`
+         and `git switch`, including the `-b`/`-c` create-and-switch variants).
       2. New branches should appear as new worktree directories, registered via
          `git worktree add <path> -b <branch>`.
 
-      Pass when no in-place branch creation is found in the last ~50 reflog
-      entries across worktrees. Warn when in-place creation events exist —
+      Use `git reflog show HEAD -n 50` inside each worktree to inspect entries.
+      Note: the reflog records the resulting move, not the CLI flags — so
+      `checkout -b feat/x` and `switch feat/x` both surface as
+      `checkout:`/`switch: moving from … to …` lines.
+
+      Pass when no in-place branch switching is found in the last ~50 reflog
+      entries across worktrees. Warn when in-place switch events exist —
       they violate the convention and produce branches that are confusing to
       reason about (working tree vs branch tip diverge for the original
       worktree's intended branch).
