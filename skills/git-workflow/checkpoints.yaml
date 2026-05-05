@@ -274,3 +274,35 @@ llm_reviews:
       Identify release workflows by filename (release, publish) or content (gh release create, semantic-release).
       For each, check for workflow_dispatch trigger.
       Flag missing workflow_dispatch as warning.
+
+  # === BARE-WORKTREE LAYOUT ===
+  - id: GW-29
+    domain: git-workflow
+    severity: warning
+    desc: "Bare-worktree layout: never switch branches in an existing worktree — use `git worktree add`"
+    prompt: |
+      Detect bare-worktree layout: a `.bare/` directory at the repo root
+      AND at least one sibling worktree directory (e.g. `main/`, `feat-*/`).
+      Standard discovery: `ls -d .bare/ 2>/dev/null && git -C .bare worktree list`.
+
+      If the layout is in use, verify the working pattern:
+      1. Recent reflog of any worktree should NOT show in-place branch switch
+         events such as `checkout: moving from <a> to <b>` or
+         `switch: moving from <a> to <b>` (these are recorded by `git checkout`
+         and `git switch`, including the `-b`/`-c` create-and-switch variants).
+      2. New branches should appear as new worktree directories, registered via
+         `git worktree add <path> -b <branch>`.
+
+      Use `git reflog show HEAD -n 50` inside each worktree to inspect entries.
+      Note: the reflog records the resulting move, not the CLI flags — so
+      `checkout -b feat/x` and `switch feat/x` both surface as
+      `checkout:`/`switch: moving from … to …` lines.
+
+      Pass when no in-place branch switching is found in the last ~50 reflog
+      entries across worktrees. Warn when in-place switch events exist —
+      they violate the convention and produce branches that are confusing to
+      reason about (working tree vs branch tip diverge for the original
+      worktree's intended branch).
+
+      Skip cleanly (pass) when the repo is a regular clone (`.git/` is a
+      directory, no `.bare/` sibling) — the convention does not apply.
