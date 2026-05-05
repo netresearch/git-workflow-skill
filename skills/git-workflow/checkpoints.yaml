@@ -76,9 +76,9 @@ mechanical:
     json_path: ".enforce_admins.enabled"
     severity: info
     desc: >-
-      Branch protection MAY apply to admins too. Org default at netresearch
+      Branch protection may apply to admins too. Org default at Netresearch
       leaves this off so admins keep bypass for emergency response; tighten
-      to true only if your policy requires admin-bind.
+      to true only if your policy requires admin enforcement.
 
   # === SIGNED COMMITS REQUIREMENT ===
   - id: GW-11
