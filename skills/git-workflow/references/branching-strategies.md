@@ -315,6 +315,27 @@ main:
   code_owner_approval_required: true
 ```
 
+## Check the Default Branch Before Operating
+
+Not every repo uses `main` — older repos often use `master`, and some use
+`develop` or `trunk`. Before pushing, opening a PR, or scripting across many
+repos, resolve the actual default branch instead of assuming:
+
+```bash
+gh repo view OWNER/REPO --json defaultBranchRef --jq '.defaultBranchRef.name'
+```
+
+Assuming the wrong name silently pushes to (or creates) the wrong branch, or
+targets a PR at a branch that isn't the integration branch.
+
+## Prefer the `gh` CLI / GitHub MCP Over Raw API or Web UI
+
+For GitHub operations (PRs, issues, reviews, releases), reach for `gh` or the
+GitHub MCP tools before hand-rolling `curl`/REST calls or clicking through the
+web UI: consistent authentication, structured `--json` output, and clearer
+errors. Drop to raw `gh api` only for endpoints the porcelain commands don't
+cover yet.
+
 ## Migration Between Strategies
 
 ### Git Flow → GitHub Flow
