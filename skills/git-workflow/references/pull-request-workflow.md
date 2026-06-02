@@ -554,6 +554,25 @@ git commit
 git push
 ```
 
+### `--force-with-lease` Rejected with "stale info"
+
+On PRs that bots touch (auto-approve, Renovate/Dependabot, a CI step that pushes), `git push --force-with-lease` can be rejected with `stale info` even when your local work is correct: a bot updated the remote branch since your last fetch, so the lease's expected ref (your `origin/<branch>` tracking ref) no longer matches and the push aborts. This is the safety check working — don't escalate to plain `--force`.
+
+Fetch, see what arrived, then push — the lease now matches the ref you just fetched:
+
+```bash
+BR=feature/my-feature
+git fetch origin "$BR"
+git log HEAD..origin/"$BR"               # what the bot pushed — safe to discard?
+git push --force-with-lease origin "$BR" # lease compares against the fetched tracking ref
+```
+
+If a bot keeps pushing inside the fetch→push window so the plain lease never matches, pin it to the head you just inspected. This pins, not skips, the check — it accepts exactly that SHA, so only run it right after the `git log` above confirms those commits are safe to discard:
+
+```bash
+git push --force-with-lease="$BR:$(git rev-parse origin/"$BR")" origin "$BR"
+```
+
 ### Complex Conflicts
 
 ```bash

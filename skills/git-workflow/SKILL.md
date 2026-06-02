@@ -32,7 +32,7 @@ Load references on demand based on the task at hand:
 | Reference | Content Triggers |
 |-----------|-----------------|
 | `references/branching-strategies.md` | Branching model, Git Flow, GitHub Flow, trunk-based, branch protection |
-| `references/commit-conventions.md` | Commit messages, conventional commits, semantic versioning, commitlint |
+| `references/commit-conventions.md` | Commit messages, conventional commits, DCO sign-off, semantic versioning, commitlint |
 | `references/pull-request-workflow.md` | PR create/review/merge, thread resolution, merge strategies, CODEOWNERS, signed commits + rebase |
 | `references/ci-cd-integration.md` | GitHub Actions, GitLab CI, semantic release, deployment |
 | `references/advanced-git.md` | Rebase, cherry-pick, bisect, stash, worktrees, reflog, submodules, recovery |

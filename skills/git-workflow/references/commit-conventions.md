@@ -123,6 +123,16 @@ When a conflict is detected, the operation is retried with fresh data.
 The retry limit is set to 3 attempts to prevent infinite loops.
 ```
 
+**Write multi-line or special-char bodies to a file, not inline `-m`.** The shell parses a double-quoted `-m "..."` before git sees it: an *unescaped* `"` in the body closes the string early, after which a bare `&` backgrounds the fragment and the message silently truncates (a tell-tale `... command not found` may scroll past). Even with the quotes balanced, the shell still expands `$var`, `` `cmd` ``/`$(...)`, and backslashes inside double quotes, so a body containing those is altered. A file or a *single-quoted* heredoc (`<<'EOF'`) sidesteps all of it — the text is passed verbatim:
+
+```bash
+git commit -S --signoff -F - <<'EOF'
+fix: prevent race condition in order processing
+
+Body may contain "quotes", & ampersands, `backticks` — all literal.
+EOF
+```
+
 ### Footer
 
 ```bash
