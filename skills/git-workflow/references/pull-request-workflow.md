@@ -263,6 +263,15 @@ These replies are banned:
 
 Every resolving reply must include: commit SHA (7+ chars), one sentence of what changed, one sentence of why if not obvious from the diff.
 
+### Verifying AI-reviewer claims before acting
+
+AI reviewers (GitHub Copilot, Gemini Code Assist, SonarCloud) mix correct findings with confident hallucinations. Before applying **or** declining a review comment, verify its load-bearing factual claim against an authoritative source — the framework/library code, official docs, or a quick local probe — not the reviewer's assertion alone.
+
+- **Applying blindly** ships wrong code (e.g. an edit based on a false API claim, which may also fail your own linter/type-checker).
+- **Declining blindly** dismisses real bugs — the same reviewer is often right about the next comment.
+
+Reply citing the evidence either way. When you applied a change, the reply must still carry the commit SHA and the what/why required above (e.g. `Verified against <source>: <fact> — applied in <SHA>, which …`); when you declined, state the source and fact (e.g. `Verified against <source>: <fact> — declining.`). When the suggestion is a code change, run the project's checks (lint, types, tests) on it before resolving, so the reply cites a green result rather than a guess.
+
 ### Verifying thread state from GitHub, not memory
 
 Before declaring a PR review-complete, re-fetch thread state from GitHub. Never trust your own belief about what you resolved:
