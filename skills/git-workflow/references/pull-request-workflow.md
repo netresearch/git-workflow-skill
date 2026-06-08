@@ -789,11 +789,11 @@ gh api repos/{owner}/{repo}/rules/branches/BASE \
 ```
 
 The common culprit is a `copilot_code_review` rule: it requires a Copilot
-review on the **latest commit**. A push *may* trigger a fresh review but does
-not always, and Copilot is not reliably re-requested automatically — so never
+review on the **latest commit**. A push *may* trigger a fresh review, but not
+always, and Copilot is not reliably re-requested automatically — so never
 assume the review state tracks your latest commit. If the gate is blocked and
-the bot's latest review predates the head `oid`, re-request explicitly, then
-re-poll the gate:
+the bot's latest review is on a commit that predates the head, re-request
+explicitly, then re-poll the gate:
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/NUMBER/requested_reviewers \
@@ -809,12 +809,12 @@ sometimes after a push): `mergeStateStatus` can read `CLEAN` for a few seconds
 before the bot posts its comments, and merging then strands fresh review
 threads on a closed PR. A **pending review request is the in-progress signal** —
 treat the PR as not ready while it persists. Poll until the request clears
-*and* the bot's latest review lands on the head commit `oid`:
+*and* the bot's latest review matches the head commit `oid`:
 
 ```bash
 gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:NUMBER){
   headRefOid
-  reviewRequests(first:10){nodes{requestedReviewer{... on Bot{login}}}}
+  reviewRequests(first:10){nodes{requestedReviewer{... on Bot{login} ... on User{login}}}}
   reviews(last:20){nodes{author{login} state commit{oid}}}}}}'  # last:N must exceed the review count
 # Ready only when: no pending reviewRequests AND the bot's latest review.commit.oid == headRefOid.
 ```
