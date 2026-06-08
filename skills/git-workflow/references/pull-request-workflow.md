@@ -736,7 +736,7 @@ Before merging any PR, run this gate. If any check fails, stop and fix the under
 ### Pre-Merge Checklist
 
 - [ ] **All review threads resolved** — no unresolved conversations
-- [ ] **Copilot review complete on the _latest_ commit** (if assigned) — a `copilot_code_review` ruleset re-blocks after every push; see "Rulesets" below
+- [ ] **No ongoing review, and the bot's latest review is on the head commit** (if assigned) — a `copilot_code_review` ruleset can re-block when the head changes; see "Rulesets" below
 - [ ] **Rulesets checked** — `gh api repos/{owner}/{repo}/rules/branches/BASE`, not just classic branch protection
 - [ ] **Branch rebased on target** — no stray merge commits in PR branch
 - [ ] **All CI checks pass** — green status on every required check
@@ -789,9 +789,11 @@ gh api repos/{owner}/{repo}/rules/branches/BASE \
 ```
 
 The common culprit is a `copilot_code_review` rule: it requires a Copilot
-review on the **latest commit**, so any push after Copilot's last review
-re-blocks the PR — and Copilot is **not** re-requested automatically. Re-request
-it explicitly, then re-poll the gate:
+review on the **latest commit**. A push *may* trigger a fresh review, but not
+always, and Copilot is not reliably re-requested automatically — so never
+assume the review state tracks your latest commit. If the gate is blocked and
+the bot's latest review is on a commit that predates the head, re-request
+explicitly, then re-poll the gate:
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/NUMBER/requested_reviewers \
@@ -801,18 +803,18 @@ gh api repos/{owner}/{repo}/pulls/NUMBER/requested_reviewers \
 (`gh pr edit --add-reviewer` rejects the bot login with "Could not resolve
 user"; the REST `requested_reviewers` endpoint is the working path.)
 
-**Wait for in-progress reviews — don't merge on a transient `CLEAN`.** After
-re-requesting (or right after a push), the reviewer's review is *in progress*:
-`mergeStateStatus` can read `CLEAN` for a few seconds before the bot posts its
-comments, and merging then strands fresh review threads on a closed PR. A
-**pending review request is the in-progress signal** — treat the PR as not
-ready while it persists. Poll until the request clears *and* the review lands
-on the latest commit `oid`:
+**Always check for an ongoing review before merging — don't merge on a
+transient `CLEAN`.** A bot review can be *in progress* (after a re-request, and
+sometimes after a push): `mergeStateStatus` can read `CLEAN` for a few seconds
+before the bot posts its comments, and merging then strands fresh review
+threads on a closed PR. A **pending review request is the in-progress signal** —
+treat the PR as not ready while it persists. Poll until the request clears
+*and* the bot's latest review matches the head commit `oid`:
 
 ```bash
 gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:NUMBER){
   headRefOid
-  reviewRequests(first:10){nodes{requestedReviewer{... on Bot{login}}}}
+  reviewRequests(first:10){nodes{requestedReviewer{... on Bot{login} ... on User{login}}}}
   reviews(last:20){nodes{author{login} state commit{oid}}}}}}'  # last:N must exceed the review count
 # Ready only when: no pending reviewRequests AND the bot's latest review.commit.oid == headRefOid.
 ```
