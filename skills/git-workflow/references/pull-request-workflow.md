@@ -736,7 +736,8 @@ Before merging any PR, run this gate. If any check fails, stop and fix the under
 ### Pre-Merge Checklist
 
 - [ ] **All review threads resolved** — no unresolved conversations
-- [ ] **Copilot review complete** (if assigned) — wait for automated review
+- [ ] **Copilot review complete on the _latest_ commit** (if assigned) — a `copilot_code_review` ruleset re-blocks after every push; see "Rulesets" below
+- [ ] **Rulesets checked** — `gh api repos/{owner}/{repo}/rules/branches/BASE`, not just classic branch protection
 - [ ] **Branch rebased on target** — no stray merge commits in PR branch
 - [ ] **All CI checks pass** — green status on every required check
 - [ ] **No CI annotations** — check job annotations, not just pass/fail (see below)
@@ -770,6 +771,58 @@ gh api "repos/{owner}/{repo}/commits/SHA/check-runs" \
 For automated enforcement at tool-invocation time, see the `merge-gate.sh` hook recipe in `references/claude-code-hooks.md`. The hook enforces the **runtime-checkable subset** — `reviewDecision`, `mergeStateStatus`, and unresolved thread count — which covers the most common block reasons. Signed-commits and CI-annotations checks are not enforced by the hook (annotations in particular require the commit-level API call above); rely on the repo's branch-protection rules and local pre-commit hook for those.
 
 > **Important:** CI checks can PASS while emitting warning annotations (e.g., actionlint/shellcheck via reviewdog, CodeQL deprecation notices). These are invisible in the PR summary view but visible in the job detail "Annotations" section. Always check for annotations before declaring a PR clean.
+
+### Rulesets: the gate `gh pr view` doesn't show
+
+`mergeStateStatus: BLOCKED` with `reviewDecision: ""`, every check green, and
+every thread resolved almost always means a **repository ruleset** — rulesets
+are evaluated for merge but are invisible to both the merge-gate `gh pr view`
+and the classic `branches/{branch}/protection` API. Don't discover this by
+trial-and-error; fetch the *effective* rules as part of the gate:
+
+```bash
+# gh resolves {owner}/{repo} from git context but NOT the branch — fill in BASE,
+# the branch you merge INTO (e.g. main / develop), not the feature branch.
+# The endpoint returns an array of rule objects, so group_by(.type) works:
+gh api repos/{owner}/{repo}/rules/branches/BASE \
+  --jq 'group_by(.type)[] | {type: .[0].type, n: length}'
+```
+
+The common culprit is a `copilot_code_review` rule: it requires a Copilot
+review on the **latest commit**, so any push after Copilot's last review
+re-blocks the PR — and Copilot is **not** re-requested automatically. Re-request
+it explicitly, then re-poll the gate:
+
+```bash
+gh api repos/{owner}/{repo}/pulls/NUMBER/requested_reviewers \
+  -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
+```
+
+(`gh pr edit --add-reviewer` rejects the bot login with "Could not resolve
+user"; the REST `requested_reviewers` endpoint is the working path.)
+
+**Wait for in-progress reviews — don't merge on a transient `CLEAN`.** After
+re-requesting (or right after a push), the reviewer's review is *in progress*:
+`mergeStateStatus` can read `CLEAN` for a few seconds before the bot posts its
+comments, and merging then strands fresh review threads on a closed PR. A
+**pending review request is the in-progress signal** — treat the PR as not
+ready while it persists. Poll until the request clears *and* the review lands
+on the latest commit `oid`:
+
+```bash
+gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:NUMBER){
+  headRefOid
+  reviewRequests(first:10){nodes{requestedReviewer{... on Bot{login}}}}
+  reviews(last:20){nodes{author{login} state commit{oid}}}}}}'  # last:N must exceed the review count
+# Ready only when: no pending reviewRequests AND the bot's latest review.commit.oid == headRefOid.
+```
+
+Other ruleset rules to expect: `required_approving_review_count`, `required_review_thread_resolution`, `non_fast_forward`.
+
+> **Front-load the whole picture.** Gather merge state, checks, rulesets,
+> requested reviewers, and thread IDs in one mechanical block before reasoning
+> about merge-readiness — see the Merge-Gate Command above plus this ruleset
+> call. Discovering gates one round-trip at a time is the anti-pattern.
 
 ## Signed Commits with Rebase Merge
 
