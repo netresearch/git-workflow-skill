@@ -781,7 +781,9 @@ and the classic `branches/{branch}/protection` API. Don't discover this by
 trial-and-error; fetch the *effective* rules as part of the gate:
 
 ```bash
-gh api repos/{owner}/{repo}/rules/branches/{branch} \
+# gh resolves {owner}/{repo} from git context; the branch is NOT resolved, so
+# name it — use the PR's BASE branch (what you merge into), not the feature branch:
+gh api repos/{owner}/{repo}/rules/branches/main \
   --jq 'group_by(.type)[] | {type: .[0].type, n: length}'
 ```
 
@@ -791,7 +793,7 @@ re-blocks the PR — and Copilot is **not** re-requested automatically. Re-reque
 it explicitly, then re-poll the gate:
 
 ```bash
-gh api repos/{owner}/{repo}/pulls/NUMBER/requested_reviewers \
+gh api repos/{owner}/{repo}/pulls/$(gh pr view --json number -q .number)/requested_reviewers \
   -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
 ```
 
