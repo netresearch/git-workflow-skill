@@ -963,9 +963,11 @@ STRATEGY=$(gh api "repos/OWNER/REPO" --jq '
   if .allow_merge_commit then "--merge"
   elif .allow_rebase_merge then "--rebase"
   elif .allow_squash_merge then "--squash"
-  else "--merge" end')
-[ "$STRATEGY" = "--squash" ] && echo "WARNING: only squash is enabled — this rewrites history and drops signatures"
-gh pr merge <NUMBER> --auto $STRATEGY
+  else "" end') || { echo "ERROR: could not query repo merge methods" >&2; exit 1; }
+# Fail fast rather than fall through to gh's default method (which may be squash).
+[ -z "$STRATEGY" ] && { echo "ERROR: no merge method enabled on this repo" >&2; exit 1; }
+[ "$STRATEGY" = "--squash" ] && echo "WARNING: only squash is enabled — this rewrites history and drops signatures" >&2
+gh pr merge <NUMBER> --auto "$STRATEGY"
 
 # For repos with merge queue, just queue it
 gh pr merge <NUMBER> --auto
