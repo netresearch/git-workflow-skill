@@ -737,7 +737,7 @@ Before merging any PR, run this gate. If any check fails, stop and fix the under
 
 - [ ] **All review threads resolved** — no unresolved conversations
 - [ ] **Copilot review complete on the _latest_ commit** (if assigned) — a `copilot_code_review` ruleset re-blocks after every push; see "Rulesets" below
-- [ ] **Rulesets checked** — `gh api repos/{owner}/{repo}/rules/branches/<base>`, not just classic branch protection
+- [ ] **Rulesets checked** — `gh api repos/{owner}/{repo}/rules/branches/BASE`, not just classic branch protection
 - [ ] **Branch rebased on target** — no stray merge commits in PR branch
 - [ ] **All CI checks pass** — green status on every required check
 - [ ] **No CI annotations** — check job annotations, not just pass/fail (see below)
@@ -813,7 +813,7 @@ on the latest commit `oid`:
 gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:NUMBER){
   headRefOid
   reviewRequests(first:10){nodes{requestedReviewer{... on Bot{login}}}}
-  reviews(last:5){nodes{author{login} state commit{oid}}}}}}'
+  reviews(last:20){nodes{author{login} state commit{oid}}}}}}'  # last:N must exceed the review count
 # Ready only when: no pending reviewRequests AND the bot's latest review.commit.oid == headRefOid.
 ```
 
