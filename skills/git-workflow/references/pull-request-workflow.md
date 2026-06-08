@@ -816,9 +816,7 @@ gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(numb
 # Ready only when: no pending reviewRequests AND the bot's latest review.commit.oid == headRefOid.
 ```
 
-Other
-ruleset rules to expect: `required_approving_review_count`,
-`required_review_thread_resolution`, `non_fast_forward`.
+Other ruleset rules to expect: `required_approving_review_count`, `required_review_thread_resolution`, `non_fast_forward`.
 
 > **Front-load the whole picture.** Gather merge state, checks, rulesets,
 > requested reviewers, and thread IDs in one mechanical block before reasoning
