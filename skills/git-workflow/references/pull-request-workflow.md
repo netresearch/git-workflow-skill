@@ -796,7 +796,24 @@ gh api repos/{owner}/{repo}/pulls/NUMBER/requested_reviewers \
 ```
 
 (`gh pr edit --add-reviewer` rejects the bot login with "Could not resolve
-user"; the REST `requested_reviewers` endpoint is the working path.) Other
+user"; the REST `requested_reviewers` endpoint is the working path.)
+
+**Wait for in-progress reviews — don't merge on a transient `CLEAN`.** After
+re-requesting (or right after a push), the reviewer's review is *in progress*:
+`mergeStateStatus` can read `CLEAN` for a few seconds before the bot posts its
+comments, and merging then strands fresh review threads on a closed PR. A
+**pending review request is the in-progress signal** — treat the PR as not
+ready while it persists. Poll until the request clears *and* the review lands
+on the latest commit `oid`:
+
+```bash
+gh api graphql -f query='{repository(owner:"O",name:"R"){pullRequest(number:N){
+  reviewRequests(first:10){nodes{requestedReviewer{... on Bot{login}}}}
+  reviews(last:5){nodes{author{login} state commit{oid}}}}}}'
+# Ready only when: no pending reviewRequests AND the bot's latest review.commit.oid == headRefOid.
+```
+
+Other
 ruleset rules to expect: `required_approving_review_count`,
 `required_review_thread_resolution`, `non_fast_forward`.
 
