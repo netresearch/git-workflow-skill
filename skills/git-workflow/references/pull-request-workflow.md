@@ -737,7 +737,7 @@ Before merging any PR, run this gate. If any check fails, stop and fix the under
 
 - [ ] **All review threads resolved** — no unresolved conversations
 - [ ] **Copilot review complete on the _latest_ commit** (if assigned) — a `copilot_code_review` ruleset re-blocks after every push; see "Rulesets" below
-- [ ] **Rulesets checked** — `rules/branches/{branch}`, not just classic branch protection
+- [ ] **Rulesets checked** — `gh api repos/{owner}/{repo}/rules/branches/<base>`, not just classic branch protection
 - [ ] **Branch rebased on target** — no stray merge commits in PR branch
 - [ ] **All CI checks pass** — green status on every required check
 - [ ] **No CI annotations** — check job annotations, not just pass/fail (see below)
@@ -781,9 +781,9 @@ and the classic `branches/{branch}/protection` API. Don't discover this by
 trial-and-error; fetch the *effective* rules as part of the gate:
 
 ```bash
-# gh resolves {owner}/{repo} from git context; the branch is NOT resolved, so
-# name it — use the PR's BASE branch (what you merge into), not the feature branch:
-gh api repos/{owner}/{repo}/rules/branches/main \
+# gh resolves {owner}/{repo} from git context but NOT the branch, so name it.
+# Derive the PR's BASE branch (what you merge into) rather than hard-coding main:
+gh api repos/{owner}/{repo}/rules/branches/$(gh pr view --json baseRefName -q .baseRefName) \
   --jq 'group_by(.type)[] | {type: .[0].type, n: length}'
 ```
 
@@ -809,7 +809,8 @@ ready while it persists. Poll until the request clears *and* the review lands
 on the latest commit `oid`:
 
 ```bash
-gh api graphql -f query='{repository(owner:"O",name:"R"){pullRequest(number:N){
+gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:NUMBER){
+  headRefOid
   reviewRequests(first:10){nodes{requestedReviewer{... on Bot{login}}}}
   reviews(last:5){nodes{author{login} state commit{oid}}}}}}'
 # Ready only when: no pending reviewRequests AND the bot's latest review.commit.oid == headRefOid.
