@@ -955,12 +955,16 @@ gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "PRRT_
 ### 3. Merge
 
 ```bash
-# Auto-detect merge strategy and queue
+# Auto-detect merge strategy and queue.
+# Prefer atomic-history methods; NEVER auto-pick squash (see "Never squash
+# unless the user asks" above). Squash is selected only if it is the sole
+# method the repo allows — and then warn, because it rewrites history.
 STRATEGY=$(gh api "repos/OWNER/REPO" --jq '
-  if .allow_squash_merge then "--squash"
-  elif .allow_merge_commit then "--merge"
+  if .allow_merge_commit then "--merge"
   elif .allow_rebase_merge then "--rebase"
-  else "--squash" end')
+  elif .allow_squash_merge then "--squash"
+  else "--merge" end')
+[ "$STRATEGY" = "--squash" ] && echo "WARNING: only squash is enabled — this rewrites history and drops signatures"
 gh pr merge <NUMBER> --auto $STRATEGY
 
 # For repos with merge queue, just queue it
