@@ -460,11 +460,29 @@ git commit -S --signoff -m "feat: add login endpoint"
 
 **Why `--signoff`.** Adds the `Signed-off-by:` trailer. Required for DCO compliance on any repo that has the DCO check enabled (most netresearch repos do).
 
-**Sign-off identity must match `git config user.{name,email}`.** Mismatched identities fail the DCO check with an unhelpful "signoff required" error. Check before the first commit in a new worktree:
+**Sign-off identity must match `git config user.{name,email}`.** Mismatched identities fail the DCO check with an unhelpful "signoff required" error. Validate before the first commit in a new worktree — and specifically check that the values are not swapped (an email address in `user.name` is a silent misconfiguration that produces a malformed `Signed-off-by:` trailer):
 
 ```bash
-git config user.name
-git config user.email
+git config user.name   # must look like "Firstname Lastname", NOT an email address
+git config user.email  # must contain "@", NOT a plain name
+
+# Fix if swapped:
+git config --global user.name "Firstname Lastname"
+git config --global user.email "you@example.com"
+```
+
+**SSH signing keys on GitHub: auth keys ≠ signing keys.** An SSH key registered under *Settings → SSH and GPG keys → Authentication Key* cannot verify commits. It must also be added as a *Signing Key* (same page, different Key type dropdown). GitHub reports unsigned-with-known-key commits as `reason: unknown_key` in the commits API — identical to an unregistered key. Check before the first push to a repo with verified-signature branch protection:
+
+```bash
+# Verify the key is registered as a signing key (requires admin:ssh_signing_key token scope):
+gh auth refresh -h github.com -s admin:ssh_signing_key
+gh api /user/ssh_signing_keys --jq '.[].key'
+
+# Or check commit verification after pushing one commit:
+gh api /repos/{owner}/{repo}/commits/HEAD --jq '.commit.verification | {verified, reason}'
+# "reason":"valid"        → OK
+# "reason":"unknown_key"  → key not registered as signing key
+# "reason":"unsigned"     → -S flag not used or signing config missing
 ```
 
 **Never amend a commit with pre-commit-hook failures.** If the pre-commit hook fails, the commit **did not happen**. Running `git commit --amend` then modifies the PREVIOUS commit, which can destroy work. Fix the hook issue, re-stage, and create a new commit.

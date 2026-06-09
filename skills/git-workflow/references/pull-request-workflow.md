@@ -741,7 +741,46 @@ Before merging any PR, run this gate. If any check fails, stop and fix the under
 - [ ] **Branch rebased on target** — no stray merge commits in PR branch
 - [ ] **All CI checks pass** — green status on every required check
 - [ ] **No CI annotations** — check job annotations, not just pass/fail (see below)
-- [ ] **Signed commits** — every commit in the PR is signed
+- [ ] **Signed commits** — every commit in the PR is signed (see "Signing and DCO Failures" below if blocked)
+- [ ] **DCO sign-off** — every commit has a `Signed-off-by:` trailer matching `git config user.{name,email}` (required when the `probot/dco` check is enabled)
+
+### Signing and DCO Failures
+
+When `mergeStateStatus: BLOCKED` and the blocking check is `dco` or a "Commits must have verified signatures" branch-protection rule, act on these in order:
+
+**Step 1 — Verify git identity is correct (not swapped).**
+A swapped name/email pair silently produces a malformed `Signed-off-by:` trailer that the DCO bot rejects:
+
+```bash
+git config user.name   # must look like "Firstname Lastname", NOT an email address
+git config user.email  # must contain "@", NOT a plain name
+
+# Fix if swapped:
+git config --global user.name "Firstname Lastname"
+git config --global user.email "you@example.com"
+```
+
+**Step 2 — Add missing sign-offs to all commits in the branch.**
+Rebase with `--exec` to amend every commit at once. Use `--signoff` for DCO, `-S` for signature, or both:
+
+```bash
+# Both DCO sign-off and GPG/SSH signature in one pass:
+git rebase origin/main --exec 'git commit --amend --no-edit --signoff -S'
+git push --force-with-lease
+```
+
+**Step 3 — If signatures still show `reason: unknown_key`, the SSH key is not registered as a *Signing Key* on GitHub.**
+Auth keys and signing keys are separate registrations. An authentication key cannot verify commits:
+
+```bash
+# Check commit verification after pushing:
+gh api /repos/{owner}/{repo}/commits/HEAD --jq '.commit.verification | {verified, reason}'
+# "reason":"valid"        → OK
+# "reason":"unknown_key"  → key is not registered as a signing key
+# "reason":"unsigned"     → -S flag was not used or signing config is missing
+```
+
+If `unknown_key`: go to *github.com → Settings → SSH and GPG keys*, find your key, and add it again under *New signing key* (same public key, different "Key type"). After adding, re-verify with the API call above.
 
 ### Merge-Gate Command
 
