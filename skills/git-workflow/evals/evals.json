@@ -284,7 +284,7 @@
       },
       {
         "type": "content",
-        "pattern": "(in.?flight|announced|pending review|in progress|wait for)"
+        "pattern": "(in.?flight review|pending review|review in progress|review still running|wait for the review|review to land|in-flight or pending review)"
       }
     ]
   },
@@ -294,15 +294,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(do not merge|don.t merge|not safe|hold off|wait)"
+        "pattern": "(do not merge|don.t merge|not safe to merge|should not merge|hold off|don.t merge yet|do not merge yet|wait for the review|wait until the review)"
       },
       {
         "type": "content",
-        "pattern": "(in.?flight|in progress|announced|still reviewing|hasn.t submitted|not yet submitted)"
+        "pattern": "(in.?flight|still reviewing|pending review|review in progress|hasn.t submitted|has not submitted|not yet submitted|announced review|review you just requested|review you requested)"
       },
       {
         "type": "content",
-        "pattern": "(not sufficient|not enough|isn.t enough|stale|review_on_push)"
+        "pattern": "(CLEAN is not sufficient|CLEAN isn.t sufficient|CLEAN alone|CLEAN can be stale|CLEAN doesn.t mean|not sufficient to merge|review_on_push|empty reviewRequests doesn|reviewRequests is not)"
       }
     ]
   }
