@@ -756,8 +756,8 @@ git config user.name   # must look like "Firstname Lastname", NOT an email addre
 git config user.email  # must contain "@", NOT a plain name
 
 # Fix if swapped:
-git config user.name "Firstname Lastname"
-git config user.email "you@example.com"
+git config --global user.name "Firstname Lastname"
+git config --global user.email "you@example.com"
 ```
 
 **Step 2 — Add missing sign-offs to all commits in the branch.**
@@ -774,7 +774,7 @@ Auth keys and signing keys are separate registrations. An authentication key can
 
 ```bash
 # Check commit verification after pushing:
-gh api repos/OWNER/REPO/commits/HEAD --jq '.commit.verification | {verified, reason}'
+gh api /repos/{owner}/{repo}/commits/HEAD --jq '.commit.verification | {verified, reason}'
 # "reason":"valid"        → OK
 # "reason":"unknown_key"  → key is not registered as a signing key
 # "reason":"unsigned"     → -S flag was not used or signing config is missing

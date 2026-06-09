@@ -467,8 +467,8 @@ git config user.name   # must look like "Firstname Lastname", NOT an email addre
 git config user.email  # must contain "@", NOT a plain name
 
 # Fix if swapped:
-git config user.name "Firstname Lastname"
-git config user.email "you@example.com"
+git config --global user.name "Firstname Lastname"
+git config --global user.email "you@example.com"
 ```
 
 **SSH signing keys on GitHub: auth keys ≠ signing keys.** An SSH key registered under *Settings → SSH and GPG keys → Authentication Key* cannot verify commits. It must also be added as a *Signing Key* (same page, different Key type dropdown). GitHub reports unsigned-with-known-key commits as `reason: unknown_key` in the commits API — identical to an unregistered key. Check before the first push to a repo with verified-signature branch protection:
@@ -479,7 +479,7 @@ gh auth refresh -h github.com -s admin:ssh_signing_key
 gh api /user/ssh_signing_keys --jq '.[].key'
 
 # Or check commit verification after pushing one commit:
-gh api repos/OWNER/REPO/commits/HEAD --jq '.commit.verification | {verified, reason}'
+gh api /repos/{owner}/{repo}/commits/HEAD --jq '.commit.verification | {verified, reason}'
 # "reason":"valid"        → OK
 # "reason":"unknown_key"  → key not registered as signing key
 # "reason":"unsigned"     → -S flag not used or signing config missing
