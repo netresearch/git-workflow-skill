@@ -110,17 +110,18 @@ Example queries:
 
 ```
 git-workflow-skill/
-├── SKILL.md                              # Skill metadata and core patterns
-├── references/
-│   ├── branching-strategies.md           # Branch management patterns
-│   ├── commit-conventions.md             # Commit message standards
-│   ├── pull-request-workflow.md          # PR and review processes
-│   ├── ci-cd-integration.md              # Automation patterns
-│   └── advanced-git.md                   # Advanced Git operations
+├── skills/git-workflow/
+│   ├── SKILL.md                          # Skill metadata and core patterns
+│   └── references/
+│       ├── branching-strategies.md       # Branch management patterns
+│       ├── commit-conventions.md         # Commit message standards
+│       ├── pull-request-workflow.md      # PR and review processes
+│       ├── ci-cd-integration.md          # Automation patterns
+│       └── advanced-git.md               # Advanced Git operations
 ├── commands/
 │   └── pr-finish.md                      # /pr-finish slash command
 └── scripts/
-    └── verify-git-workflow.sh            # Verification script
+    └── verify-harness.sh                 # Harness verification script
 ```
 
 ## Expertise Areas

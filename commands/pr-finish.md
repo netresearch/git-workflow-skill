@@ -8,7 +8,7 @@ description: "Drive a PR to merge — rebase, fix CI, resolve review comments, u
 Bring the pull request to a fully-green, merged state. This is the canonical
 PR-completion request, so it runs through the **git-workflow** skill every time.
 
-**First, invoke the `git-workflow` skill** — `references/pull-request-workflow.md`
+**First, invoke the `git-workflow` skill** — its `references/pull-request-workflow.md`
 is authoritative for the merge gate, GraphQL thread resolution, and merge-queue
 handling. Then execute, in order:
 
@@ -45,9 +45,16 @@ handling. Then execute, in order:
    GraphQL `resolveReviewThread` mutation. Verify `isResolved` — green CI alone is not
    sufficient.
 4. **Update the PR title and description** to match the final state.
-5. **Merge only when fully green AND all threads resolved** — use `--merge` or
-   `--rebase`, never `--squash` (preserve atomic history). Dependabot/Renovate PRs
-   auto-merge via the repo's deps workflow — never merge those by hand.
+5. **Merge only when fully green AND all threads resolved.** Use `--merge` or
+   `--rebase`, never `--squash` (preserve atomic history). **`mergeStateStatus: CLEAN`
+   is not sufficient** — a `copilot_code_review` ruleset with `review_on_push:false`
+   stays satisfied by an *earlier* commit's review, so CLEAN can report green while the
+   head commit is unreviewed. Before merging, confirm the latest review from each required
+   reviewer is on the current `headRefOid` (not a prior commit) **and** `reviewRequests`
+   is empty — an empty list means the reviewer *finished*, not that a freshly-requested
+   review can be skipped. Never merge with a review in flight; if you re-request a reviewer,
+   wait for its review on the head commit to land first. Dependabot/Renovate PRs auto-merge
+   via the repo's deps workflow — never merge those by hand.
 6. **Post-merge:** confirm any merge-triggered async jobs, and clean up the branch.
 
 No version bumps or CHANGELOG entries in feature PRs. No bot attribution in
