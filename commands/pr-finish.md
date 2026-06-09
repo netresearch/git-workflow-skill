@@ -28,8 +28,8 @@ resolution, and merge-queue handling. Then execute, in order:
    ```
 
    This yields, in one shot: merge state + why, every required check, **rulesets**
-   (a CLEAN-blocking `copilot_code_review` rule needs a fresh Copilot review on
-   the *latest* commit — re-request via `gh api repos/$R/pulls/$PR/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`), pending review requests, and the thread IDs needed to reply to and resolve each thread. Reason once from this, not serially.
+   (if a `copilot_code_review` rule is blocking because no review has been triggered yet,
+   you can request one via `gh api repos/$R/pulls/$PR/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'` — but once requested you must wait for it to land before merging; see step 5, never merge over an in-flight review), pending review requests, and the thread IDs needed to reply to and resolve each thread. Reason once from this, not serially.
 
 1. **Rebase** onto the base branch if the branch is behind. In bare-repo worktree
    setups, fetch explicitly (`git fetch origin <branch>:refs/remotes/origin/<branch>`)
@@ -45,16 +45,18 @@ resolution, and merge-queue handling. Then execute, in order:
    GraphQL `resolveReviewThread` mutation. Verify `isResolved` — green CI alone is not
    sufficient.
 4. **Update the PR title and description** to match the final state.
-5. **Merge only when fully green AND all threads resolved.** Use `--merge` or
-   `--rebase`, never `--squash` (preserve atomic history). **`mergeStateStatus: CLEAN`
-   is not sufficient** — a `copilot_code_review` ruleset with `review_on_push:false`
-   stays satisfied by an *earlier* commit's review, so CLEAN can report green while the
-   head commit is unreviewed. Before merging, confirm the latest review from each required
-   reviewer is on the current `headRefOid` (not a prior commit) **and** `reviewRequests`
-   is empty — an empty list means the reviewer *finished*, not that a freshly-requested
-   review can be skipped. Never merge with a review in flight; if you re-request a reviewer,
-   wait for its review on the head commit to land first. Dependabot/Renovate PRs auto-merge
-   via the repo's deps workflow — never merge those by hand.
+5. **Merge only when fully green AND all threads resolved** — `--merge` or `--rebase`,
+   never `--squash` (preserve atomic history). **Never merge while a review is announced
+   or in flight.** Once a reviewer is requested or has *started* — by you, a ruleset, or
+   automation — its pendency blocks the merge until it resolves, regardless of what
+   `mergeStateStatus` says (a `review_on_push:false` ruleset can report `CLEAN` off an
+   *earlier* commit's review while a new one runs). `reviewRequests: []` is **not** "all
+   clear": a reviewer that has *started* drops off the request list without having
+   submitted — check the PR timeline or reviews list, not just that list. Requesting a
+   reviewer commits you to waiting for it — never request one and then merge before it
+   responds. You don't force a review to materialize where none is required (reviews may
+   legitimately never run), but any review that *is* announced must finish.
+   Dependabot/Renovate PRs auto-merge via the deps workflow — never merge those by hand.
 6. **Post-merge:** confirm any merge-triggered async jobs, and clean up the branch.
 
 No version bumps or CHANGELOG entries in feature PRs. No bot attribution in
