@@ -281,6 +281,28 @@
       {
         "type": "content",
         "pattern": "(rebase|signed|annotation)"
+      },
+      {
+        "type": "content",
+        "pattern": "(in.?flight review|pending review|review in progress|review still running|wait for the review|review to land|in-flight or pending review)"
+      }
+    ]
+  },
+  {
+    "name": "merge_blocked_by_inflight_review",
+    "prompt": "gh pr view says mergeStateStatus is CLEAN and reviewRequests is empty, but I just re-requested the Copilot reviewer a moment ago. Is it safe to merge now?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(do not merge|don.t merge|not safe to merge|should not merge|hold off|don.t merge yet|do not merge yet|wait for the review|wait until the review)"
+      },
+      {
+        "type": "content",
+        "pattern": "(in.?flight|still reviewing|pending review|review in progress|hasn.t submitted|has not submitted|not yet submitted|announced review|review you just requested|review you requested)"
+      },
+      {
+        "type": "content",
+        "pattern": "(CLEAN is not sufficient|CLEAN isn.t sufficient|CLEAN alone|CLEAN can be stale|CLEAN doesn.t mean|not sufficient to merge|review_on_push|empty reviewRequests doesn|reviewRequests is not)"
       }
     ]
   }
