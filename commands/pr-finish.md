@@ -45,16 +45,18 @@ resolution, and merge-queue handling. Then execute, in order:
    GraphQL `resolveReviewThread` mutation. Verify `isResolved` — green CI alone is not
    sufficient.
 4. **Update the PR title and description** to match the final state.
-5. **Merge only when fully green AND all threads resolved.** Use `--merge` or
-   `--rebase`, never `--squash` (preserve atomic history). **`mergeStateStatus: CLEAN`
-   is not sufficient** — a `copilot_code_review` ruleset with `review_on_push:false`
-   stays satisfied by an *earlier* commit's review, so CLEAN can report green while the
-   head commit is unreviewed. Before merging, confirm the latest review from each required
-   reviewer is on the current `headRefOid` (not a prior commit) **and** `reviewRequests`
-   is empty — an empty list means the reviewer *finished*, not that a freshly-requested
-   review can be skipped. Never merge with a review in flight; if you re-request a reviewer,
-   wait for its review on the head commit to land first. Dependabot/Renovate PRs auto-merge
-   via the repo's deps workflow — never merge those by hand.
+5. **Merge only when fully green AND all threads resolved** — `--merge` or `--rebase`,
+   never `--squash` (preserve atomic history). **Never merge while a review is announced
+   or in flight.** Once a reviewer is requested or has *started* — by you, a ruleset, or
+   automation — its pendency blocks the merge until it resolves, regardless of what
+   `mergeStateStatus` says (a `review_on_push:false` ruleset can report `CLEAN` off an
+   *earlier* commit's review while a new one runs). `reviewRequests: []` is **not** "all
+   clear": a reviewer that has *started* drops off the request list without having
+   submitted — check the pending-review/timeline state, not just that list. Do **not**
+   request or re-request a reviewer as a pre-merge step — announcing a review commits you
+   to waiting for it. You never *require* a review to exist (they may legitimately never
+   run); only an announced one blocks. Dependabot/Renovate PRs auto-merge via the deps
+   workflow — never merge those by hand.
 6. **Post-merge:** confirm any merge-triggered async jobs, and clean up the branch.
 
 No version bumps or CHANGELOG entries in feature PRs. No bot attribution in
