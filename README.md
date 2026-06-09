@@ -99,6 +99,13 @@ Example queries:
 - "Configure branch protection rules"
 - "Implement pull request review process"
 
+### Commands
+
+- `/pr-finish [PR]` — drive a pull request to a fully-green, merged state:
+  preflight the merge gate in one block, rebase, fix CI locally, reply to and
+  resolve every review thread, update the title/description, and merge when
+  green. Operates on the named PR or the current branch's PR.
+
 ## Structure
 
 ```
@@ -110,6 +117,8 @@ git-workflow-skill/
 │   ├── pull-request-workflow.md          # PR and review processes
 │   ├── ci-cd-integration.md              # Automation patterns
 │   └── advanced-git.md                   # Advanced Git operations
+├── commands/
+│   └── pr-finish.md                      # /pr-finish slash command
 └── scripts/
     └── verify-git-workflow.sh            # Verification script
 ```
