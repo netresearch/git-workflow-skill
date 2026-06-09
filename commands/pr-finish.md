@@ -19,17 +19,17 @@ handling. Then execute, in order:
    *why*. Run this up front and re-run only after a state-changing push:
 
    ```bash
-   R=<owner/repo>; PR=<number>
+   R=<owner/repo>; PR=<number>; BASE=<base-branch>
    gh pr view   $PR --repo $R --json state,mergeable,mergeStateStatus,reviewDecision,headRefOid,baseRefName,title
    gh pr checks $PR --repo $R
-   gh api repos/$R/rules/branches/main   # effective rules INCL. rulesets (e.g. copilot_code_review) — classic branch-protection API misses these
+   gh api repos/$R/rules/branches/$BASE   # effective rules INCL. rulesets (e.g. copilot_code_review) — evaluated against the BASE branch; classic branch-protection API misses these
    gh pr view   $PR --repo $R --json reviewRequests --jq '.reviewRequests'
-   gh api graphql -f query='{repository(owner:"<owner>",name:"<repo>"){pullRequest(number:'"$PR"'){reviewThreads(first:50){nodes{id isResolved comments(first:1){nodes{databaseId author{login} path body}}}}}}}'
+   gh api graphql -F owner="${R%/*}" -F repo="${R#*/}" -F pr="$PR" -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:50){nodes{id isResolved comments(first:1){nodes{databaseId author{login} path body}}}}}}}'
    ```
 
    This yields, in one shot: merge state + why, every required check, **rulesets**
    (a CLEAN-blocking `copilot_code_review` rule needs a fresh Copilot review on
-   the *latest* commit — re-request via `gh api repos/$R/pulls/$PR/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`), pending review requests, and the thread IDs + comment `databaseId`s needed to reply and resolve. Reason once from this, not serially.
+   the *latest* commit — re-request via `gh api repos/$R/pulls/$PR/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`), pending review requests, and the thread IDs needed to reply to and resolve each thread. Reason once from this, not serially.
 
 1. **Rebase** onto the base branch if the branch is behind. In bare-repo worktree
    setups, fetch explicitly (`git fetch origin <branch>:refs/remotes/origin/<branch>`)
@@ -39,10 +39,11 @@ handling. Then execute, in order:
    as applicable) and fix everything locally; don't push half-fixes that re-trigger
    CI. For Python projects with ruff, run both `ruff format` and `ruff check` before
    committing.
-3. **Resolve every review thread** — reply directly to each comment via
-   `gh api .../comments/{id}/replies` (never a general PR comment), reference the
-   fixing commit, then resolve the thread via the GraphQL `resolveReviewThread`
-   mutation. Verify `isResolved` — green CI alone is not sufficient.
+3. **Resolve every review thread** — reply directly to each thread via the GraphQL
+   `addPullRequestReviewThreadReply` mutation (using the thread ID from preflight, never
+   a general PR comment), reference the fixing commit, then resolve the thread via the
+   GraphQL `resolveReviewThread` mutation. Verify `isResolved` — green CI alone is not
+   sufficient.
 4. **Update the PR title and description** to match the final state.
 5. **Merge only when fully green AND all threads resolved** — use `--merge` or
    `--rebase`, never `--squash` (preserve atomic history). Dependabot/Renovate PRs
