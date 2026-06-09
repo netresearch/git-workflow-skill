@@ -9,8 +9,8 @@ Bring the pull request to a fully-green, merged state. This is the canonical
 PR-completion request, so it runs through the **git-workflow** skill every time.
 
 **First, invoke the `git-workflow` skill** — its `references/pull-request-workflow.md`
-is authoritative for the merge gate, GraphQL thread resolution, and merge-queue
-handling. Then execute, in order:
+(under `skills/git-workflow/`) is authoritative for the merge gate, GraphQL thread
+resolution, and merge-queue handling. Then execute, in order:
 
 0. **Preflight — fetch the whole merge-gate picture in ONE mechanical block,
    before reasoning about merge-readiness.** Never discover a gate (BLOCKED,

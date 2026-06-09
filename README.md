@@ -109,9 +109,10 @@ Example queries:
 ## Structure
 
 ```
-git-workflow-skill/
+git-workflow-skill/                       # abbreviated — key files only
 ├── skills/git-workflow/
 │   ├── SKILL.md                          # Skill metadata and core patterns
+│   ├── ...                               # checkpoints.yaml, evals/, hooks
 │   └── references/
 │       ├── branching-strategies.md       # Branch management patterns
 │       ├── commit-conventions.md         # Commit message standards
