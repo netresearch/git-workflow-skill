@@ -79,3 +79,27 @@ Then install based on what's found:
 - **Cross-reference**: The `netresearch/typo3-ci-workflows` meta-package bundles
   `captainhook/hook-installer`; its README section "Git Worktree + captainhook Workaround"
   is the canonical source.
+
+### Hooks fail in worktrees / hang on host-unreachable services (FAQ)
+
+- **Symptom A**: `git commit`/`git push` in a secondary worktree fails with
+  `./bin/captainhook: not found` — even with `--no-verify`.
+- **Cause A**: hooks installed by the primary checkout run with the worktree as
+  CWD and reference `./bin/captainhook` relatively; the worktree has no
+  `vendor/`/`bin/`. Two `--no-verify` blind spots compound this:
+  `git commit --no-verify` skips only `pre-commit` and `commit-msg` —
+  **`prepare-commit-msg` always runs**; and `git push` has its *own*
+  `--no-verify` (the commit-level flag does not cover `pre-push`).
+- **Symptom B**: a pre-commit hook that runs the test suite hangs forever on
+  the host because the tests need a docker-only service (e.g. a test DB only
+  resolvable inside the compose network). Killing the runner can leave a
+  zombie process holding `.git/index.lock` — check `pgrep` and remove the
+  stale lock before retrying.
+- **Controlled bypass** (the only sanctioned exception to "never skip hooks"):
+  first run the hook's checks *manually via equivalent commands* (linters and
+  static analysis on the changed files, the test suite inside its docker
+  environment), then bypass the broken hook explicitly and disclose it:
+  `git -c core.hooksPath=/dev/null commit -s ...` (disables all hook types for
+  that one command) and `git push --no-verify`. Never make the bypass the
+  default; fix the hook environment or commit from the primary checkout when
+  possible.
