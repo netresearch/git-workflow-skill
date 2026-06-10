@@ -59,6 +59,43 @@ cd /some/dir
 cd /some/dir || exit 1
 ```
 
+### Gotcha: Command Substitution with Empty Output
+
+`set -e` fires when `var=$(failing_cmd)` — the assignment propagates the non-zero exit code and
+aborts the script. **However**, `set -e` cannot detect a command that exits 0 but produces
+**no output**. An empty variable is a valid result from the shell's point of view. No shellcheck
+rule covers this case for regular (non-`local`) variables.
+
+This means downstream code that uses `$var` without checking can silently misbehave. A common
+consequence: an empty variable interpolated into a refspec becomes an accidental delete operation.
+
+```bash
+# Silent failure — git commit-tree succeeds but produces no output
+# (e.g. tree already exists, permission issue, or wrong arguments).
+# set -e does NOT fire here. commit is empty string "".
+commit=$(git commit-tree "$tree" -p "$parent" -m "msg")
+
+# Downstream: the empty commit SHA becomes a delete refspec.
+# This pushes ":refs/tags/v1.0" — which DELETES the tag on the remote.
+git push origin "${commit}:refs/tags/v1.0"
+```
+
+Always add an explicit empty-value guard after command substitution whose output is load-bearing:
+
+```bash
+commit=$(git commit-tree "$tree" -p "$parent" -m "msg")
+if [ -z "${commit}" ]; then
+  echo "ERROR: git commit-tree produced no output for tag ${tag}" >&2
+  continue   # or: exit 1, depending on context
+fi
+git push origin "${commit}:refs/tags/${tag}"
+```
+
+Note: SC2155 (`Declare and assign separately to avoid masking return values`) only applies to
+`local var=$(cmd)` — where the `local` builtin masks the exit code. For plain `var=$(cmd)`, the
+exit code is propagated and `set -e` works normally. The empty-output case is distinct and not
+covered by any shellcheck rule.
+
 ### CI Integration
 
 ```yaml
