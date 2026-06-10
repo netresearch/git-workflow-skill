@@ -306,3 +306,28 @@ llm_reviews:
 
       Skip cleanly (pass) when the repo is a regular clone (`.git/` is a
       directory, no `.bare/` sibling) — the convention does not apply.
+
+  # === STAGING BRANCH COMPOSER.LOCK MERGE STRATEGY ===
+  - id: GW-30
+    domain: git-workflow
+    severity: warning
+    desc: >-
+      When merging into a staging branch that pins dev-branch Composer packages,
+      take --ours on composer.lock then re-run `composer update <packages>` to
+      apply only the intended upgrades. Taking --theirs overwrites staging's
+      dev-* pins and may deploy wrong package versions.
+    prompt: |
+      Check if the repository has a `staging` branch and a `composer.lock`
+      containing `dev-` versioned packages (e.g. `dev-staging`, `dev-main`).
+
+      Run:
+        git show origin/staging:composer.lock 2>/dev/null | grep '"version": "dev-' | head -5
+
+      If dev-versioned packages exist, verify that the project's contributing
+      guide or AGENTS.md documents the staging merge strategy:
+      - On merge conflict in composer.lock: take `--ours` (staging base) first
+      - Then run `composer update <targeted-packages>` to apply only the
+        intended version changes
+      - Do NOT take `--theirs` — it overwrites all dev-* pins
+
+      Report as warning if dev-* packages exist but the strategy is not documented.
