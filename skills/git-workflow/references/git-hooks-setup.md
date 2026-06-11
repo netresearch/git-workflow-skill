@@ -82,24 +82,31 @@ Then install based on what's found:
 
 ### Hooks fail in worktrees / hang on host-unreachable services (FAQ)
 
-- **Symptom A**: `git commit`/`git push` in a secondary worktree fails with
-  `./bin/captainhook: not found` — even with `--no-verify`.
+- **Symptom A**: `git commit` in a secondary worktree fails with
+  `./bin/captainhook: not found` — even though `--no-verify` was passed to
+  `git commit`.
 - **Cause A**: hooks installed by the primary checkout run with the worktree as
   CWD and reference `./bin/captainhook` relatively; the worktree has no
-  `vendor/`/`bin/`. Two `--no-verify` blind spots compound this:
-  `git commit --no-verify` skips only `pre-commit` and `commit-msg` —
-  **`prepare-commit-msg` always runs**; and `git push` has its *own*
-  `--no-verify` (the commit-level flag does not cover `pre-push`).
+  `vendor/`/`bin/`. The commit-level `--no-verify` has a blind spot:
+  it skips only `pre-commit` and `commit-msg` — **`prepare-commit-msg` always
+  runs**, so a broken hook of that type still fails the commit. (`git push`
+  has its *own* `--no-verify`, which does skip `pre-push` entirely; the
+  commit-level flag simply does not cover it.)
 - **Symptom B**: a pre-commit hook that runs the test suite hangs forever on
   the host because the tests need a docker-only service (e.g. a test DB only
   resolvable inside the compose network). Killing the runner can leave a
-  zombie process holding `.git/index.lock` — check `pgrep` and remove the
-  stale lock before retrying.
+  zombie process holding the index lock. Note that in a worktree `.git` is a
+  pointer **file**, not a directory — the lock lives at
+  `$(git rev-parse --git-dir)/index.lock`. First confirm no git or hook
+  process is still alive (`pgrep -fl 'git|captainhook'`); only then remove
+  the stale lock and retry — deleting it under a live process corrupts the
+  index.
 - **Controlled bypass** (the only sanctioned exception to "never skip hooks"):
   first run the hook's checks *manually via equivalent commands* (linters and
   static analysis on the changed files, the test suite inside its docker
   environment), then bypass the broken hook explicitly and disclose it:
-  `git -c core.hooksPath=/dev/null commit -s ...` (disables all hook types for
-  that one command) and `git push --no-verify`. Never make the bypass the
-  default; fix the hook environment or commit from the primary checkout when
-  possible.
+  `git -c core.hooksPath="$(mktemp -d)" commit -s ...` (an empty hooks
+  directory disables all hook types for that one command and — unlike
+  `/dev/null` — is portable to Windows) and `git push --no-verify`. Never
+  make the bypass the default; fix the hook environment or commit from the
+  primary checkout when possible.
