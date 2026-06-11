@@ -671,6 +671,61 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
 ```
 
+## Git Mirror Repositories
+
+Use `git clone --mirror` + `git push --mirror` to keep a target repository in sync with an
+upstream source — for example, mirroring a public TYPO3 repository into a private GitLab
+instance or creating read-only forks for controlled distribution.
+
+```bash
+git clone --mirror "$SOURCE_URL" repo.git
+cd repo.git
+git push --mirror "$TARGET_URL"
+```
+
+### Default Branch Requirement
+
+`git push --mirror` pushes **all** refs from the source and **deletes** any ref at the target
+that no longer exists in the source. GitLab and GitHub will refuse to delete their repository's
+default branch, causing the push to fail with an error like:
+
+```
+remote: GitLab: You can only delete protected branches using the web interface.
+error: failed to push some refs to 'git@gitlab.example.com:org/repo.git'
+```
+
+**Root cause**: the target was initialised with a default branch (e.g. `main`) that does not
+exist in the upstream (e.g. source uses `12.4`). Every mirror run tries to delete `main` and
+GitLab refuses.
+
+**Fix — preferred**: create the target as an **empty project** (no README, no initial commit).
+The default branch is then set automatically when the first `git push --mirror` runs.
+
+**Fix — existing repo**: change the default branch in Settings before mirroring. On GitLab:
+*Settings → Repository → Default branch*. On GitHub: *Settings → Branches → Default branch*.
+
+### Notes-Ref Gotcha
+
+`git push --mirror` deletes any ref at the target that does not exist in the upstream. If you
+store cache data (e.g. split commit maps) in `refs/notes/*` on the mirror target, those refs
+will be wiped on every sync run because they are absent from the upstream.
+
+Do not rely on `refs/notes/*` for persistent caching in mirror repositories. Store such state
+in a separate repository, a file in object storage, or a CI/CD cache artifact.
+
+### Example CI Job (GitLab)
+
+```yaml
+mirror-sync:
+  image: alpine/git:2.43.0
+  script:
+    - git clone --mirror "$SOURCE_URL" repo.git
+    - cd repo.git
+    - git push --mirror "$TARGET_URL"
+  only:
+    - schedules
+```
+
 ## Best Practices
 
 1. **Fast Feedback**: Keep CI under 10 minutes
