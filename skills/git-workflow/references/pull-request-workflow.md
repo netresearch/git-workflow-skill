@@ -563,6 +563,28 @@ git commit
 git push
 ```
 
+### Commit Before Rebase — Correct Push Ordering
+
+When you have uncommitted local changes that need to be pushed, the order matters:
+
+```bash
+# ✅ Correct — commit first, then sync, then push
+git add <files>
+git commit -m "message"
+git fetch origin
+git rebase origin/<branch>
+git push
+
+# ❌ Wrong — rebase aborts with "please commit your changes or stash them"
+git fetch origin
+git rebase origin/<branch>   # aborts with error if working tree is dirty
+git add <files>
+git commit -m "message"
+git push                     # rejected as non-fast-forward
+```
+
+The "fetch+rebase before push" rule means **before pushing**, not before committing. `git rebase` requires a clean working tree — it aborts with an error when uncommitted changes are present, leaving the branch behind the remote. The subsequent push is then rejected as non-fast-forward, requiring an extra fix cycle.
+
 ### `--force-with-lease` Rejected with "stale info"
 
 On PRs that bots touch (auto-approve, Renovate/Dependabot, a CI step that pushes), `git push --force-with-lease` can be rejected with `stale info` even when your local work is correct: a bot updated the remote branch since your last fetch, so the lease's expected ref (your `origin/<branch>` tracking ref) no longer matches and the push aborts. This is the safety check working — don't escalate to plain `--force`.
