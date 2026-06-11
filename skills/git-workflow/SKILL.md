@@ -12,7 +12,7 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 
 # Git Workflow Skill
 
-Expert patterns for Git version control: branching, commits, collaboration, and CI/CD.
+Expert patterns for Git: branching, commits, collaboration, CI/CD.
 
 ## Critical Rules (Non-Negotiable)
 
@@ -28,7 +28,7 @@ See `references/pull-request-workflow.md` for merge-gate, atomic-commit, and SHA
 
 ## Reference Files
 
-Load references on demand based on the task at hand:
+Load references on demand:
 
 | Reference | Content Triggers |
 |-----------|-----------------|
@@ -41,6 +41,7 @@ Load references on demand based on the task at hand:
 | `references/git-hooks-setup.md` | Hook frameworks, detection, recommended hooks per stage |
 | `references/claude-code-hooks.md` | Claude Code `settings.json` hooks — merge gate, cache-path rejection, auto-lint |
 | `references/code-quality-tools.md` | shellcheck, shfmt, git-absorb, difftastic |
+| `references/merge-gate-watcher.md` | Merge-driver loop, hard/soft check taxonomy, rerun stale-SHA, review-bot rounds |
 
 ## Conventional Commits
 
@@ -63,7 +64,7 @@ hotfix/1.2.1-security-patch
 
 ## Hook Detection
 
-Before first commit, detect and install hooks:
+Detect hooks before first commit:
 
 ```bash
 ls lefthook.yml .lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null || echo "No hooks"
@@ -79,7 +80,7 @@ Install: `lefthook install` | `composer install` | `npm install` | `pre-commit i
 
 ## PR Merge Requirements
 
-Before merging: threads resolved, CI green (incl. annotations), rebased, signed. Signed commits + rebase-only: use `git merge --ff-only`.
+Before merging: threads resolved, CI green (incl. annotations), rebased, signed. Rebase-only + signed: `git merge --ff-only`.
 
 ## Verification
 
