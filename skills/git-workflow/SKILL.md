@@ -17,13 +17,14 @@ Expert patterns for Git version control: branching, commits, collaboration, and 
 ## Critical Rules (Non-Negotiable)
 
 1. **No direct push to main** — always open a PR.
-2. **No merge before all review threads are resolved** — run the merge gate in `references/pull-request-workflow.md`.
-3. **No squash unless user asked** — atomic commits preserved; keeps GPG signatures and bisection.
+2. **No merge before all threads resolved** — run the merge gate in `references/pull-request-workflow.md`.
+3. **No squash unless asked** — atomic commits preserved; keeps GPG signatures and bisection.
 4. **No "tested/verified/working" without pasted command output** — if you cannot run the check, say so.
 5. **No edits to installed skill/plugin cache paths** (`~/.claude/skills/`, `~/.claude/plugins/cache/`, `**/.bare/**`) — always the repo worktree. Verify `pwd` first.
 6. **Force-push only with `--force-with-lease`** — never plain `--force`.
+7. **Commit before rebase** — `add → commit → fetch → rebase → push`. Rebase aborts on a dirty tree; the push then rejects as non-fast-forward.
 
-See `references/pull-request-workflow.md` for the merge-gate command, atomic-commit guidance, and review-thread SHA-citation pattern.
+See `references/pull-request-workflow.md` for merge-gate, atomic-commit, and SHA-citation patterns.
 
 ## Reference Files
 
@@ -68,7 +69,7 @@ Before first commit, detect and install hooks:
 ls lefthook.yml .lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null || echo "No hooks"
 ```
 
-Install: lefthook.yml -> `lefthook install` | captainhook.json -> `composer install` | .husky/ -> `npm install` | .pre-commit-config.yaml -> `pre-commit install`
+Install: `lefthook install` | `composer install` | `npm install` | `pre-commit install`
 
 ## Critical Release Rules
 
@@ -78,7 +79,7 @@ Install: lefthook.yml -> `lefthook install` | captainhook.json -> `composer inst
 
 ## PR Merge Requirements
 
-Before merging: all threads resolved, CI checks green (including annotations), branch rebased, commits signed (if required). For signed commits + rebase-only repos, use local `git merge --ff-only`.
+Before merging: threads resolved, CI green (incl. annotations), rebased, signed. Signed commits + rebase-only: use `git merge --ff-only`.
 
 ## Verification
 
