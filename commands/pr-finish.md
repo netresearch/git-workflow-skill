@@ -43,7 +43,10 @@ resolution, and merge-queue handling. Then execute, in order:
    `addPullRequestReviewThreadReply` mutation (using the thread ID from preflight, never
    a general PR comment), reference the fixing commit, then resolve the thread via the
    GraphQL `resolveReviewThread` mutation. Verify `isResolved` — green CI alone is not
-   sufficient.
+   sufficient. **Work threads the moment they land — never gate thread work on the CI
+   matrix settling** (bot reviews are actionable 2–5 min after a push; a thread may
+   target a pre-push range a later commit already fixed — answer with the fixing SHA
+   and resolve).
 4. **Update the PR title and description** to match the final state.
 5. **Merge only when fully green AND all threads resolved** — `--merge` or `--rebase`,
    never `--squash` (preserve atomic history). **Never merge while a review is announced
@@ -57,6 +60,11 @@ resolution, and merge-queue handling. Then execute, in order:
    responds. You don't force a review to materialize where none is required (reviews may
    legitimately never run), but any review that *is* announced must finish.
    Dependabot/Renovate PRs auto-merge via the deps workflow — never merge those by hand.
+   **Merge-queue repos: arm `gh pr merge --auto` only after this gate passes** (threads
+   resolved + checks green + no pending review request) — the queue ignores review
+   threads, so arming at PR creation merges over unaddressed feedback; a queued PR
+   rejects branch pushes and needs the GraphQL `dequeuePullRequest` mutation to recover
+   (see the skill's pull-request-workflow reference, "Arming Gate").
 6. **Post-merge:** confirm any merge-triggered async jobs, and clean up the branch.
 
 No version bumps or CHANGELOG entries in feature PRs. No bot attribution in

@@ -766,6 +766,37 @@ Before merging any PR, run this gate. If any check fails, stop and fix the under
 - [ ] **Signed commits** — every commit in the PR is signed (see "Signing and DCO Failures" below if blocked)
 - [ ] **DCO sign-off** — every commit has a `Signed-off-by:` trailer matching `git config user.{name,email}` (required when the `probot/dco` check is enabled)
 
+### Auto-Merge / Merge-Queue Arming Gate
+
+`gh pr merge --auto` is a **deferred merge with no human in the loop** — and a
+merge queue only re-runs *required checks*; it does **not** wait for review
+threads, bot reviews in flight, or Sonar-style informational checks. Arming at
+PR creation therefore merges over unaddressed review feedback the moment CI is
+green.
+
+Arm auto-merge / enqueue **only when all three hold**:
+
+1. **Zero unresolved review threads** (GraphQL `reviewThreads`, not the UI).
+2. **All checks green** — including non-required ones you intend to honor.
+3. **No pending review request** (`gh pr view --json reviewRequests` is `[]`)
+   — a re-requested bot review that has not landed yet counts as pending.
+
+Bot reviews (Copilot, Gemini) land 2–5 minutes after each push — wait that
+window out before concluding "no threads".
+
+**Recovery when armed too early:**
+
+```bash
+# A PR already picked up by the queue rejects --disable-auto AND branch pushes
+# ("Pull request is already queued to merge"). Dequeue it via GraphQL:
+PRID=$(gh api graphql -F owner=OWNER -F repo=REPO -F pr=NUMBER \
+  -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){id}}}' \
+  --jq .data.repository.pullRequest.id)
+gh api graphql -F id="$PRID" \
+  -f query='mutation($id:ID!){ dequeuePullRequest(input:{id:$id}) { mergeQueueEntry { id } } }' 
+# Branch is pushable again; fix threads, then re-arm through this gate.
+```
+
 ### Signing and DCO Failures
 
 When `mergeStateStatus: BLOCKED` and the blocking check is `dco` or a "Commits must have verified signatures" branch-protection rule, act on these in order:
@@ -984,6 +1015,15 @@ gh api "repos/OWNER/REPO/commits/SHA/check-runs" \
 
 ### 2. Resolve Review Comments
 
+**Work threads the moment they land — decoupled from CI.** Review comments
+are workable input 2–5 minutes after a push; there is no reason to wait for
+the full check matrix before starting on them. Poll `reviewThreads`
+independently of `gh pr checks` (a watcher that gates thread reporting on
+"all checks settled" hides actionable feedback for the length of the longest
+job). Bot reviews also race your pushes: a thread may flag code a commit you
+just pushed already fixed — answer it with the fixing SHA and resolve; no
+churn needed.
+
 ```bash
 # List unresolved threads
 gh api graphql -f query='query {
@@ -1030,7 +1070,9 @@ STRATEGY=$(gh api "repos/OWNER/REPO" --jq '
 [ "$STRATEGY" = "--squash" ] && echo "WARNING: only squash is enabled — this rewrites history and drops signatures" >&2
 gh pr merge <NUMBER> --auto "$STRATEGY"
 
-# For repos with merge queue, just queue it
+# For repos with merge queue, queue it — but ONLY after passing the
+# "Auto-Merge / Merge-Queue Arming Gate" above (the queue ignores
+# unresolved review threads and in-flight bot reviews).
 gh pr merge <NUMBER> --auto
 ```
 
