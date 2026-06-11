@@ -321,7 +321,8 @@ llm_reviews:
       containing `dev-` versioned packages (e.g. `dev-staging`, `dev-main`).
 
       Run:
-        git show origin/staging:composer.lock 2>/dev/null | grep '"version": "dev-' | head -5
+        git fetch origin staging:refs/remotes/origin/staging --depth=1 2>/dev/null || true
+        (git show origin/staging:composer.lock || git show staging:composer.lock) 2>/dev/null | grep '"version": "dev-' | head -5
 
       If dev-versioned packages exist, verify that the project's contributing
       guide or AGENTS.md documents the staging merge strategy:
