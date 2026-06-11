@@ -789,9 +789,11 @@ window out before concluding "no threads".
 ```bash
 # A PR already picked up by the queue rejects --disable-auto AND branch pushes
 # ("Pull request is already queued to merge"). Dequeue it via GraphQL:
-PRID=$(gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:N){id}}}' \
+PRID=$(gh api graphql -F owner=OWNER -F repo=REPO -F pr=NUMBER \
+  -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){id}}}' \
   --jq .data.repository.pullRequest.id)
-gh api graphql -f query="mutation { dequeuePullRequest(input: {id: \"$PRID\"}) { mergeQueueEntry { id } } }"
+gh api graphql -F id="$PRID" \
+  -f query='mutation($id:ID!){ dequeuePullRequest(input:{id:$id}) { mergeQueueEntry { id } } }' 
 # Branch is pushable again; fix threads, then re-arm through this gate.
 ```
 
