@@ -83,10 +83,11 @@ git push origin "${commit}:refs/tags/v1.0"
 Always add an explicit empty-value guard after command substitution whose output is load-bearing:
 
 ```bash
+tag="v1.0"
 commit=$(git commit-tree "$tree" -p "$parent" -m "msg")
 if [ -z "${commit}" ]; then
   echo "ERROR: git commit-tree produced no output for tag ${tag}" >&2
-  continue   # or: exit 1, depending on context
+  exit 1   # or: continue, if inside a loop
 fi
 git push origin "${commit}:refs/tags/${tag}"
 ```

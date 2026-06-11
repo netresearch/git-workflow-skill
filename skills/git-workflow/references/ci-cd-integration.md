@@ -717,7 +717,7 @@ in a separate repository, a file in object storage, or a CI/CD cache artifact.
 
 ```yaml
 mirror-sync:
-  image: alpine/git:latest
+  image: alpine/git:2.43.0
   script:
     - git clone --mirror "$SOURCE_URL" repo.git
     - cd repo.git
