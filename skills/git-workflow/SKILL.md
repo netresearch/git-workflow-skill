@@ -5,7 +5,7 @@ license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
 compatibility: "Requires git, gh CLI."
 metadata:
   author: Netresearch DTT GmbH
-  version: "1.16.0"
+  version: "1.17.0"
   repository: https://github.com/netresearch/git-workflow-skill
 allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 ---
@@ -90,4 +90,4 @@ Before merging: threads resolved, CI green (incl. annotations), rebased, signed.
 
 ---
 
-> **Contributing:** https://github.com/netresearch/git-workflow-skill
+> **Contributing:** <https://github.com/netresearch/git-workflow-skill>
