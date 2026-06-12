@@ -784,6 +784,26 @@ Arm auto-merge / enqueue **only when all three hold**:
 Bot reviews (Copilot, Gemini) land 2–5 minutes after each push — wait that
 window out before concluding "no threads".
 
+**Review on an earlier head + `CLEAN`: decide via the timeline, not the
+review list.** After a follow-up push (docs-only changes often do not
+re-trigger Copilot), the only review on record may sit on a previous commit
+while `mergeStateStatus` reports `CLEAN` off it. Whether that is mergeable
+depends on one question: was any review (re)announced *after* the latest
+push? The reviews list cannot answer it — query the timeline events:
+
+```bash
+R=<owner/repo>; PR=<number>
+gh api repos/$R/issues/$PR/timeline --jq \
+  '[.[] | select(.event=="review_requested" or .event=="reviewed")
+        | {event, actor: (.actor.login // .user.login), at: (.created_at // .submitted_at)}]'
+```
+
+- Last `review_requested` is **before** the latest push and a matching
+  `reviewed` followed it, no newer request → no review is in flight; the
+  old-head review + `CLEAN` is mergeable.
+- A `review_requested` **after** the latest push with no `reviewed` yet →
+  a review is in flight; wait (see *Never merge over an announced review*).
+
 **Recovery when armed too early:**
 
 ```bash
