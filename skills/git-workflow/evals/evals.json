@@ -305,5 +305,27 @@
         "pattern": "(CLEAN is not sufficient|CLEAN isn.t sufficient|CLEAN alone|CLEAN can be stale|CLEAN doesn.t mean|not sufficient to merge|review_on_push|empty reviewRequests doesn|reviewRequests is not)"
       }
     ]
+  },
+  {
+    "name": "old_head_review_clean_timeline_check",
+    "prompt": "PR has all checks green and mergeStateStatus CLEAN, but the only Copilot review is on the previous commit; I pushed a docs-only commit afterwards. Can I merge?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(?i)timeline"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)review.?request"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(after|since|following).{0,50}(push|commit|head)"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(mergeable|safe to merge|can merge|merge it).{0,160}(no (new |further )?review|nothing (was )?announced|not.{0,20}announced)|((no (new |further )?review|nothing (was )?announced).{0,160}(mergeable|safe to merge|can merge))"
+      }
+    ]
   }
 ]
