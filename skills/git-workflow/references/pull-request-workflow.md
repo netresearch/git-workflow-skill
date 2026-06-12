@@ -792,7 +792,8 @@ depends on one question: was any review (re)announced *after* the latest
 push? The reviews list cannot answer it — query the timeline events:
 
 ```bash
-gh api repos/OWNER/REPO/issues/NUMBER/timeline --jq \
+R=<owner/repo>; PR=<number>
+gh api repos/$R/issues/$PR/timeline --jq \
   '[.[] | select(.event=="review_requested" or .event=="reviewed")
         | {event, actor: (.actor.login // .user.login), at: (.created_at // .submitted_at)}]'
 ```
