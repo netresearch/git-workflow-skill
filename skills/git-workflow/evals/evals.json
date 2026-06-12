@@ -338,11 +338,11 @@
       },
       {
         "type": "content",
-        "pattern": "(?i)(never|don.t|do not|won.t|refus).{0,60}(chain|&&|one (go|command|compound)|same command|single command)"
+        "pattern": "(?i)(never|don.t|do not|won.t|refus|can.t|cannot|should not|shouldn.t|must not|mustn.t).{0,60}(chain|&&|one (go|command|compound)|same command|single command)"
       },
       {
         "type": "content",
-        "pattern": "(?i)(exit (code|status)|CLEAN (does not|doesn.t).{0,40}(unresolved|thread)|unresolved (review )?thread)"
+        "pattern": "(?i)(exit.{0,12}(code|status|0|zero)|CLEAN (does not|doesn.t).{0,40}(unresolved|thread|conversation)|unresolved (review )?(thread|conversation))"
       }
     ]
   }
