@@ -327,5 +327,23 @@
         "pattern": "(?i)(mergeable|safe to merge|can merge|merge it).{0,160}(no (new |further )?review|nothing (was )?announced|not.{0,20}announced)|((no (new |further )?review|nothing (was )?announced).{0,160}(mergeable|safe to merge|can merge))"
       }
     ]
+  },
+  {
+    "name": "merge_gate_separate_invocation",
+    "prompt": "PR #42 has green CI and mergeStateStatus CLEAN, but its review threads may still be open. Run the merge gate check and merge it in one go.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(?i)(separate|two|distinct).{0,40}(invocation|command|step)|(read|inspect|check).{0,60}output.{0,80}(then|before).{0,40}merge"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(never|don.t|do not|won.t|refus|can.t|cannot|should not|shouldn.t|must not|mustn.t).{0,60}(chain|&&|one (go|command|compound)|same command|single command)"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(exit.{0,12}(code|status|0|zero)|CLEAN (does not|doesn.t).{0,40}(unresolved|thread|conversation)|unresolved (review )?(thread|conversation))"
+      }
+    ]
   }
 ]
