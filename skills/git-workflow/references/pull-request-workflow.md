@@ -813,7 +813,7 @@ PRID=$(gh api graphql -F owner=OWNER -F repo=REPO -F pr=NUMBER \
   -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){id}}}' \
   --jq .data.repository.pullRequest.id)
 gh api graphql -F id="$PRID" \
-  -f query='mutation($id:ID!){ dequeuePullRequest(input:{id:$id}) { mergeQueueEntry { id } } }' 
+  -f query='mutation($id:ID!){ dequeuePullRequest(input:{id:$id}) { mergeQueueEntry { id } } }'
 # Branch is pushable again; fix threads, then re-arm through this gate.
 ```
 
@@ -869,6 +869,26 @@ gh pr view NUMBER --json reviewDecision,mergeStateStatus,mergeable,statusCheckRo
 #   mergeable                                 == "MERGEABLE"
 #   every statusCheckRollup[].conclusion      == "SUCCESS"
 #   every reviewThreads[].isResolved          == true   # gh flattens the GraphQL edges/nodes
+```
+
+**The gate and the merge are two separate invocations.** Run the gate query,
+read its output, and only then issue `gh pr merge` as a new command. Never
+chain them (`gate-query && gh pr merge`, or query-then-merge in one
+heredoc/compound command): shell chaining decides on **exit codes**, not on
+the gate's content — `gh pr view` exits 0 whether it reports zero unresolved
+threads or three, so the merge fires before anyone has read the gate's
+output. And `mergeStateStatus: CLEAN` does **not** imply zero unresolved
+threads — GitHub only couples the two when the "require conversation
+resolution" branch-protection rule is enabled, which most repos don't turn on.
+
+```bash
+# ❌ Wrong — merge already executed by the time "unresolved: 3" is visible
+gh pr view 42 --json mergeStateStatus,reviewThreads && gh pr merge 42 --merge
+
+# ✅ Right — two invocations, with an explicit read of the gate output between
+gh pr view 42 --json reviewDecision,mergeStateStatus,mergeable,statusCheckRollup,reviewThreads
+# READ the output: all threads resolved? all checks green? Only then, as a new command:
+gh pr merge 42 --merge
 ```
 
 The PR-level gate above covers review decision, merge state, required checks, and thread resolution in one response. A second check is needed for CI annotations (warnings — reviewdog / actionlint / CodeQL deprecations — that don't fail their check but still need addressing). These are a commit-level property, not a PR-level one:
