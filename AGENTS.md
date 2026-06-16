@@ -33,7 +33,8 @@ Expert patterns for Git version control: branching, commits, collaboration, and 
 The spec-cleanup capability (`references/spec-cleanup.md`) distinguishes two
 classes of doc folder. The machine-readable source of truth is
 `.spec-cleanup.yml` (here, `.spec-cleanup.yml.example` — this repo ships no
-active config so the guard does not flag its own dogfooded design spec).
+active config, so the guard is not wired into its own gate; run manually with the
+baked-in defaults it *does* flag the dogfooded design spec, by design).
 
 - **Persisted / durable** — keep in the base branch: `docs/adr/`, `docs/PRD.md`,
   `Documentation/`, plus this repo's `docs/` architecture/planning notes.

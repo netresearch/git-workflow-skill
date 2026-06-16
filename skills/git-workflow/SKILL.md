@@ -2,7 +2,7 @@
 name: git-workflow
 description: "Use when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, creating releases, integrating Git with CI/CD, setting up git hooks (lefthook, captainhook, husky, pre-commit), or debugging hook-install failures in git worktrees."
 license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
-compatibility: "Requires git, gh CLI."
+compatibility: "Requires git, gh CLI; yq for .spec-cleanup.yml."
 metadata:
   author: Netresearch DTT GmbH
   version: "1.17.0"
@@ -19,12 +19,12 @@ Expert patterns for Git: branching, commits, collaboration, CI/CD.
 1. **No direct push to main** — always open a PR.
 2. **No merge before all threads resolved** — see `references/pull-request-workflow.md`.
 3. **No squash unless asked** — preserves atomic commits, signatures, bisection.
-4. **No "tested/verified/working" without pasted command output** — if you cannot run the check, say so.
+4. **No "tested/verified/working" without pasted command output** — else say so.
 5. **No edits to installed skill/plugin cache paths** (`~/.claude/skills/`, `~/.claude/plugins/cache/`, `**/.bare/**`) — always the repo worktree, verified by `pwd`.
 6. **Force-push only with `--force-with-lease`** — never plain `--force`.
 7. **Commit before rebase** — `add → commit → fetch → rebase → push`. Dirty tree aborts rebase.
 
-See `references/pull-request-workflow.md` for merge-gate, atomic-commit, and SHA-citation patterns.
+See `references/pull-request-workflow.md` for merge-gate and atomic-commit patterns.
 
 ## Reference Files
 
@@ -75,7 +75,7 @@ Install: `lefthook install` | `composer install` | `npm install` | `pre-commit i
 
 ## Critical Release Rules
 
-1. **Immutable releases**: Deleted releases permanently block tag reuse; bump version instead.
+1. **Immutable releases**: deleted releases block tag reuse; bump version.
 2. **Multi-branch releases**: Use `--latest=false` from non-default branches.
 3. **Pre-release**: Version bumped, CI green, CHANGELOG updated, `git pull` BEFORE `gh release create`.
 

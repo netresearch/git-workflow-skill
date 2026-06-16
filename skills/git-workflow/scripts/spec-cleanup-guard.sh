@@ -75,6 +75,14 @@ load_config() {
     PATHS=("${DEFAULT_PATHS[@]}")
     EXCLUDES=("${DEFAULT_EXCLUDES[@]+"${DEFAULT_EXCLUDES[@]}"}")
   fi
+  # Reject unanchored leading-glob patterns (e.g. **/*.plan.md, *.md): they match
+  # arbitrary project files. Anchor under a directory (docs/superpowers/**/*.plan.md).
+  local g
+  for g in "${PATHS[@]}"; do
+    if [[ "$g" == '*'* ]]; then
+      die "unanchored glob '$g' in intermediate_paths — anchor it under a directory (e.g. docs/superpowers/**/*.plan.md) so it cannot match unrelated files."
+    fi
+  done
 }
 
 build_pathspecs() {
@@ -86,9 +94,9 @@ build_pathspecs() {
 
 # Populate TRACKED / STAGED / UNTRACKED arrays.
 detect() {
-  mapfile -t TRACKED   < <(git ls-files -- "${PATHSPECS[@]}" 2>/dev/null | sort -u)
-  mapfile -t STAGED    < <(git diff --cached --name-only --diff-filter=AM -- "${PATHSPECS[@]}" 2>/dev/null | sort -u)
-  mapfile -t UNTRACKED < <(git ls-files --others --exclude-standard -- "${PATHSPECS[@]}" 2>/dev/null | sort -u)
+  mapfile -t TRACKED   < <(git -c core.quotePath=false ls-files -- "${PATHSPECS[@]}" 2>/dev/null | sort -u)
+  mapfile -t STAGED    < <(git -c core.quotePath=false diff --cached --name-only --diff-filter=AM -- "${PATHSPECS[@]}" 2>/dev/null | sort -u)
+  mapfile -t UNTRACKED < <(git -c core.quotePath=false ls-files --others --exclude-standard -- "${PATHSPECS[@]}" 2>/dev/null | sort -u)
 }
 
 print_group() {
@@ -101,6 +109,9 @@ print_group() {
 run() {
   local dry="$1"
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git work tree."
+  # Anchor config lookup + pathspecs at the repo root so the gate cannot silently
+  # pass when invoked from a subdirectory (e.g. a hook or CI step with a different CWD).
+  cd "$(git rev-parse --show-toplevel)" || die "cannot cd to repo root."
   load_config
   build_pathspecs
   detect
@@ -145,6 +156,8 @@ selftest() {
     echo c > docs/superpowers/specs/a/b/c.md   # nested, untracked
     st_assert "T2/T3 nested untracked -> 1" 1 "$(st_rc bash "$self")"
     st_assert "T3 nested caught also in --dry-run (rc 0)" 0 "$(st_rc bash "$self" --dry-run)"
+    mkdir -p sub/deeper
+    st_assert "GC-1 caught when run from subdirectory -> 1" 1 "$(cd sub/deeper && st_rc bash "$self")"
 
     eval "$GIT_Q add docs/superpowers/specs/a/b/c.md"      # now staged
     st_assert "T_staged staged intermediate -> 1" 1 "$(st_rc bash "$self")"
@@ -167,6 +180,8 @@ selftest() {
       st_assert "T5b non-excluded under config -> 1" 1 "$(st_rc bash "$self")"
       st_assert "T7 config present + no yq -> 2 (fail closed)" 2 \
         "$(SPEC_CLEANUP_FAKE_NO_YQ=1 st_rc bash "$self")"
+      printf 'intermediate_paths:\n  - "**/*.plan.md"\n' > .spec-cleanup.yml
+      st_assert "GC-2 unanchored glob in config -> 2 (rejected)" 2 "$(st_rc bash "$self")"
       rm -f .spec-cleanup.yml docs/superpowers/flagme.md
       rm -rf docs/superpowers/keep
     else
@@ -179,7 +194,7 @@ selftest() {
 
 # ------------------------------ main ----------------------------
 case "${1:-}" in
-  --help|-h) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  --help|-h) awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0"; exit 0 ;;
   --selftest) selftest ;;
   --dry-run) run 1 ;;
   "") run 0 ;;

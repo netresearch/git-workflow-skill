@@ -37,8 +37,9 @@ resolution, and merge-queue handling. Then execute, in order:
    specs/plans (`docs/superpowers/**`), ad-hoc `PLAN.md`, planning-tool output —
    that would reach the base branch, resolve them first: **convert** the durable
    decisions into an ADR (propose the diff, get review, commit), then **remove**
-   the raw files recoverably (never bare-`rm` an untracked file; stage it so it
-   enters history, then `git rm` in a `chore: remove working specs/plans` commit),
+   the raw files recoverably (never bare-`rm` an untracked file; `git add -- <that
+   path>` only — never `-A/-u` — so it enters history, then `git rm` in a
+   `chore: remove working specs/plans` commit),
    or **acknowledge** "nothing durable" with a `Spec-Cleanup: acknowledged`
    trailer. Verify the capture commit landed before removing. Do this before the
    rebase so the branch is clean when the gate runs. See

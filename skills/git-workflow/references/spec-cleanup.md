@@ -36,7 +36,8 @@ Config globs are normalized to **git pathspecs** (these are NOT shell globs):
 a directory glob `docs/superpowers/**` → directory pathspec `docs/superpowers/`
 (recurses); a suffix glob → `:(glob)docs/superpowers/**/*.plan.md` (anchored —
 a bare `**/*.plan.md` is forbidden because it sweeps in real files like
-`src/foo.plan.md`). `exclude:` entries become `:(exclude)` pathspecs.
+`src/foo.plan.md`). `exclude:` entries become `:(exclude)` pathspecs (or
+`:(exclude,glob)` when the pattern contains glob characters).
 
 ## Config — `.spec-cleanup.yml` (optional)
 
@@ -72,11 +73,14 @@ Runs in-session so the branch is clean before the gate. Sequence:
    intended paths (`git show --stat HEAD`) and the tree no longer reports them
    uncommitted. On any failure (blocked hook, signing failure, empty diff),
    **abort removal** and surface the error.
-4. **Recoverable removal.** Stage any untracked raw artifacts so they enter
-   history, then commit their deletion as `chore: remove working specs/plans
-   (captured in <ADR>)`. Because we never squash (repo rule), the raw content
-   stays recoverable from branch/merge history. **Bare `rm` of untracked content
-   is forbidden** — every removal is a git deletion of a tracked file.
+4. **Recoverable removal.** Stage **only the manifested artifact paths**
+   (`git add -- <path>`, never `git add -A/-u`, so unrelated working-tree changes
+   are not absorbed) so they enter history, then commit their deletion as
+   `chore: remove working specs/plans (captured in <ADR>)`. Recoverability holds
+   **only** for merge/rebase-merged PRs (never squashed); in a squash-merge repo
+   the captured ADR is the sole durable record — confirm it landed first. **Bare
+   `rm` of untracked content is forbidden** — every removal is a git deletion of a
+   tracked file.
 5. **Acknowledge path.** If nothing is durable (or `mode: remove`), skip step 2;
    still manifest+confirm and removal, and record a `Spec-Cleanup: acknowledged`
    trailer on the removal commit listing the removed paths. The acknowledging
@@ -107,6 +111,8 @@ that residual gap is closed only once discovery registers them in config.
 
 Other repos adopt by shipping their own `.spec-cleanup.yml` (own globs + ADR
 target). No forked logic; composes with existing QA agents (e.g.
-`oro-qa-reviewer`). Note: the `git-workflow-skill` repo itself ships only
-`.spec-cleanup.yml.example`, not an active config, so the Guard does not flag its
-own dogfooded design spec under `docs/superpowers/specs/`.
+`oro-qa-reviewer`). Note: the `git-workflow-skill` repo ships only
+`.spec-cleanup.yml.example` (no active config), so the Guard is not wired into its
+own merge gate/CI. Run manually with the baked-in defaults it *does* flag the
+dogfooded design spec under `docs/superpowers/specs/` — the intended
+self-demonstration (design §8).
