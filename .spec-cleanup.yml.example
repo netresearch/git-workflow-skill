@@ -1,0 +1,30 @@
+# .spec-cleanup.yml — declares intermediate planning artifacts that must NOT
+# reach the base branch. Copy to `.spec-cleanup.yml` to activate.
+# Read by skills/git-workflow/scripts/spec-cleanup-guard.sh (requires yq v4 when
+# this file is present). Without an active config the guard's baked-in defaults
+# apply. See skills/git-workflow/references/spec-cleanup.md.
+
+# Throwaway planning artifacts (Guard detects; Capture removes after capture).
+# Globs are git pathspecs: a trailing /** means "this directory, recursively";
+# a suffix pattern (e.g. **/*.plan.md) MUST be path-anchored to avoid matching
+# real project files like src/foo.plan.md.
+intermediate_paths:
+  - docs/superpowers/**
+  - claudedocs/**
+  - docs/working/**
+  - docs/superpowers/**/*.plan.md
+
+# Deliberate keepers that would otherwise match a glob above (optional).
+exclude:
+  - docs/superpowers/specs/**/KEEP-*.md
+
+# Where Capture proposes durable knowledge. v1 ships the ADR target only;
+# prd (update-in-place) and docs (user-doc stubs) are deferred phase-2 targets.
+capture_targets:
+  adr: docs/adr/
+  # prd:  docs/PRD.md
+  # docs: Documentation/
+
+# convert (default): propose an ADR, then remove the raw artifacts recoverably.
+# remove: skip conversion, remove recoverably (still manifest + confirm).
+mode: convert

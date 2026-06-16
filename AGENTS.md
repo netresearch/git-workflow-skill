@@ -11,7 +11,9 @@ Expert patterns for Git version control: branching, commits, collaboration, and 
 │   ├── evals/                      # Skill evaluations
 │   ├── references/                 # Detailed reference docs (see below)
 │   └── scripts/
-│       └── verify-git-workflow.sh  # Git workflow verification
+│       ├── verify-git-workflow.sh  # Git workflow verification
+│       └── spec-cleanup-guard.sh   # Read-only gate for intermediate planning artifacts
+├── .spec-cleanup.yml.example       # Template config for the spec-cleanup guard
 ├── Build/
 │   ├── Scripts/                    # Build/validation scripts
 │   └── hooks/                      # Git hook templates (pre-commit, pre-push)
@@ -25,6 +27,18 @@ Expert patterns for Git version control: branching, commits, collaboration, and 
 ├── composer.json                   # Composer package manifest
 └── README.md
 ```
+
+### Doc folder taxonomy (for the spec-cleanup guard)
+
+The spec-cleanup capability (`references/spec-cleanup.md`) distinguishes two
+classes of doc folder. The machine-readable source of truth is
+`.spec-cleanup.yml` (here, `.spec-cleanup.yml.example` — this repo ships no
+active config so the guard does not flag its own dogfooded design spec).
+
+- **Persisted / durable** — keep in the base branch: `docs/adr/`, `docs/PRD.md`,
+  `Documentation/`, plus this repo's `docs/` architecture/planning notes.
+- **Intermediate / working** — must never reach the base branch:
+  `docs/superpowers/`, `claudedocs/`, `docs/working/`, ad-hoc `*.plan.md`.
 
 ## Commands
 

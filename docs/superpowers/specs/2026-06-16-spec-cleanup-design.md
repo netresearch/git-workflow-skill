@@ -30,7 +30,8 @@ always recoverable (it goes through git history, never bare `rm`).
 
 ## 2. Goals / Non-Goals
 
-**Goals**
+### Goals
+
 - Block the base branch from receiving tracked intermediate artifacts.
 - Detect artifacts in **all three states**: committed/tracked, staged, and
   untracked working-tree files.
@@ -41,7 +42,8 @@ always recoverable (it goes through git history, never bare `rm`).
 - Ship usable defaults; let repos extend via `.spec-cleanup.yml`; declare the
   folder taxonomy in `AGENTS.md`.
 
-**Non-Goals**
+### Non-Goals
+
 - Auto-discovering "every intermediate file everywhere" by heuristic. Enforced
   detection is anchored to declared globs (§3.2). Session context is used only to
   *discover and register* stray artifacts (§3.4), never as a silent deletion

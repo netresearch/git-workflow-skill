@@ -765,6 +765,7 @@ Before merging any PR, run this gate. If any check fails, stop and fix the under
 - [ ] **No CI annotations** — check job annotations, not just pass/fail (see below)
 - [ ] **Signed commits** — every commit in the PR is signed (see "Signing and DCO Failures" below if blocked)
 - [ ] **DCO sign-off** — every commit has a `Signed-off-by:` trailer matching `git config user.{name,email}` (required when the `probot/dco` check is enabled)
+- [ ] **No intermediate planning artifacts** — `bash skills/git-workflow/scripts/spec-cleanup-guard.sh` exits 0; superpowers specs/plans (`docs/superpowers/**`) and other scratch planning files must not reach the base branch (see "Spec-Cleanup Guard" below and `references/spec-cleanup.md`)
 
 ### Auto-Merge / Merge-Queue Arming Gate
 
@@ -903,6 +904,21 @@ gh api "repos/{owner}/{repo}/commits/SHA/check-runs" \
 For automated enforcement at tool-invocation time, see the `merge-gate.sh` hook recipe in `references/claude-code-hooks.md`. The hook enforces the **runtime-checkable subset** — `reviewDecision`, `mergeStateStatus`, and unresolved thread count — which covers the most common block reasons. Signed-commits and CI-annotations checks are not enforced by the hook (annotations in particular require the commit-level API call above); rely on the repo's branch-protection rules and local pre-commit hook for those.
 
 > **Important:** CI checks can PASS while emitting warning annotations (e.g., actionlint/shellcheck via reviewdog, CodeQL deprecation notices). These are invisible in the PR summary view but visible in the job detail "Annotations" section. Always check for annotations before declaring a PR clean.
+
+### Spec-Cleanup Guard
+
+Intermediate planning artifacts (superpowers specs/plans, ad-hoc `PLAN.md`,
+planning-tool output) must not ride into the base branch. The guard is
+deterministic and **read-only** — it detects and reports, never deletes.
+
+```bash
+# Exit 0 = clean; exit 1 = artifacts found (resolve before merge); exit 2 = config error.
+bash skills/git-workflow/scripts/spec-cleanup-guard.sh
+```
+
+If it exits 1, resolve via the `/pr-finish` spec-cleanup step (convert to an ADR /
+remove / acknowledge) so the branch is clean, then re-run. Full capability —
+config, three-state detection, Capture flow — is in `references/spec-cleanup.md`.
 
 ### Rulesets: the gate `gh pr view` doesn't show
 

@@ -31,6 +31,19 @@ resolution, and merge-queue handling. Then execute, in order:
    (if a `copilot_code_review` rule is blocking because no review has been triggered yet,
    you can request one via `gh api repos/$R/pulls/$PR/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'` — but once requested you must wait for it to land before merging; see step 5, never merge over an in-flight review), pending review requests, and the thread IDs needed to reply to and resolve each thread. Reason once from this, not serially.
 
+   **Spec-cleanup gate (run before step 1, while the branch is yours to clean).**
+   Run `bash skills/git-workflow/scripts/spec-cleanup-guard.sh` (or the repo's
+   installed path). If it reports intermediate planning artifacts — superpowers
+   specs/plans (`docs/superpowers/**`), ad-hoc `PLAN.md`, planning-tool output —
+   that would reach the base branch, resolve them first: **convert** the durable
+   decisions into an ADR (propose the diff, get review, commit), then **remove**
+   the raw files recoverably (never bare-`rm` an untracked file; stage it so it
+   enters history, then `git rm` in a `chore: remove working specs/plans` commit),
+   or **acknowledge** "nothing durable" with a `Spec-Cleanup: acknowledged`
+   trailer. Verify the capture commit landed before removing. Do this before the
+   rebase so the branch is clean when the gate runs. See
+   `skills/git-workflow/references/spec-cleanup.md`.
+
 1. **Rebase** onto the base branch if the branch is behind. In bare-repo worktree
    setups, fetch explicitly (`git fetch origin <branch>:refs/remotes/origin/<branch>`)
    — `origin/*` may not auto-update and `--force-with-lease` then fails "stale info".

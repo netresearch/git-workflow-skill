@@ -345,5 +345,37 @@
         "pattern": "(?i)(exit.{0,12}(code|status|0|zero)|CLEAN (does not|doesn.t).{0,40}(unresolved|thread|conversation)|unresolved (review )?(thread|conversation))"
       }
     ]
+  },
+  {
+    "name": "spec_cleanup_guard_before_merge",
+    "prompt": "I'm finishing a PR with /pr-finish. My feature branch committed the superpowers plan and spec under docs/superpowers/ while I was working. What should happen before this merges into the base branch?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(?i)(spec.?cleanup|intermediate|working).{0,40}(artifact|spec|plan|file)|docs/superpowers"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(not (reach|land|merge)|keep .{0,20}out of|must not).{0,40}(base|main|develop)|(remove|delete|clean).{0,40}before.{0,20}merge"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(ADR|capture|convert|durable doc|documentation).{0,40}(then|before).{0,40}(remove|delete|clean)|guard"
+      }
+    ]
+  },
+  {
+    "name": "spec_cleanup_recoverable_removal",
+    "prompt": "My branch has an untracked docs/superpowers/plan.md I no longer need before merging. How do I get rid of it safely?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(?i)(never|don.t|do not|avoid).{0,30}(bare )?(rm|delete).{0,30}untracked|untracked.{0,40}(irrecoverable|not in git|cannot.{0,10}recover|unrecoverable)"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(stage|git add|commit).{0,60}(then|before).{0,20}(git rm|remove|delete)|recoverable.{0,30}(removal|history)|enters? .{0,10}history"
+      }
+    ]
   }
 ]
