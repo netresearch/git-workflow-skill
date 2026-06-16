@@ -92,11 +92,19 @@ build_pathspecs() {
   for g in "${EXCLUDES[@]+"${EXCLUDES[@]}"}"; do PATHSPECS+=("$(normalize_exclude "$g")"); done
 }
 
-# Populate TRACKED / STAGED / UNTRACKED arrays.
+# Populate TRACKED / STAGED / UNTRACKED arrays (each file in exactly one bucket).
 detect() {
-  mapfile -t TRACKED   < <(git -c core.quotePath=false ls-files -- "${PATHSPECS[@]}" 2>/dev/null | sort -u)
-  mapfile -t STAGED    < <(git -c core.quotePath=false diff --cached --name-only --diff-filter=AM -- "${PATHSPECS[@]}" 2>/dev/null | sort -u)
+  mapfile -t STAGED    < <(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR -- "${PATHSPECS[@]}" 2>/dev/null | sort -u)
   mapfile -t UNTRACKED < <(git -c core.quotePath=false ls-files --others --exclude-standard -- "${PATHSPECS[@]}" 2>/dev/null | sort -u)
+  # Committed-tracked = index entries matching, minus anything already reported as a
+  # staged change, so a newly-staged file is not double-listed as "committed".
+  # ls-files (not ls-tree) is required here: ls-tree rejects the :(glob)/:(exclude)
+  # pathspec magic the guard relies on.
+  if ((${#STAGED[@]})); then
+    mapfile -t TRACKED < <(git -c core.quotePath=false ls-files -- "${PATHSPECS[@]}" 2>/dev/null | sort -u | grep -vxF "$(printf '%s\n' "${STAGED[@]}")" || true)
+  else
+    mapfile -t TRACKED < <(git -c core.quotePath=false ls-files -- "${PATHSPECS[@]}" 2>/dev/null | sort -u)
+  fi
 }
 
 print_group() {
@@ -131,7 +139,7 @@ run() {
 }
 
 # --------------------------- selftest ---------------------------
-GIT_Q='git -c commit.gpgsign=false -c user.email=t@example.com -c user.name=test'
+git_q() { git -c commit.gpgsign=false -c user.email=t@example.com -c user.name=test "$@"; }
 st_pass=0 st_fail=0
 st_assert() { # desc expected_rc actual_rc
   if [[ "$2" == "$3" ]]; then st_pass=$((st_pass+1)); printf '  ok   %s (rc=%s)\n' "$1" "$3"
@@ -144,11 +152,11 @@ selftest() {
   local t; t="$(mktemp -d "${TMPDIR:-/tmp}/scg-selftest.XXXXXX")"
   trap 'rm -rf "$t"' RETURN
   ( cd "$t"
-    eval "$GIT_Q init -q"
+    git_q init -q
     mkdir -p docs/superpowers/specs/a/b src docs/working
     echo readme > README.md
     echo real   > src/real.plan.md            # real file, NON-intermediate path
-    eval "$GIT_Q add README.md src/real.plan.md"; eval "$GIT_Q commit -qm init"
+    git_q add README.md src/real.plan.md; git_q commit -qm init
 
     echo "T4 no config — default guard:"
     st_assert "T6 clean branch -> 0" 0 "$(st_rc bash "$self")"
@@ -159,12 +167,19 @@ selftest() {
     mkdir -p sub/deeper
     st_assert "GC-1 caught when run from subdirectory -> 1" 1 "$(cd sub/deeper && st_rc bash "$self")"
 
-    eval "$GIT_Q add docs/superpowers/specs/a/b/c.md"      # now staged
+    git_q add docs/superpowers/specs/a/b/c.md             # now staged
     st_assert "T_staged staged intermediate -> 1" 1 "$(st_rc bash "$self")"
-    eval "$GIT_Q commit -qm spec"                          # now tracked
+    # A newly-staged file must appear ONLY under "staged", never "tracked (committed)".
+    staged_out="$(bash "$self" 2>/dev/null || true)"
+    if printf '%s' "$staged_out" | grep -q 'staged:' && ! printf '%s' "$staged_out" | grep -q 'tracked (committed):'; then
+      st_assert "staged file not double-listed as tracked" 0 0
+    else
+      st_assert "staged file not double-listed as tracked" 0 1
+    fi
+    git_q commit -qm spec                                  # now tracked
     st_assert "T1 tracked intermediate -> 1" 1 "$(st_rc bash "$self")"
 
-    eval "$GIT_Q rm -q docs/superpowers/specs/a/b/c.md"; eval "$GIT_Q commit -qm rm"
+    git_q rm -q docs/superpowers/specs/a/b/c.md; git_q commit -qm rm
     st_assert "T6b removed -> clean 0" 0 "$(st_rc bash "$self")"
 
     echo "T_overmatch real src/*.plan.md must NOT be flagged by default:"
