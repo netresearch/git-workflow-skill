@@ -491,6 +491,26 @@ gh api /repos/{owner}/{repo}/commits/HEAD --jq '.commit.verification | {verified
 
 **Never bypass signing** unless explicitly told to. `--no-gpg-sign` and `-c commit.gpgsign=false` disable commit signing; the result will fail branch-protection or policy checks that require signed commits later.
 
+**Verify signing capability without committing on `main`.** To check that signing
+actually works (right key, agent reachable), do **not** create a probe commit on the
+default branch — even an immediately-reset `git commit --allow-empty -S` on `main` is a
+transient commit on a protected branch and violates "no direct commits to main". Inspect
+configuration instead, no commit required:
+
+```bash
+git config commit.gpgsign     # expect: true
+git config gpg.format         # ssh (SSH signing) or empty (GPG)
+git config user.signingkey    # the key/path that will be used
+```
+
+If you must actually exercise the signing path, do it on a throwaway branch and discard it:
+
+```bash
+git switch -c tmp/sign-probe
+git commit --allow-empty -S -m "chore: signing probe" && git log -1 --format='%G?'   # conventional msg so a commit-msg hook won't reject it; expect: G
+git switch - && git branch -D tmp/sign-probe
+```
+
 ## Atomic Commits
 
 Each commit should be a **single, self-contained logical change** that builds and passes tests independently.
