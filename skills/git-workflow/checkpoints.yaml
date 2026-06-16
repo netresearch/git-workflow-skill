@@ -134,6 +134,17 @@ mechanical:
     severity: warning
     desc: "Main branch should not accumulate >20 unreleased commits since last tag"
 
+  # === INTERMEDIATE PLANNING ARTIFACTS ===
+  - id: GW-16
+    type: command
+    pattern: 'test -z "$(git ls-files -- docs/superpowers/ claudedocs/ docs/working/ 2>/dev/null)"'
+    severity: warning
+    desc: >-
+      Intermediate planning artifacts (superpowers specs/plans, claudedocs,
+      working notes) should not be tracked on the base branch — convert durable
+      decisions to an ADR and remove the raw files. See
+      references/spec-cleanup.md and spec-cleanup-guard.sh.
+
 llm_reviews:
   # === CONVENTIONAL COMMITS ===
   - id: GW-20
