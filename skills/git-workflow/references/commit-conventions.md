@@ -507,7 +507,7 @@ If you must actually exercise the signing path, do it on a throwaway branch and 
 
 ```bash
 git switch -c tmp/sign-probe
-git commit --allow-empty -S -m probe && git log -1 --format='%G?'   # expect: G
+git commit --allow-empty -S -m "chore: signing probe" && git log -1 --format='%G?'   # conventional msg so a commit-msg hook won't reject it; expect: G
 git switch - && git branch -D tmp/sign-probe
 ```
 
