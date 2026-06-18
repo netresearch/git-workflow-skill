@@ -563,6 +563,35 @@ jobs:
           path: cypress/screenshots/
 ```
 
+### Watching CI from the CLI
+
+When waiting on PR CI from the command line (or an agent), use the native
+watchers — do not hand-roll a poll loop:
+
+```bash
+# Wait for all PR checks; exits non-zero if any required check fails.
+gh pr checks <pr> --repo <owner/repo> --watch --fail-fast
+
+# Watch a single workflow run by ID (when you have the run, not the PR).
+gh run watch <run-id> --repo <owner/repo> --exit-status
+```
+
+Gate on the **exit code**, not on parsed output. `gh pr checks` and
+`gh run watch` already handle pending-state representation, the appearance of
+newly-triggered runs, and refresh.
+
+Hand-rolled `gh pr checks | jq` poll loops re-derive those semantics from
+undocumented field shapes (a running check's `conclusion` may be `""`, `null`,
+or absent) and are a recurring source of bugs. The sharpest one: a poll run
+**immediately after a push, reopen, or re-trigger** reads "0 pending" *before*
+the freshly-queued run has registered, so the loop reports a false "all green"
+and you act prematurely. A bare `[ "$pending" -eq 0 ] && break` snapshot is true
+both before runs start and after they finish — it cannot tell the two apart.
+
+If you must hand-roll (e.g. watching something with no native watcher), gate on
+a **named required check reaching a terminal `pass`/`fail` state**, never on a
+zero-pending count, and confirm the run belongs to the current head SHA first.
+
 ## Deployment Strategies
 
 ### Blue-Green Deployment
