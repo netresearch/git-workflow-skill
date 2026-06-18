@@ -892,6 +892,20 @@ gh pr view 42 --json reviewDecision,mergeStateStatus,mergeable,statusCheckRollup
 gh pr merge 42 --merge
 ```
 
+#### Diagnosing `mergeStateStatus: BLOCKED`
+
+`BLOCKED` tells you the PR is not mergeable; it never tells you **why**. Derive the cause from the gate fields above — not from the branch-protection / ruleset inventory (`gh api repos/{repo}/rules/branches/{branch}` or `…/branches/{branch}/protection`). That inventory lists which rules *exist*, not which one is *currently failing*; reading "copilot_code_review is configured" and concluding "Copilot is blocking" is a classic false attribution. Walk the decisive evidence in this order:
+
+| Symptom in the gate output | Actual blocker |
+|---|---|
+| `reviewDecision: "REVIEW_REQUIRED"` | a required approving review is missing — request/await it |
+| `reviewDecision: ""` **and** still BLOCKED | **not** a review-approval block — keep looking (this is the field that disproves "a reviewer is blocking it") |
+| any `statusCheckRollup[].conclusion != "SUCCESS"` (incl. pending) | a required check — name *that* check, not a rule |
+| `reviewThreads[].isResolved == false` exists | unresolved conversations + the repo's `required_conversation_resolution` toggle — resolve the threads |
+| all the above clean, still BLOCKED | branch behind base (needs update), or merge-queue / required-deployment gate |
+
+When unsure which protection toggle couples to the symptom, read it directly: `gh api repos/{repo}/branches/{branch}/protection --jq '{conversation: .required_conversation_resolution, reviews: .required_pull_request_reviews, checks: .required_status_checks.contexts, strict: .required_status_checks.strict}'`. State the cause only once you can point at the field that proves it.
+
 The PR-level gate above covers review decision, merge state, required checks, and thread resolution in one response. A second check is needed for CI annotations (warnings — reviewdog / actionlint / CodeQL deprecations — that don't fail their check but still need addressing). These are a commit-level property, not a PR-level one:
 
 ```bash
