@@ -66,20 +66,32 @@ fi
 # Could not parse a PR id — let the call through rather than false-positive block.
 [[ -z "$PR" ]] && exit 0
 
-STATE=$(gh pr view "$PR" "${REPO_FLAG[@]}" \
-  --json reviewDecision,mergeStateStatus,reviewThreads 2>/dev/null) || exit 0
-UNRES=$(echo "$STATE" | jq '[.reviewThreads.nodes[]? | select(.isResolved==false)] | length')
-DEC=$(echo "$STATE" | jq -r '.reviewDecision // "null"')
-MSS=$(echo "$STATE" | jq -r '.mergeStateStatus // "null"')
+# NB: `reviewThreads` is NOT a valid `gh pr view --json` field — gh errors
+# "Unknown JSON field: reviewThreads" (its whitelist has reviews /
+# reviewRequests / reviewDecision, not reviewThreads). Fetch mergeStateStatus +
+# url via `gh pr view`, then get thread resolution via GraphQL (owner / repo /
+# number parsed from the url). Passing reviewThreads to --json makes the whole
+# call fail → `|| exit 0` → the gate silently allows every merge.
+INFO=$(gh pr view "$PR" "${REPO_FLAG[@]}" --json mergeStateStatus,url 2>/dev/null) || exit 0
+MSS=$(echo "$INFO" | jq -r '.mergeStateStatus // "null"')
+URL=$(echo "$INFO" | jq -r '.url // ""')
+[[ "$URL" =~ github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]] || exit 0
+UNRES=$(gh api graphql -f query="{repository(owner:\"${BASH_REMATCH[1]}\",name:\"${BASH_REMATCH[2]}\"){pullRequest(number:${BASH_REMATCH[3]}){reviewThreads(first:100){nodes{isResolved}}}}}" \
+  --jq '[.data.repository.pullRequest?.reviewThreads?.nodes[]? | select(.isResolved==false)] | length' 2>/dev/null) || UNRES=0
 
-if [[ "$UNRES" -gt 0 || "$DEC" != "APPROVED" || "$MSS" != "CLEAN" ]]; then
+# Gate on unresolved threads + merge state only. Deliberately NOT on
+# reviewDecision: repos with no required-approval rule report reviewDecision ""
+# and merge fine when CLEAN, and mergeStateStatus==CLEAN already encodes the
+# required-approval gate — so gating on reviewDecision!=APPROVED would
+# false-positive-block every such repo.
+if [[ "${UNRES:-0}" -gt 0 || "$MSS" != "CLEAN" ]]; then
   jq -cn \
-    --arg r "merge-gate fail: unresolved=$UNRES, review=$DEC, mergeState=$MSS" \
+    --arg r "merge-gate: unresolved-threads=$UNRES, mergeState=$MSS — resolve threads / clear the block before merging" \
     '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
 fi
 ```
 
-The hook denies `gh pr merge` when any of: review threads unresolved, `reviewDecision != APPROVED`, or `mergeStateStatus != CLEAN`. It parses the three PR-reference forms `gh pr merge` accepts (plain number, full URL, `owner/repo#N`); if parsing fails, the hook allows the call rather than producing false-positive denies.
+The hook denies `gh pr merge` when review threads are unresolved or `mergeStateStatus != CLEAN`. It parses the three PR-reference forms `gh pr merge` accepts (plain number, full URL, `owner/repo#N`); if parsing fails, the hook allows the call rather than producing false-positive denies.
 
 ## Recipe 2: Reject Edits to Installed Cache Paths
 
@@ -191,7 +203,7 @@ The settings watcher only picks up new hook files if `.claude/` existed at sessi
 | Anti-pattern | Why wrong | Fix |
 |--------------|-----------|-----|
 | Using `xargs` on stdin JSON | xargs splits on spaces; breaks paths with spaces | `{ read -r F; ... "$F"; }` pattern |
-| Forgetting `2>/dev/null || true` on PostToolUse | Hook failure pollutes transcript | Wrap non-blocking hooks |
-| `Write|Edit` matcher without file-path extraction | Hook runs on wrong files | `jq -r '.tool_input.file_path'` |
+| Forgetting `2>/dev/null \|\| true` on PostToolUse | Hook failure pollutes transcript | Wrap non-blocking hooks |
+| `Write\|Edit` matcher without file-path extraction | Hook runs on wrong files | `jq -r '.tool_input.file_path'` |
 | Blocking hooks that hit flaky services | One GitHub-API outage blocks all merges | Soft-fail: warn instead of deny for infra-dependent gates |
 | Per-hook large shell scripts inline in JSON | Unreadable, un-testable | Keep inline ≤3 lines; call external script for more |
