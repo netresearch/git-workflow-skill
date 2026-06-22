@@ -859,17 +859,28 @@ If `unknown_key`: go to *github.com → Settings → SSH and GPG keys*, find you
 ### Merge-Gate Command
 
 ```bash
-# Primary gate — single gh pr view that returns every PR-level input.
-# --json takes a comma-separated field list with no spaces, so keep the
-# whole list on one line.
-gh pr view NUMBER --json reviewDecision,mergeStateStatus,mergeable,statusCheckRollup,reviewThreads
+# The gate is TWO queries. `reviewThreads` is NOT a valid `gh pr view --json`
+# field — gh errors "Unknown JSON field: reviewThreads" (its whitelist has
+# reviews / reviewRequests / reviewDecision, not reviewThreads), and passing it
+# fails the WHOLE call. Thread resolution is only available via GraphQL.
+#
+# (1) PR-level fields via gh pr view (--json takes a no-spaces comma list):
+gh pr view NUMBER --json reviewDecision,mergeStateStatus,mergeable,statusCheckRollup
+
+# (2) unresolved-thread count via GraphQL (must be 0):
+gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:NUMBER){
+  reviewThreads(first:100){nodes{isResolved}}}}}' \
+  --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length'
 
 # Merge-ready requires ALL of:
-#   reviewDecision                            == "APPROVED"
+#   reviewDecision                            == "APPROVED" OR "" (empty = no
+#                                                human-approval rule; CLEAN then
+#                                                already encodes the gate — do
+#                                                NOT treat "" as a blocker)
 #   mergeStateStatus                          == "CLEAN"
 #   mergeable                                 == "MERGEABLE"
 #   every statusCheckRollup[].conclusion      == "SUCCESS"
-#   every reviewThreads[].isResolved          == true   # gh flattens the GraphQL edges/nodes
+#   unresolved-thread count (query 2)         == 0
 ```
 
 **The gate and the merge are two separate invocations.** Run the gate query,
@@ -883,12 +894,13 @@ threads — GitHub only couples the two when the "require conversation
 resolution" branch-protection rule is enabled, which most repos don't turn on.
 
 ```bash
-# ❌ Wrong — merge already executed by the time "unresolved: 3" is visible
-gh pr view 42 --json mergeStateStatus,reviewThreads && gh pr merge 42 --merge
+# ❌ Wrong — merge already executed by the time the gate output is visible
+gh pr view 42 --json mergeStateStatus && gh pr merge 42 --merge
 
-# ✅ Right — two invocations, with an explicit read of the gate output between
-gh pr view 42 --json reviewDecision,mergeStateStatus,mergeable,statusCheckRollup,reviewThreads
-# READ the output: all threads resolved? all checks green? Only then, as a new command:
+# ✅ Right — run the gate queries, READ the output, then merge as a new command
+gh pr view 42 --json reviewDecision,mergeStateStatus,mergeable,statusCheckRollup
+gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:42){reviewThreads(first:100){nodes{isResolved}}}}}' --jq '[.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length'
+# READ both: all threads resolved (count 0)? all checks green? Only then:
 gh pr merge 42 --merge
 ```
 
