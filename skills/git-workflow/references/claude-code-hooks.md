@@ -77,7 +77,7 @@ MSS=$(echo "$INFO" | jq -r '.mergeStateStatus // "null"')
 URL=$(echo "$INFO" | jq -r '.url // ""')
 [[ "$URL" =~ github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]] || exit 0
 UNRES=$(gh api graphql -f query="{repository(owner:\"${BASH_REMATCH[1]}\",name:\"${BASH_REMATCH[2]}\"){pullRequest(number:${BASH_REMATCH[3]}){reviewThreads(first:100){nodes{isResolved}}}}}" \
-  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved==false)] | length' 2>/dev/null) || UNRES=0
+  --jq '[.data.repository.pullRequest?.reviewThreads?.nodes[]? | select(.isResolved==false)] | length' 2>/dev/null) || UNRES=0
 
 # Gate on unresolved threads + merge state only. Deliberately NOT on
 # reviewDecision: repos with no required-approval rule report reviewDecision ""

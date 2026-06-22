@@ -870,7 +870,7 @@ gh pr view NUMBER --json reviewDecision,mergeStateStatus,mergeable,statusCheckRo
 # (2) unresolved-thread count via GraphQL (must be 0):
 gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:NUMBER){
   reviewThreads(first:100){nodes{isResolved}}}}}' \
-  --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length'
+  --jq '[.data.repository.pullRequest?.reviewThreads?.nodes[]? | select(.isResolved==false)] | length'
 
 # Merge-ready requires ALL of:
 #   reviewDecision                            == "APPROVED" OR "" (empty = no
@@ -899,7 +899,7 @@ gh pr view 42 --json mergeStateStatus && gh pr merge 42 --merge
 
 # ✅ Right — run the gate queries, READ the output, then merge as a new command
 gh pr view 42 --json reviewDecision,mergeStateStatus,mergeable,statusCheckRollup
-gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:42){reviewThreads(first:100){nodes{isResolved}}}}}' --jq '[.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length'
+gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:42){reviewThreads(first:100){nodes{isResolved}}}}}' --jq '[.data.repository.pullRequest?.reviewThreads?.nodes[]?|select(.isResolved==false)]|length'
 # READ both: all threads resolved (count 0)? all checks green? Only then:
 gh pr merge 42 --merge
 ```
