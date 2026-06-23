@@ -62,3 +62,17 @@ Pitfalls baked in: `grep -c` exits 1 on zero matches (`|| true`); decide hard-fa
 **`gh run rerun` reuses the original `GITHUB_SHA`.** For `pull_request` events that is the merge commit computed at first run — a rerun after a base-branch fix still tests against the broken base. Rerun is only for flakes; to pick up a repaired base, rebase the branch and push.
 
 **Review bots converge over multiple rounds.** Every push invalidates the review (ruleset `copilot_code_review` needs a fresh review on the latest head), so re-request after each push: `gh api repos/$R/pulls/$PR/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`. Later rounds may flag UNCHANGED lines adjacent to the diff (latent legacy bugs) — triage each finding on its merits; expect 3–6 rounds on large refactor PRs, with finding severity decreasing per round. Re-arm the watcher after every push.
+
+## Post-merge: confirm merge-triggered jobs by commit SHA, not by run list
+
+After merge, the base branch (`main`) fires its own runs (CI, release, deploy). To confirm those, query the **commit's** checks keyed on the merge SHA — never filter `gh run list` by `headSha`:
+
+```bash
+SHA=$(gh pr view $PR --repo $R --json mergeCommit --jq '.mergeCommit?.oid')
+gh api repos/$R/commits/$SHA/check-runs --jq '.check_runs[]?|{name,status,conclusion}'
+gh api repos/$R/commits/$SHA/status      --jq '{state, total:(.statuses|length)}'   # legacy commit statuses (Sonar/codecov)
+```
+
+`gh run list --json … --jq 'select(.headSha=="'$SHA'")'` is unreliable here: the list window is small and time-ordered, so a still-running `main` job scrolls out behind unrelated activity and the filter returns empty — which then feeds a `gh run view ""` (HTTP 404) and tempts a hand-rolled `sleep`-poll loop that just times out. The check-runs/status API is authoritative and SHA-addressed. For PR-head checks, `gh pr checks $PR --watch` already blocks to completion — prefer it over any custom loop.
+
+**Pre-existing red ≠ your regression.** If a post-merge gate (e.g. SonarCloud "Quality Gate failed" on N Security Hotspots) is red, check the *prior* base commit before owning it: `gh api repos/$R/commits/<prev-sha>/check-runs --jq '.check_runs[]?|select(.name=="<gate>")|.conclusion'`. Identical red on the parent + a diff that touched no relevant code = a pre-existing backlog to report, not a regression to fix.
