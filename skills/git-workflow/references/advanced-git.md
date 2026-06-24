@@ -394,6 +394,38 @@ done
 git -C /projects/<repo>/main fetch --prune origin
 ```
 
+### Sync the Base Before Branching (Stale-Base Trap)
+
+A per-branch worktree layout makes it easy to branch from a checkout that is
+weeks behind the remote. A feature branch's green pipeline only proves
+correctness **against its base** — if the base has moved, a clean auto-merge can
+combine your change with newer code in a way no pipeline ever tested, landing a
+regression on the default branch.
+
+Guard against it at both ends of the work:
+
+```bash
+# At the START of work in any worktree — a stale checkout is not proof
+# a file is missing. Sync the base, then branch from the fresh tip.
+git -C <worktree> status -sb
+git -C <worktree> pull --ff-only            # or fetch the base explicitly (see note)
+git -C <worktree> switch -c feature/x origin/main
+
+# BEFORE merging — rebase onto the current remote base so CI validates the
+# REAL merge result, not the branch against a stale base.
+git fetch origin
+git rebase origin/main
+```
+
+**Note for bare-repo layouts:** a bare clone often lacks
+`remote.origin.fetch`, so `git fetch origin` never updates `origin/<base>`.
+Fetch the base branch explicitly — `git fetch origin main:refs/remotes/origin/main`
+— or set the refspec once (see the bare-worktree setup above).
+
+After any merge, verify structural invariants on the **merged base** (e.g. that
+every cross-reference still resolves), not just on the branch — that is the only
+check that catches a regression introduced by the merge itself.
+
 ### Use Cases
 
 ```bash
@@ -690,6 +722,41 @@ git fsck
 # Repack
 git repack -a -d
 ```
+
+## Scripting Over Tracked Files
+
+### `git ls-files`, not `git ls-tree`, for glob pathspecs
+
+When a script matches tracked files by a configurable glob, use `git ls-files` —
+**not** `git ls-tree`. `ls-tree` rejects pathspec magic; the glob form dies:
+
+```bash
+git ls-tree -r HEAD -- ':(glob)docs/**/*.md'
+# fatal: pathspec magic not supported by this command: 'glob', 'exclude'
+```
+
+If that command is wrapped in `2>/dev/null` (common in guard scripts), the fatal
+error is swallowed and you get a **silently empty** result — a false negative
+that lets unguarded files through. `ls-files` honors `:(glob)` and
+`:(exclude,glob)`:
+
+```bash
+git ls-files -- ':(glob)docs/**/*.md' ':(exclude,glob)docs/_build/**'
+```
+
+**Caveat — `ls-files` lists the index (staged *and* committed).** A freshly
+staged file therefore shows up as "tracked". For a committed-only view (or to
+avoid double-counting a file you just staged), compute the staged set first and
+subtract it:
+
+```bash
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+git ls-files -- ':(glob)docs/**/*.md' | grep -vxF "$staged"
+```
+
+Use `--diff-filter=ACMR` (not just `AM`) so renames and copies into a guarded
+path are caught. Verify pathspec support empirically before swapping one
+command for the other — the failure mode is silent, not loud.
 
 ## Troubleshooting
 

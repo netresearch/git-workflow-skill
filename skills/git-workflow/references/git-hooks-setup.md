@@ -53,6 +53,38 @@ Then install based on what's found:
 - If hooks aren't installed, install them before first commit
 - If no hook framework exists, suggest adding one in the PR
 
+## Hooks Are Fast Feedback — CI Is the Gate
+
+Local hooks are per-checkout, individually bypassable, and **absent in fresh
+clones and in most secondary worktrees**. Treat them as fast feedback, not as an
+enforcement boundary. The actual gate must be CI: every substantive check a hook
+runs locally (format, lint, static analysis, tests, secret scan, commit-message
+validation) needs an equivalent job in the pipeline. A check that runs only in a
+local hook is silently unenforced for anyone who never installed it. When
+auditing a repo, confirm that parity — a missing local hook is only a real gap
+if CI doesn't cover the same check.
+
+This also means it is legitimate to deliberately leave a repo with **no** local
+hooks when the hook can't run reliably outside its container (e.g. a pre-commit
+that needs a Docker-only service) — provided CI runs the equivalent check.
+Forcing such a hook onto every checkout just turns it into a landmine.
+
+## Auditing Installed Hooks (`--git-path` cwd gotcha)
+
+To find where a checkout's hooks live, prefer the path git computes itself:
+
+```bash
+cd "$repo" && git rev-parse --git-path hooks
+```
+
+**Run it from inside the repo.** For a plain (non-worktree) clone,
+`git rev-parse --git-path hooks` returns a path **relative to the current
+directory** (`.git/hooks`). Resolve or `find` it from elsewhere and you look in
+the wrong place and false-report "no hooks installed". (Worktrees and a
+configured `core.hooksPath` return absolute paths, which masks the bug — so it
+only bites on ordinary clones.) `cd` into the repo first, or resolve the path
+against the repo root, before inspecting it.
+
 ## Troubleshooting
 
 ### CaptainHook + git worktrees (FAQ)
