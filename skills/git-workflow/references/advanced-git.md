@@ -408,7 +408,7 @@ Guard against it at both ends of the work:
 # At the START of work in any worktree — a stale checkout is not proof
 # a file is missing. Sync the base, then branch from the fresh tip.
 git -C <worktree> status -sb
-git -C <worktree> pull --ff-only            # or fetch the base explicitly (see note)
+git -C <worktree> fetch origin main         # update origin/main directly, don't touch the current branch
 git -C <worktree> switch -c feature/x origin/main
 
 # BEFORE merging — rebase onto the current remote base so CI validates the
@@ -751,7 +751,11 @@ subtract it:
 
 ```bash
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
-git ls-files -- ':(glob)docs/**/*.md' | grep -vxF "$staged"
+if [ -n "$staged" ]; then
+  git ls-files -- ':(glob)docs/**/*.md' | grep -vxF "$staged"
+else
+  git ls-files -- ':(glob)docs/**/*.md'
+fi
 ```
 
 Use `--diff-filter=ACMR` (not just `AM`) so renames and copies into a guarded

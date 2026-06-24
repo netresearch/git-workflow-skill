@@ -474,8 +474,8 @@ git config --global user.email "you@example.com"
 **Commit locally to satisfy verified-signature branch protection — not via the host's Contents API.** Commits created through the GitHub Contents API (`PUT /repos/.../contents/...`), or any host-side write that supplies its own `committer`/`author`, come out **unsigned** (`verification.verified=false`, `reason: unsigned`) — the host does not web-flow-sign them. A repo that enforces verified signatures rejects the merge, and when admin enforcement is on you cannot bypass it. So when scripting commits across many repos, check the signature requirement up front alongside required checks and reviews:
 
 ```bash
-gh api repos/{owner}/{repo}/branches/main/protection \
-  --jq '.required_signatures.enabled'   # also inspect rulesets
+gh api repos/"$R"/branches/main/protection \
+  --jq '.required_signatures?.enabled? // false'   # $R="owner/repo"; also inspect rulesets
 ```
 
 For any repo that enforces signatures, create the commit **locally** with signing configured (`git commit -S --signoff`) rather than through the API — a locally SSH/GPG-signed commit verifies on the host, an API-authored one does not.
