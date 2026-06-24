@@ -485,6 +485,8 @@ gh api /repos/{owner}/{repo}/commits/HEAD --jq '.commit.verification | {verified
 # "reason":"unsigned"     → -S flag not used or signing config missing
 ```
 
+**Trust the inherited ssh-agent; don't hunt for sockets.** When commits are SSH-signed through a running ssh-agent, the `SSH_AUTH_SOCK` already present in the inherited shell environment normally holds the signing key and works transparently. Do **not** reflexively export a hardcoded `SSH_AUTH_SOCK` or probe the filesystem for agent sockets — a stale or wrong socket path overrides the working inherited one and breaks signing that would otherwise have succeeded. If signing actually fails (`failed to write commit object`, `error: gpg failed to sign the data`, or a `publickey` error), stop and surface the error to the operator rather than autonomously searching for the "right" socket.
+
 **Never amend a commit with pre-commit-hook failures.** If the pre-commit hook fails, the commit **did not happen**. Running `git commit --amend` then modifies the PREVIOUS commit, which can destroy work. Fix the hook issue, re-stage, and create a new commit.
 
 **Never skip hooks** unless explicitly told to. `--no-verify` bypasses hook enforcement that exists for good reasons. If a hook fails, diagnose the root cause.
