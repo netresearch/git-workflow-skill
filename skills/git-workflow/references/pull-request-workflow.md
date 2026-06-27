@@ -563,6 +563,24 @@ git commit
 git push
 ```
 
+### Updating a PR branch without a local clone — `gh pr update-branch --rebase`
+
+To bring a **conflict-free** PR up to date with its base without checking it out, rebase its head branch remotely:
+
+```bash
+gh pr update-branch <number> --repo <owner>/<repo> --rebase
+```
+
+Unlike the plain `gh pr update-branch` (which *merges* base into the branch and leaves a merge commit), `--rebase` keeps linear history — compatible with rebase-only repos. It only succeeds cleanly when the PR has no conflicts (`mergeable: MERGEABLE`); on conflicts, fall back to a local rebase. It **force-updates** the branch, so it re-triggers CI and can reset review approvals — only worth it when staleness actually blocks the merge. Works well for a bulk "rebase all my open PRs that need it" sweep (`gh search prs --author=@me --state=open` → loop).
+
+**Judge "behind" correctly — don't trust `mergeStateStatus` alone.** GitHub only reports `mergeStateStatus: BEHIND` when the base enforces *"require branches to be up to date before merging."* Without that rule a PR many commits behind base still shows `CLEAN`/`BLOCKED`, never `BEHIND`. To know how far behind a PR actually is, ask the compare API:
+
+```bash
+gh api "repos/<owner>/<repo>/compare/<base>...<headSha>" --jq '{behind: .behind_by, ahead: .ahead_by}'
+```
+
+A conflict-free PR that is merely behind (no `BEHIND` flag, `mergeable: MERGEABLE`) does **not** need a rebase to merge — rebasing it is optional churn that re-runs CI. Reserve it for PRs the base blocks on staleness, or ones so far behind they should be re-validated against current base.
+
 ### Commit Before Rebase — Correct Push Ordering
 
 When you have uncommitted local changes that need to be pushed, the order matters:
