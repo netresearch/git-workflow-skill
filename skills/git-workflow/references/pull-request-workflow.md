@@ -1018,6 +1018,41 @@ Other ruleset rules to expect: `required_approving_review_count`, `required_revi
 > about merge-readiness — see the Merge-Gate Command above plus this ruleset
 > call. Discovering gates one round-trip at a time is the anti-pattern.
 
+## Self-Authored PR Merge (Permission Classifier)
+
+When you drive your own PR to merge (e.g. via `/pr-finish`), the auto-mode
+permission classifier blocks self-merges and admin self-bypass — a self-authored
+merge is treated as requiring a human. Do **not** attempt the merge twice and
+then bounce to the human; two denials read as stalling.
+
+- Recognize up front that finishing a self-authored PR will hit the classifier,
+  and settle the merge path **before** starting.
+- For archive/cleanup tasks, take the local-clone + signed-commit + PR path from
+  the start — not a Contents-API commit or an admin bypass the classifier will
+  reject.
+- If a human merge is genuinely required, ask **one** structured question up
+  front rather than discovering the block via two denials.
+
+## Shared-Account and Parallel-Job PR Races
+
+When several agent jobs run under the **same** git/GitHub identity (a shared
+bot/CI account), a PR can be force-pushed or merged out from under your review or
+take-over by a parallel job — and you cannot prove your own job didn't do it.
+Defend:
+
+1. **Snapshot head + merge state** at the start of any review/take-over, and
+   re-check immediately before acting; abort or rebase if it moved:
+
+   ```bash
+   gh pr view <NUMBER> --json headRefOid,state,mergeStateStatus
+   ```
+
+2. **Never trust a pre-existing shared worktree** for review/fix — a parallel job
+   may churn or delete it mid-task. Create your own isolated worktree for the PR
+   branch (or off a freshly-fetched `origin/main` if starting a new branch).
+3. **`gh pr diff` vs the file you `Read` disagree?** The branch was force-pushed
+   between calls — re-fetch and re-derive from the committed state on origin.
+
 ## Signed Commits with Rebase Merge
 
 ### The Problem
