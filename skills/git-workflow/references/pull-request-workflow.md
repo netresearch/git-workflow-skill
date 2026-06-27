@@ -1048,8 +1048,8 @@ Defend:
    ```
 
 2. **Never trust a pre-existing shared worktree** for review/fix — a parallel job
-   may churn or delete it mid-task. Create your own isolated worktree off a
-   freshly-fetched `origin/main`.
+   may churn or delete it mid-task. Create your own isolated worktree for the PR
+   branch (or off a freshly-fetched `origin/main` if starting a new branch).
 3. **`gh pr diff` vs the file you `Read` disagree?** The branch was force-pushed
    between calls — re-fetch and re-derive from the committed state on origin.
 
