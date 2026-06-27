@@ -142,3 +142,27 @@ against the repo root, before inspecting it.
   `/dev/null` — is portable to Windows) and `git push --no-verify`. Never
   make the bypass the default; fix the hook environment or commit from the
   primary checkout when possible.
+
+### Fresh worktree: missing deps and stale `hooksPath`
+
+A freshly-created worktree often breaks pre-commit/pre-push hooks — and can even
+abort the worktree creation itself:
+
+- It has no `vendor/`/`node_modules`, so a hook binary (`vendor/bin/grumphp`,
+  `captainhook`, a husky script) is missing.
+- A stale or broken `core.hooksPath` points at a nonexistent binary in **another**
+  worktree.
+
+Either failure aborts worktree-add, commits, and pushes. Bypass cleanly and
+**scoped** — don't disable hooks globally:
+
+```bash
+git -c core.hooksPath=/dev/null commit -s ...   # scoped to this one command
+git push --no-verify
+```
+
+(`core.hooksPath="$(mktemp -d)"` is the Windows-portable equivalent — see the
+controlled-bypass note above.) CI is authoritative for these repos (see "Hooks
+Are Fast Feedback — CI Is the Gate"), so a scoped bypass here is safe. Also: in a
+fresh worktree, `Read` a file before `Write`/`Edit` — there is no cached state
+for a path the tooling has not seen yet.
