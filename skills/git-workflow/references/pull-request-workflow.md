@@ -618,8 +618,8 @@ A push can silently fail to land while a piped command swallows the signal — `
 
 ```bash
 git push -u origin "$BR"
-git fetch origin "$BR" -q
-[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/"$BR")" ] && echo "landed" || echo "DID NOT LAND"
+REMOTE_SHA=$(git ls-remote origin refs/heads/"$BR" | cut -f1)   # no fetch, no fatal if branch absent
+[ "$(git rev-parse HEAD)" = "$REMOTE_SHA" ] && echo "landed" || echo "DID NOT LAND"
 ```
 
 Likewise verify staging of any path that might be gitignored with `git status --short` before committing — an empty commit pushes "successfully" yet changes nothing.
@@ -789,8 +789,9 @@ Two traps when fixing a red CI job:
 - **Make the push a separate step, gated on a verify you actually read.** Bundling verify-and-push in one `&&` block force-pushes before the result is seen — a run that printed `FAIL` still gets pushed. Capture the verify to a file, read it, and push only on a confirmed-clean result:
 
 ```bash
-run_tests > /tmp/verify.log 2>&1; echo "rc=$?"   # read this first
-grep -qiE 'fail|error' /tmp/verify.log && echo "STOP — do not push" || git push
+run_tests > /tmp/verify.log 2>&1; RC=$?
+cat /tmp/verify.log; echo "rc=$RC"   # read the log + exit code first
+[ "$RC" -eq 0 ] && git push || echo "STOP — tests failed, do not push"
 ```
 
 ### Relationship to the Merge Gate annotations check
@@ -877,8 +878,9 @@ A signing failure surfaces only at the *merge gate* (BLOCKED on DCO / "verified 
 # SSH-signing setups: is a key the agent can sign with actually loaded?
 ssh-add -l        # "no identities" → signing (and any SSH git auth) will fail until re-added
 # Definitive probe: a throwaway signed commit verifies, then drop it
-git commit -S --allow-empty -m probe && git log --show-signature -1 | grep -q Good \
-  && git reset --soft HEAD~1 || echo "SIGNING NOT READY — fix before committing"
+git commit -S --allow-empty -m probe \
+  && (git log --show-signature -1 | grep -q Good && echo "SIGNING READY" || echo "SIGNING NOT READY"; git reset --soft HEAD~1) \
+  || echo "SIGNING NOT READY — commit failed"
 ```
 
 If the probe fails (no askpass, a locked/dropped key, or a key not registered as a *signing* key), resolve it **before** doing the work — the mid-run remedy is the same `rebase --exec` re-sign as a reactive failure, but you avoid discovering it at the gate. See *Signing and DCO Failures* below for that remedy.
