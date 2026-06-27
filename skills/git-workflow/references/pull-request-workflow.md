@@ -272,6 +272,15 @@ AI reviewers (GitHub Copilot, Gemini Code Assist, SonarCloud) mix correct findin
 
 Reply citing the evidence either way. When you applied a change, the reply must still carry the commit SHA and the what/why required above (e.g. `Verified against <source>: <fact> — applied in <SHA>, which …`); when you declined, state the source and fact (e.g. `Verified against <source>: <fact> — declining.`). When the suggestion is a code change, run the project's checks (lint, types, tests) on it before resolving, so the reply cites a green result rather than a guess.
 
+### Minimizing bot-review rounds (collapse the ping-pong)
+
+On a repo with an incremental AI-reviewer ruleset (`copilot_code_review`, Gemini), **every push re-triggers a fresh required review round** that re-BLOCKs the PR — and AI reviewers surface *semantic* nits a linter never catches (heading structure, code-wrap conventions, cross-reference/notation consistency). Pushing one fix per comment turns this into 3+ rounds of request → wait (minutes each) → re-block. Collapse it:
+
+- **Semantic self-review before the first push.** Lint/markdownlint passing is not enough — re-read the diff for the convention nits an AI reviewer will flag, and fix them pre-emptively.
+- **Batch all review fixes into ONE push**, not per-comment. Each push restarts the round; one push = one new round.
+
+Expect 2–3 rounds even so; the loop *mechanics* (wait for the bot to review the latest head SHA, never merge over an in-flight re-review — see *Merge Gate*) still apply. This tactic reduces the **number** of rounds, not how you survive each one.
+
 ### Verifying thread state from GitHub, not memory
 
 Before declaring a PR review-complete, re-fetch thread state from GitHub. Never trust your own belief about what you resolved:
@@ -603,6 +612,18 @@ git push                     # rejected as non-fast-forward
 
 The "fetch+rebase before push" rule means **before pushing**, not before committing. `git rebase` requires a clean working tree — it aborts with an error when uncommitted changes are present, leaving the branch behind the remote. The subsequent push is then rejected as non-fast-forward, requiring an extra fix cycle.
 
+### Verify a push actually landed (never grep push output)
+
+A push can silently fail to land while a piped command swallows the signal — `git push … | grep 'new branch'` or `… | tail` can hide a non-zero exit (wrong remote/auth, or an *empty* commit because a path was silently excluded by `.gitignore`). Confirm the remote ref moved, by SHA — don't infer success from push output:
+
+```bash
+git push -u origin "$BR"
+REMOTE_SHA=$(git ls-remote origin refs/heads/"$BR" | cut -f1)   # no fetch, no fatal if branch absent
+[ "$(git rev-parse HEAD)" = "$REMOTE_SHA" ] && echo "landed" || echo "DID NOT LAND"
+```
+
+Likewise verify staging of any path that might be gitignored with `git status --short` before committing — an empty commit pushes "successfully" yet changes nothing.
+
 ### `--force-with-lease` Rejected with "stale info"
 
 On PRs that bots touch (auto-approve, Renovate/Dependabot, a CI step that pushes), `git push --force-with-lease` can be rejected with `stale info` even when your local work is correct: a bot updated the remote branch since your last fetch, so the lease's expected ref (your `origin/<branch>` tracking ref) no longer matches and the push aborts. This is the safety check working — don't escalate to plain `--force`.
@@ -760,6 +781,19 @@ A reusable-workflow caller failed with `startup_failure` and zero jobs. Multiple
 
 Fix: one-line `actions: read` add to the caller's `permissions:` block ([t3x-nr-passkeys-be@0533835](https://github.com/netresearch/t3x-nr-passkeys-be/commit/0533835)). Reading the annotations first would have collapsed a 6-step diagnostic loop into a 2-step fix.
 
+### Fixing the failure: reproduce the *exact* job, gate the push on a read verify
+
+Two traps when fixing a red CI job:
+
+- **Reproduce the exact failing step, not a proxy.** A passing *local* `make test` / `phpunit` does not prove the failing CI job is fixed — the job may fail on a different step or matrix cell (e.g. a `php -l` lint sweep over `vendor/` on PHP 8.4/8.5, or a stricter runner version) that your proxy never runs. Read which job + step failed and run *that* command, on that version, before claiming the fix.
+- **Make the push a separate step, gated on a verify you actually read.** Bundling verify-and-push in one `&&` block force-pushes before the result is seen — a run that printed `FAIL` still gets pushed. Capture the verify to a file, read it, and push only on a confirmed-clean result:
+
+```bash
+run_tests > /tmp/verify.log 2>&1; RC=$?
+cat /tmp/verify.log; echo "rc=$RC"   # read the log + exit code first
+[ "$RC" -eq 0 ] && git push || echo "STOP — tests failed, do not push"
+```
+
 ### Relationship to the Merge Gate annotations check
 
 | Stage | Question | Endpoint |
@@ -835,6 +869,21 @@ gh api graphql -F id="$PRID" \
   -f query='mutation($id:ID!){ dequeuePullRequest(input:{id:$id}) { mergeQueueEntry { id } } }'
 # Branch is pushable again; fix threads, then re-arm through this gate.
 ```
+
+### Signing Readiness (Preflight — Before Committing)
+
+A signing failure surfaces only at the *merge gate* (BLOCKED on DCO / "verified signatures") — i.e. **after** all the work is staged, forcing a full re-sign cycle. Catch it up front: before a commit-heavy run (e.g. `/pr-finish`), confirm a signing key is actually available and that `git commit -S` will sign, rather than assuming it.
+
+```bash
+# SSH-signing setups: is a key the agent can sign with actually loaded?
+ssh-add -l        # "no identities" → signing (and any SSH git auth) will fail until re-added
+# Definitive probe: a throwaway signed commit verifies, then drop it
+git commit -S --allow-empty -m probe \
+  && (git log --show-signature -1 | grep -q Good && echo "SIGNING READY" || echo "SIGNING NOT READY"; git reset --soft HEAD~1) \
+  || echo "SIGNING NOT READY — commit failed"
+```
+
+If the probe fails (no askpass, a locked/dropped key, or a key not registered as a *signing* key), resolve it **before** doing the work — the mid-run remedy is the same `rebase --exec` re-sign as a reactive failure, but you avoid discovering it at the gate. See *Signing and DCO Failures* below for that remedy.
 
 ### Signing and DCO Failures
 
