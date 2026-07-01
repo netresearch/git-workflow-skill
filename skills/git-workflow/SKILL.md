@@ -5,7 +5,7 @@ license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
 compatibility: "Requires git, gh CLI; yq for .spec-cleanup.yml."
 metadata:
   author: Netresearch DTT GmbH
-  version: "1.18.2"
+  version: "1.18.3"
   repository: https://github.com/netresearch/git-workflow-skill
 allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 ---
