@@ -12,8 +12,6 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 
 # Git Workflow Skill
 
-Expert patterns for Git: branching, commits, collaboration, CI/CD.
-
 ## Critical Rules (Non-Negotiable)
 
 1. **No direct push to main** — always open a PR.
@@ -23,26 +21,28 @@ Expert patterns for Git: branching, commits, collaboration, CI/CD.
 5. **No edits to installed skill/plugin cache paths** (`~/.claude/skills/`, `~/.claude/plugins/cache/`, `**/.bare/**`) — always the repo worktree, verified by `pwd`.
 6. **Force-push only with `--force-with-lease`** — never plain `--force`.
 7. **Commit before rebase** — `add → commit → fetch → rebase → push`. Dirty tree aborts rebase.
+8. **No editorializing** — state what changed, not how good it is; no narrating expected results or self-praise. See `references/no-editorializing.md`.
 
 See `references/pull-request-workflow.md` for merge-gate and atomic-commit patterns.
 
 ## Reference Files
 
-Load references on demand:
+Load on demand:
 
 | Reference | Content Triggers |
 |-----------|-----------------|
-| `references/branching-strategies.md` | Branching model, Git Flow, GitHub Flow, trunk-based, branch protection |
-| `references/commit-conventions.md` | Commit messages, conventional commits, DCO sign-off, semantic versioning, commitlint |
-| `references/pull-request-workflow.md` | PR create/review/merge, thread resolution, merge strategies, CODEOWNERS, signed commits + rebase |
+| `references/branching-strategies.md` | Branching models, Git/GitHub Flow, trunk-based, protection |
+| `references/commit-conventions.md` | Conventional commits, DCO sign-off, semantic versioning, commitlint |
+| `references/pull-request-workflow.md` | PR create/review/merge, threads, strategies, CODEOWNERS, signed rebase |
 | `references/ci-cd-integration.md` | GitHub Actions, GitLab CI, semantic release, deployment |
-| `references/advanced-git.md` | Rebase, cherry-pick, bisect, stash, worktrees, reflog, submodules, recovery |
-| `references/github-releases.md` | Release management, immutable releases, `--latest=false`, multi-branch |
-| `references/git-hooks-setup.md` | Hook frameworks, detection, recommended hooks per stage |
+| `references/advanced-git.md` | Rebase, cherry-pick, bisect, stash, worktrees, reflog, recovery |
+| `references/github-releases.md` | Immutable releases, `--latest=false`, multi-branch |
+| `references/git-hooks-setup.md` | Hook frameworks, detection, hooks per stage |
 | `references/claude-code-hooks.md` | Claude Code `settings.json` hooks — merge gate, cache-path rejection, auto-lint |
 | `references/code-quality-tools.md` | shellcheck, shfmt, git-absorb, difftastic |
-| `references/merge-gate-watcher.md` | Merge-driver loop, hard/soft check taxonomy, rerun stale-SHA, review-bot rounds |
+| `references/merge-gate-watcher.md` | Merge-driver loop, check taxonomy, stale-SHA rerun, review-bot rounds |
 | `references/spec-cleanup.md` | Keep planning artifacts off the base branch; guard + capture-to-ADR |
+| `references/no-editorializing.md` | Writing without self-praise or narrating the expected |
 
 ## Conventional Commits
 
@@ -65,7 +65,7 @@ hotfix/1.2.1-security-patch
 
 ## Hook Detection
 
-Detect hooks before first commit:
+Detect hooks first:
 
 ```bash
 ls lefthook.yml .lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null || echo "No hooks"
