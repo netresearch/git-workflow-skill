@@ -1102,6 +1102,49 @@ Defend:
 3. **`gh pr diff` vs the file you `Read` disagree?** The branch was force-pushed
    between calls — re-fetch and re-derive from the committed state on origin.
 
+## A New Gate Retroactively Raises the Bar for Sibling PRs
+
+When one PR in a related set introduces a new check — a linter, a security scan
+(zizmor/trivy), a conformance script — that check applies to the **whole repo on
+every push and PR**, not just the PR that added it. Two failure modes follow, and
+both surface only after a merge:
+
+1. **Sibling PRs that predate the gate.** A second open PR adding a new file
+   (e.g. a new reusable workflow) was written before the gate existed. The moment
+   the gate PR merges, `main` — and that sibling PR's own CI — goes red, because
+   the new file was never hardened to pass a check that didn't exist when it was
+   written. Harden every sibling artifact to the new gate **before** either PR
+   merges.
+
+2. **"Validated earlier" was validated against the *old* criteria.** If you ran
+   `actionlint + yamllint` on an artifact last week and then added `zizmor` to the
+   gate this week, the artifact was never checked by zizmor. Passing the *previous*
+   gate is not passing the *current* one — re-run the **full current** gate over
+   anything you're about to merge, not the subset that existed when you first
+   validated it.
+
+**Catch it before merging, in any order.** Simulate the merged tree of the whole
+PR-set and run the complete gate over it — don't reason about it:
+
+```bash
+# Three-way merge of two branches without touching either working tree.
+# `--write-tree` exits non-zero on conflict; check that status with `if` rather
+# than masking it through a pipe — `... | head -1` would swallow the conflict
+# exit code and hand you a tree with conflict markers to lint.
+git -C .bare fetch origin
+if MERGE_OUT=$(git merge-tree --write-tree origin/pr-a-branch origin/pr-b-branch); then
+    TREE=$(printf '%s' "$MERGE_OUT" | head -1)   # first line is the merged tree OID
+    # Materialize $TREE and run every gate check (lint, security, conformance),
+    # or just run the checks in each PR's branch after rebasing it on the other.
+else
+    echo "PRs conflict on merge — resolve the conflict before checking the gate"
+fi
+```
+
+If the gate is green on both PRs individually **and** on their merged tree, they
+are safe to merge in any order. If only the individuals are green, the first
+merge will break the second.
+
 ## Signed Commits with Rebase Merge
 
 ### The Problem
