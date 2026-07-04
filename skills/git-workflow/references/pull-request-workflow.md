@@ -272,12 +272,21 @@ AI reviewers (GitHub Copilot, Gemini Code Assist, SonarCloud) mix correct findin
 
 Reply citing the evidence either way. When you applied a change, the reply must still carry the commit SHA and the what/why required above (e.g. `Verified against <source>: <fact> — applied in <SHA>, which …`); when you declined, state the source and fact (e.g. `Verified against <source>: <fact> — declining.`). When the suggestion is a code change, run the project's checks (lint, types, tests) on it before resolving, so the reply cites a green result rather than a guess.
 
+### AI-authored commits on the branch are untrusted
+
+Distinct from a review *comment*: Copilot **Autofix**, Gemini "apply suggestion", and similar bot-authored **commits already pushed onto the PR branch** are patches, not settled work — they can carry real bugs, and they arrive looking done. In one `/pr-finish` run the autofix commits had (a) deleted a variable's initialization while keeping the line that reads it — an `UnboundLocalError` on every non-account query — and (b) added an unbounded `while True` pagination loop that later OOM-crashed the machine (see the *Cap memory when the fix activates or relies on a loop* bullet under *Fixing the failure*). Treat every bot commit like an untrusted patch:
+
+- **Read its net diff against your last human commit**, not just the headline — `git diff <your-last-sha> HEAD -- <file>` (or `git show <bot-commit-sha>` for one specific commit). The fix a bot "applied" often removes or rewrites more than the comment implied.
+- **Squash them into the atomic feature commit and re-run the FULL suite** — not only the check that was failing. A green "the failing check now passes" does not clear a bug the bot introduced *elsewhere*; only the whole suite does (this is the *Verify the activated code path* rule — a bot fix can make dead code live).
+- Their missing `Signed-off-by`/signature is also why the DCO / signed-commits gate fails; squashing under your own signed, signed-off commit fixes correctness and the gate in one step.
+
 ### Minimizing bot-review rounds (collapse the ping-pong)
 
 On a repo with an incremental AI-reviewer ruleset (`copilot_code_review`, Gemini), **every push re-triggers a fresh required review round** that re-BLOCKs the PR — and AI reviewers surface *semantic* nits a linter never catches (heading structure, code-wrap conventions, cross-reference/notation consistency). Pushing one fix per comment turns this into 3+ rounds of request → wait (minutes each) → re-block. Collapse it:
 
 - **Semantic self-review before the first push.** Lint/markdownlint passing is not enough — re-read the diff for the convention nits an AI reviewer will flag, and fix them pre-emptively.
 - **Batch all review fixes into ONE push**, not per-comment. Each push restarts the round; one push = one new round.
+- **Pre-empt the recurring code-quality nit classes** — AI reviewers reliably re-flag the same gaps, so fixing them *before* the first push removes whole rounds. On new code, self-check: **bound every paginate-until-metadata loop** with a hard cap that raises (never trust the response to signal "last page"); **coerce external-payload fields to the expected type** before downstream use (a field documented as an object can arrive as a string — guarantee the shape, don't assume it); **availability probes treat 5xx and 401/403 as "unavailable," not only 404** (else an outage/auth failure selects the backend and dies on the real call); **add a test for every new code path** (an untested new path is both a coverage nit and where the worst bugs hide).
 
 Expect 2–3 rounds even so; the loop *mechanics* (wait for the bot to review the latest head SHA, never merge over an in-flight re-review — see *Merge Gate*) still apply. This tactic reduces the **number** of rounds, not how you survive each one.
 
@@ -783,7 +792,7 @@ Fix: one-line `actions: read` add to the caller's `permissions:` block ([t3x-nr-
 
 ### Fixing the failure: reproduce the *exact* job, gate the push on a read verify
 
-Two traps when fixing a red CI job:
+Three traps when fixing a red CI job:
 
 - **Reproduce the exact failing step, not a proxy.** A passing *local* `make test` / `phpunit` does not prove the failing CI job is fixed — the job may fail on a different step or matrix cell (e.g. a `php -l` lint sweep over `vendor/` on PHP 8.4/8.5, or a stricter runner version) that your proxy never runs. Read which job + step failed and run *that* command, on that version, before claiming the fix.
 - **Make the push a separate step, gated on a verify you actually read.** Bundling verify-and-push in one `&&` block force-pushes before the result is seen — a run that printed `FAIL` still gets pushed. Capture the verify to a file, read it, and push only on a confirmed-clean result:
@@ -793,6 +802,10 @@ run_tests > /tmp/verify.log 2>&1; RC=$?
 cat /tmp/verify.log; echo "rc=$RC"   # read the log + exit code first
 [ "$RC" -eq 0 ] && git push || echo "STOP — tests failed, do not push"
 ```
+
+- **Cap memory when the fix activates or relies on a loop.** A bug-fix can make previously-dead code *live* — and if the now-live path paginates or loops over an external (or mocked) response, an **unbounded** loop can exhaust RAM and OOM-crash the whole machine when you reproduce the test locally. (Real case: restoring a deleted variable unblocked a code path whose `while True` pagination loop then grew a MagicMock to >20 GB RSS and took down the VM.) Two defenses, apply both:
+  - **Run the repro under a memory cap** so a runaway loop fails fast instead of freezing the box: `( ulimit -v 6000000; pytest tests/… )` (≈6 GB virtual). Do this whenever a loop's termination depends on code you just changed. `ulimit -v` is a Linux mechanism — it is ignored on macOS/Darwin, so there run the repro inside a container instead (`docker run --memory=6g …`) or use another runtime-level cap.
+  - **Bound the loop itself** — `for _ in range(MAX_PAGES): … else: raise RuntimeError(...)` — rather than trusting the response's metadata (or a test mock) to signal the last page; and give the test a finite mock (`side_effect=[page1, page2]`), never a bare mock whose `.get()` is truthy forever.
 
 ### Relationship to the Merge Gate annotations check
 
