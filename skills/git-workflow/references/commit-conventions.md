@@ -133,6 +133,15 @@ Body may contain "quotes", & ampersands, `backticks` — all literal.
 EOF
 ```
 
+**Hard-wrap the commit *body* (~72 cols); don't hard-wrap prose whose wrapping
+you don't control.** The 72-column convention is for commit message bodies. For
+**PR/MR & issue descriptions, release notes, review comments, and chat**, write
+one line per paragraph (and per list item) and let the renderer soft-wrap — a
+hard break mid-paragraph there does nothing for the output. For **committed
+Markdown files**, follow the repo's existing convention: many hard-wrap prose
+docs for readable diffs, so match the surrounding files rather than mixing two
+styles in one tree.
+
 ### Footer
 
 ```bash

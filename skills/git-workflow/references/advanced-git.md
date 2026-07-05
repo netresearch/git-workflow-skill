@@ -802,3 +802,30 @@ git reset --hard HEAD@{1}
 git fsck --unreachable | grep commit | cut -d' ' -f3 | \
   xargs git log --merges --no-walk --grep=WIP
 ```
+
+### Tags & Remote-State Topology
+
+A plain `git fetch` auto-follows *new* tags on fetched commits, but it will not
+move a tag that was **force-updated** upstream, nor drop one deleted upstream —
+so local tag refs can silently point at stale commits. Before reasoning about tag
+relationships — which tag is newest, whether X is an ancestor of Y, whether two
+lines diverged — refresh the tags and treat the remote as authoritative. A stale
+local tag can invent a divergence that does not exist.
+
+```bash
+# Force-update moved tags and prune deleted ones (--prune-tags needs Git >= 2.17;
+# without it, drop the flag and re-fetch with --force)
+git fetch origin --prune --prune-tags --force
+
+# Nearest tag by commit ancestry (NOT the highest semver), plus a direct test
+git describe --tags <branch>
+git merge-base --is-ancestor <tag> <branch> && echo "reachable from branch"
+
+# Authoritative ahead/behind/merge-base straight from the host
+gh api repos/OWNER/REPO/compare/<base>...<head> \
+  --jq '{status, ahead_by, behind_by, merge_base: .merge_base_commit.sha}'
+```
+
+Verify against `origin` (or the compare API) before deleting a tag, choosing a
+release version, or concluding two lines forked — not against local refs.
+
