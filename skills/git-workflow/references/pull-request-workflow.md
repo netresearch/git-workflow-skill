@@ -310,6 +310,33 @@ gh api graphql -f query='
 
 If that returns any rows, the PR is not merge-ready.
 
+### Wait for the async re-review before trusting `unresolved == 0`
+
+`unresolved == 0` is **not** merge-ready if you sampled it right after a push.
+GitHub Copilot (and Gemini, and similar bot reviewers) re-review the PR
+**asynchronously** — typically 1–2 minutes after each push — and each round can
+post entirely **new** review threads against the fresh head. Reasoning about
+merge-readiness on a zero count that predates the bot's re-review produces a
+premature "threads clear" call; the bot then lands more valid findings a minute
+later. In one session, sampling too early gave a false all-clear **twice**, and
+the bot posted five more legitimate findings on each following round.
+
+So don't check thread count first — **check that the bot has actually reviewed
+the current head SHA first**, then re-check threads. Poll until a bot review
+whose `commit_id` equals the PR head has landed:
+
+```bash
+HEAD=$(gh pr view "$PR" --repo "$R" --json headRefOid --jq .headRefOid)
+# A Copilot review keyed to the current head must exist before you trust the count.
+SEEN=$(gh api "repos/$R/pulls/$PR/reviews" \
+  --jq "[.[]? | select(.user?.login? // \"\" | test(\"copilot\";\"i\")) | select((.commit_id? // \"\")==\"$HEAD\")] | length")
+[ "${SEEN:-0}" -ge 1 ] || { echo "bot has not re-reviewed head $HEAD yet — keep polling"; }
+```
+
+Only once `SEEN >= 1` is the unresolved-threads query above meaningful. This is
+the same "review the latest head SHA" gate the [Merge-Gate Watcher](merge-gate-watcher.md)
+enforces — apply it here too, before ever declaring the review done.
+
 ## Merge Strategies
 
 ### Merge Commit

@@ -166,3 +166,38 @@ controlled-bypass note above.) CI is authoritative for these repos (see "Hooks
 Are Fast Feedback — CI Is the Gate"), so a scoped bypass here is safe. Also: in a
 fresh worktree, `Read` a file before `Write`/`Edit` — there is no cached state
 for a path the tooling has not seen yet.
+
+### pre-commit first run: slow env build, lost stash on interrupt
+
+The **first** commit that triggers `pre-commit` builds a fresh virtualenv for
+every hook repo (ruff, markdownlint, shellcheck, …). That can take minutes, and
+it is easy to interrupt or time out that commit before it finishes.
+
+`pre-commit` stashes your **unstaged** changes for the duration of the run, then
+restores them at the end. If the run is killed mid-way, that restore may not
+happen — the unstaged edits silently vanish from the working tree. So **always
+`git status` after an interrupted commit**, and if files reverted, reapply the
+stash patch pre-commit left behind:
+
+```bash
+# pre-commit's cache dir is configurable: PRE_COMMIT_HOME, else XDG_CACHE_HOME/pre-commit,
+# else ~/.cache/pre-commit (macOS/other platforms may differ).
+PCH="${PRE_COMMIT_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/pre-commit}"
+PATCH=$(ls -t "$PCH"/patch* 2>/dev/null | head -1)   # newest patch<epoch>-<pid>
+git apply "$PATCH"
+```
+
+Then re-run the commit (the hook envs are now built, so it is fast).
+
+### `--no-verify` only after confirming CI parity
+
+A local hook the CI pipeline does **not** run is not a real merge gate (see
+"Hooks Are Fast Feedback — CI Is the Gate"). If such a hook (say a repo-only
+`black`, `isort`, or `shellcheck`) reports the tree dirty and running its
+formatter would rewrite **hundreds of unrelated lines**, bypassing it with
+`--no-verify` is defensible — but only *after* you have read the CI workflow and
+confirmed it does not enforce that check. Concretely: verify the pipeline's
+`flake8` uses a narrow `--select`, that there is no `shellcheck`/`black` job,
+etc. A hook enforced only locally is already silently unenforced — don't let it
+dictate a massive diff that has nothing to do with your change. If CI *does* run
+the check, it is a real gate: fix the finding instead of bypassing it.
