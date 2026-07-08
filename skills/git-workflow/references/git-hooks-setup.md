@@ -183,8 +183,8 @@ stash patch pre-commit left behind:
 # pre-commit's cache dir is configurable: PRE_COMMIT_HOME, else XDG_CACHE_HOME/pre-commit,
 # else ~/.cache/pre-commit (macOS/other platforms may differ).
 PCH="${PRE_COMMIT_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/pre-commit}"
-ls -t "$PCH"/patch*                       # newest is patch<epoch>-<pid>
-git apply "$PCH"/patch<N>-<pid>
+PATCH=$(ls -t "$PCH"/patch* 2>/dev/null | head -1)   # newest patch<epoch>-<pid>
+git apply "$PATCH"
 ```
 
 Then re-run the commit (the hook envs are now built, so it is fast).
