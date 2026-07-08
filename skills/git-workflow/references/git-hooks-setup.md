@@ -180,8 +180,11 @@ happen — the unstaged edits silently vanish from the working tree. So **always
 stash patch pre-commit left behind:
 
 ```bash
-ls -t ~/.cache/pre-commit/patch*         # newest is patch<epoch>-<pid>
-git apply ~/.cache/pre-commit/patch<N>-<pid>
+# pre-commit's cache dir is configurable: PRE_COMMIT_HOME, else XDG_CACHE_HOME/pre-commit,
+# else ~/.cache/pre-commit (macOS/other platforms may differ).
+PCH="${PRE_COMMIT_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/pre-commit}"
+ls -t "$PCH"/patch*                       # newest is patch<epoch>-<pid>
+git apply "$PCH"/patch<N>-<pid>
 ```
 
 Then re-run the commit (the hook envs are now built, so it is fast).

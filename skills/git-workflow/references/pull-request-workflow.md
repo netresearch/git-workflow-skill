@@ -329,7 +329,7 @@ whose `commit_id` equals the PR head has landed:
 HEAD=$(gh pr view "$PR" --repo "$R" --json headRefOid --jq .headRefOid)
 # A Copilot review keyed to the current head must exist before you trust the count.
 SEEN=$(gh api "repos/$R/pulls/$PR/reviews" \
-  --jq "[.[]? | select(.user?.login? // \"\" | test(\"copilot\";\"i\")) | select((.commit_id? // \"\")[0:8]==\"${HEAD:0:8}\")] | length")
+  --jq "[.[]? | select(.user?.login? // \"\" | test(\"copilot\";\"i\")) | select((.commit_id? // \"\")==\"$HEAD\")] | length")
 [ "${SEEN:-0}" -ge 1 ] || { echo "bot has not re-reviewed head $HEAD yet — keep polling"; }
 ```
 
