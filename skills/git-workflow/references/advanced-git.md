@@ -299,6 +299,25 @@ git worktree remove ../project-feature
 git worktree prune
 ```
 
+### Bare-Repo Layouts: Relative Paths Resolve from the Repo, Not Your Shell
+
+With the bare-clone convention (`project/.bare` + one directory per branch),
+`git -C .bare worktree add <path>` resolves a **relative** `<path>` from *inside*
+`.bare` — `git -C` changes the process working directory first. From the project
+directory, `../<branch>` is therefore correct (a sibling of `.bare`), while
+`./<branch>` lands the worktree *inside* `.bare/` and `../<project>/<branch>`
+nests a stray copy one level deep:
+
+```bash
+cd /path/to/project           # contains .bare/
+git -C .bare worktree add ../feature-x origin/main   # -> /path/to/project/feature-x  OK
+git -C .bare worktree add ./feature-x  origin/main   # -> /path/to/project/.bare/feature-x  WRONG
+```
+
+When in doubt, pass an absolute path. Also check whether the target directory
+already holds a **plain clone** before nesting a `.bare` into it — mixing the two
+layouts in one directory leaves a repo checkout *and* a worktree tree side by side.
+
 ### Bare-Worktree Project Layout (Recommended)
 
 **One directory per branch; never switch branches in the same folder.**

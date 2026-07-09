@@ -660,6 +660,18 @@ REMOTE_SHA=$(git ls-remote origin refs/heads/"$BR" | cut -f1)   # no fetch, no f
 
 Likewise verify staging of any path that might be gitignored with `git status --short` before committing — an empty commit pushes "successfully" yet changes nothing.
 
+The same trap applies to **every command whose exit code gates the next step**, not
+just `git push`: a verification build or test run piped through `tail`/`grep` reports
+the *pipe's* exit code. Real case: `docker build … 2>&1 | tail -2 && echo OK` printed
+`OK` for a **failed** build, and the broken branch was pushed before anyone noticed.
+Run gating commands unpiped — capture to a log file and check `$?`, then grep the log:
+
+```bash
+docker build . > build.log 2>&1; RC=$?
+echo "rc=$RC"; grep -E 'error|Good signature' build.log
+[ "$RC" -eq 0 ] || exit 1
+```
+
 ### `--force-with-lease` Rejected with "stale info"
 
 On PRs that bots touch (auto-approve, Renovate/Dependabot, a CI step that pushes), `git push --force-with-lease` can be rejected with `stale info` even when your local work is correct: a bot updated the remote branch since your last fetch, so the lease's expected ref (your `origin/<branch>` tracking ref) no longer matches and the push aborts. This is the safety check working — don't escalate to plain `--force`.
