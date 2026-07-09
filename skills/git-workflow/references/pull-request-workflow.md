@@ -661,15 +661,18 @@ REMOTE_SHA=$(git ls-remote origin refs/heads/"$BR" | cut -f1)   # no fetch, no f
 Likewise verify staging of any path that might be gitignored with `git status --short` before committing — an empty commit pushes "successfully" yet changes nothing.
 
 The same trap applies to **every command whose exit code gates the next step**, not
-just `git push`: a verification build or test run piped through `tail`/`grep` reports
-the *pipe's* exit code. Real case: `docker build … 2>&1 | tail -2 && echo OK` printed
-`OK` for a **failed** build, and the broken branch was pushed before anyone noticed.
-Run gating commands unpiped — capture to a log file and check `$?`, then grep the log:
+just `git push`: in POSIX shells a pipeline's status is that of its **last** command
+(`tail`, `grep`) unless `set -o pipefail` is active — and even with pipefail, a
+trailing `grep` that matches nothing fails a *green* build. Real case:
+`docker build … 2>&1 | tail -2 && echo OK` printed `OK` for a **failed** build, and
+the broken branch was pushed before anyone noticed. Gate on the command's own exit
+code; keep log inspection out of the gate:
 
 ```bash
-docker build . > build.log 2>&1; RC=$?
-echo "rc=$RC"; grep -E 'error|Good signature' build.log
-[ "$RC" -eq 0 ] || exit 1
+docker build . > build.log 2>&1
+rc=$?
+tail -20 build.log            # inspection only — never part of the gate
+[ "$rc" -eq 0 ] || exit 1
 ```
 
 ### `--force-with-lease` Rejected with "stale info"
@@ -790,7 +793,8 @@ gh api graphql -f query='
 review comments (e.g., 127+ threads from automated reviewers), you MUST use pagination:
 
 ```bash
-# Fetch ALL threads with pagination (handles >100 threads)
+# Fetch ONE page of up to 100 threads; repeat with the returned endCursor
+# until hasNextPage is false to cover all threads
 gh api graphql -f query='
   query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
     repository(owner: $owner, name: $repo) {
@@ -812,7 +816,7 @@ gh api graphql -f query='
     }
   }' -f owner=OWNER -f repo=REPO -F pr=NUMBER
 
-# Then fetch next page using endCursor:
+# Loop until pageInfo.hasNextPage is false, passing each endCursor:
 # -f cursor="Y3Vyc29yOnYyOpHOABCD..."
 ```
 
