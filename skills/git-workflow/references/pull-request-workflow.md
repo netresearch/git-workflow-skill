@@ -660,6 +660,21 @@ REMOTE_SHA=$(git ls-remote origin refs/heads/"$BR" | cut -f1)   # no fetch, no f
 
 Likewise verify staging of any path that might be gitignored with `git status --short` before committing — an empty commit pushes "successfully" yet changes nothing.
 
+The same trap applies to **every command whose exit code gates the next step**, not
+just `git push`: in POSIX shells a pipeline's status is that of its **last** command
+(`tail`, `grep`) unless `set -o pipefail` is active — and even with pipefail, a
+trailing `grep` that matches nothing fails a *green* build. Real case:
+`docker build … 2>&1 | tail -2 && echo OK` printed `OK` for a **failed** build, and
+the broken branch was pushed before anyone noticed. Gate on the command's own exit
+code; keep log inspection out of the gate:
+
+```bash
+docker build . > build.log 2>&1
+rc=$?
+tail -20 build.log            # inspection only — never part of the gate
+[ "$rc" -eq 0 ] || exit 1
+```
+
 ### `--force-with-lease` Rejected with "stale info"
 
 On PRs that bots touch (auto-approve, Renovate/Dependabot, a CI step that pushes), `git push --force-with-lease` can be rejected with `stale info` even when your local work is correct: a bot updated the remote branch since your last fetch, so the lease's expected ref (your `origin/<branch>` tracking ref) no longer matches and the push aborts. This is the safety check working — don't escalate to plain `--force`.
@@ -771,6 +786,42 @@ gh api graphql -f query='
     }
   }' -f owner=OWNER -f repo=REPO -F pr=NUMBER
 ```
+
+### Handling Many Review Threads (Pagination)
+
+**Critical:** GitHub GraphQL API has a limit of 100 items per page. For PRs with many
+review comments (e.g., 127+ threads from automated reviewers), you MUST use pagination:
+
+```bash
+# Fetch ONE page of up to 100 threads; repeat with the returned endCursor
+# until hasNextPage is false to cover all threads
+gh api graphql -f query='
+  query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pr) {
+        reviewThreads(first: 100, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            id
+            isResolved
+            comments(first: 1) {
+              nodes { body path }
+            }
+          }
+        }
+      }
+    }
+  }' -f owner=OWNER -f repo=REPO -F pr=NUMBER
+
+# Loop until pageInfo.hasNextPage is false, passing each endCursor:
+# -f cursor="Y3Vyc29yOnYyOpHOABCD..."
+```
+
+**Real-world lesson (PR #575):** Automated reviewers can generate 100+ comment threads.
+Without pagination, only the first 100 threads are returned, leaving others unaddressed.
 
 ## Diagnosing CI Failures (Annotations First)
 

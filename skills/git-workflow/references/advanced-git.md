@@ -299,6 +299,16 @@ git worktree remove ../project-feature
 git worktree prune
 ```
 
+### Bare-Repo Layouts
+
+With the bare-clone convention (`project/.bare` + one directory per branch),
+relative `worktree add` paths resolve from *inside* `.bare` — see the detailed
+path-resolution rules and recovery steps in the bare-repo section below.
+
+Before nesting a `.bare` into an existing directory, check whether it already
+holds a **plain clone** — mixing the two layouts leaves a repo checkout *and* a
+worktree side by side in one directory.
+
 ### Bare-Worktree Project Layout (Recommended)
 
 **One directory per branch; never switch branches in the same folder.**
