@@ -62,7 +62,6 @@ No build system scripts defined in composer.json. Basic operations:
 ## References
 
 - [SKILL.md](skills/git-workflow/SKILL.md) -- core skill definition and triggers
-- [Branching Strategies](skills/git-workflow/references/branching-strategies.md)
 - [Commit Conventions](skills/git-workflow/references/commit-conventions.md)
 - [Pull Request Workflow](skills/git-workflow/references/pull-request-workflow.md)
 - [CI/CD Integration](skills/git-workflow/references/ci-cd-integration.md)

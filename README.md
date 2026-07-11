@@ -114,10 +114,9 @@ git-workflow-skill/                       # abbreviated — key files only
 │   ├── SKILL.md                          # Skill metadata and core patterns
 │   ├── ...                               # checkpoints.yaml, evals/, hooks
 │   └── references/
-│       ├── branching-strategies.md       # Branch management patterns
 │       ├── commit-conventions.md         # Commit message standards
 │       ├── pull-request-workflow.md      # PR and review processes
-│       ├── ci-cd-integration.md          # Automation patterns
+│       ├── ci-cd-integration.md          # CI watching, git mirrors
 │       └── advanced-git.md               # Advanced Git operations
 ├── commands/
 │   └── pr-finish.md                      # /pr-finish slash command
@@ -127,29 +126,21 @@ git-workflow-skill/                       # abbreviated — key files only
 
 ## Expertise Areas
 
-### Branching Strategies
-- Git Flow (feature/release/hotfix branches)
-- GitHub Flow (simple feature branches)
-- Trunk-based development
-- Release management patterns
-
 ### Commit Conventions
 - Conventional Commits standard
-- Semantic versioning integration
-- Commit message best practices
+- Semantic versioning mapping (`feat`/`fix`/etc.)
+- Signed commits + DCO sign-off
 - Atomic commit patterns
 
 ### Collaborative Workflows
-- Pull request best practices
-- Code review processes
-- Merge strategies (merge, squash, rebase)
+- Default-branch check before PR/scripting operations
+- Atomic commits, no squash unless asked
+- Merge strategies, review-thread resolution, merge gate
 - Conflict resolution patterns
 
 ### CI/CD Integration
-- GitHub Actions workflows
-- GitLab CI patterns
-- Branch protection rules
-- Automated versioning
+- Watching CI from the CLI (`gh pr checks`, `gh run watch`)
+- Git mirror repository sync (`git push --mirror` gotchas)
 
 ## Conventional Commits Format
 
