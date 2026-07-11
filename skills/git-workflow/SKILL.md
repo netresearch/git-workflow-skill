@@ -1,6 +1,6 @@
 ---
 name: git-workflow
-description: "Use when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, creating releases, integrating Git with CI/CD, setting up git hooks (lefthook, captainhook, husky, pre-commit), or debugging hook-install failures in git worktrees."
+description: "Use when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, integrating Git with CI/CD, setting up git hooks (lefthook, captainhook, husky, pre-commit), or debugging hook-install failures in git worktrees. Not for creating releases (use github-release) or diagnosing BLOCKED/won't-merge PRs (use github-project)."
 license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
 compatibility: "Requires git, gh CLI; yq for .spec-cleanup.yml."
 metadata:
@@ -31,12 +31,11 @@ Load on demand:
 
 | Reference | Content Triggers |
 |-----------|-----------------|
-| `references/branching-strategies.md` | Branching models, Git/GitHub Flow, trunk-based, protection |
-| `references/commit-conventions.md` | Conventional commits, DCO sign-off, semantic versioning, commitlint |
-| `references/pull-request-workflow.md` | PR create/review/merge, threads, strategies, CODEOWNERS, signed rebase |
-| `references/ci-cd-integration.md` | GitHub Actions, GitLab CI, semantic release, deployment |
+| `references/commit-conventions.md` | Conventional commits, DCO sign-off |
+| `references/pull-request-workflow.md` | Default-branch check, PR merge, merge gate, signed rebase |
+| `references/ci-cd-integration.md` | Watching CI from the CLI, git mirror repositories |
 | `references/advanced-git.md` | Rebase, cherry-pick, bisect, stash, worktrees, reflog, recovery |
-| `references/github-releases.md` | Immutable releases, `--latest=false`, multi-branch |
+| `references/github-releases.md` | Pointer to the `github-release` skill |
 | `references/git-hooks-setup.md` | Hook frameworks, detection, hooks per stage |
 | `references/claude-code-hooks.md` | Claude Code `settings.json` hooks — merge gate, cache-path rejection, auto-lint |
 | `references/code-quality-tools.md` | shellcheck, shfmt, git-absorb, difftastic |

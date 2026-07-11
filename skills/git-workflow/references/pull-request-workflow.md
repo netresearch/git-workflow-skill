@@ -1,213 +1,30 @@
 # Pull Request Workflow
 
-## PR Best Practices
+Covers the PR lifecycle for Netresearch repos: branch and tooling checks
+before opening a PR, commit discipline, merge strategies, review-thread
+resolution, and the merge gate. See `references/commit-conventions.md` for
+commit message formatting.
 
-### Size Guidelines
+## Check the Default Branch Before Operating
 
-| Size | Lines Changed | Review Time | Defect Risk |
-|------|--------------|-------------|-------------|
-| XS | 0-10 | < 5 min | Very Low |
-| S | 11-100 | 15-30 min | Low |
-| M | 101-400 | 30-60 min | Medium |
-| L | 401-1000 | 1-2 hours | High |
-| XL | 1000+ | Multiple sessions | Very High |
-
-**Target**: Keep PRs under 400 lines when possible.
-
-### PR Structure
-
-```markdown
-## Summary
-Brief description of changes and motivation.
-
-## Type of Change
-- [ ] Bug fix (non-breaking change fixing an issue)
-- [ ] New feature (non-breaking change adding functionality)
-- [ ] Breaking change (fix or feature causing existing functionality to change)
-- [ ] Documentation update
-- [ ] Refactoring (no functional changes)
-
-## Changes Made
-- Added user authentication service
-- Implemented JWT token generation
-- Added login/logout endpoints
-
-## Testing
-- [ ] Unit tests added/updated
-- [ ] Integration tests added/updated
-- [ ] Manual testing performed
-
-## Screenshots (if applicable)
-[Before/After screenshots for UI changes]
-
-## Related Issues
-Fixes #123
-Related to #456
-
-## Checklist
-- [ ] Code follows project style guidelines
-- [ ] Self-review performed
-- [ ] Documentation updated
-- [ ] No new warnings introduced
-- [ ] Tests pass locally
-```
-
-## Creating PRs
-
-### GitHub CLI
+Not every repo uses `main` — older repos often use `master`, and some use
+`develop` or `trunk`. Before pushing, opening a PR, or scripting across many
+repos, resolve the actual default branch instead of assuming:
 
 ```bash
-# Create PR with title and body
-gh pr create \
-  --title "feat(auth): add user authentication" \
-  --body "## Summary
-Implements JWT-based authentication.
-
-## Changes
-- Add AuthService
-- Add login/logout endpoints
-- Add auth middleware
-
-Fixes #123"
-
-# Create draft PR
-gh pr create --draft
-
-# Create PR and assign reviewers
-gh pr create \
-  --title "fix: resolve memory leak" \
-  --reviewer "@team-lead,@senior-dev" \
-  --assignee "@me"
-
-# Create PR from template
-gh pr create --template .github/PULL_REQUEST_TEMPLATE.md
+gh repo view OWNER/REPO --json defaultBranchRef --jq '.defaultBranchRef.name'
 ```
 
-### PR Templates
+Assuming the wrong name silently pushes to (or creates) the wrong branch, or
+targets a PR at a branch that isn't the integration branch.
 
-```markdown
-<!-- .github/PULL_REQUEST_TEMPLATE.md -->
-## Description
-<!-- Describe your changes in detail -->
+## Prefer the `gh` CLI / GitHub MCP Over Raw API or Web UI
 
-## Motivation and Context
-<!-- Why is this change required? What problem does it solve? -->
-
-## How Has This Been Tested?
-<!-- Describe how you tested your changes -->
-
-## Types of Changes
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Breaking change
-- [ ] Documentation
-
-## Checklist
-- [ ] My code follows the code style of this project
-- [ ] I have updated the documentation accordingly
-- [ ] I have added tests to cover my changes
-- [ ] All new and existing tests passed
-```
-
-### Multiple Templates
-
-```
-.github/
-├── PULL_REQUEST_TEMPLATE.md          # Default
-└── PULL_REQUEST_TEMPLATE/
-    ├── feature.md
-    ├── bugfix.md
-    └── documentation.md
-```
-
-## Code Review Process
-
-### Reviewer Responsibilities
-
-1. **Code Quality**
-   - Readability and maintainability
-   - Adherence to coding standards
-   - Appropriate error handling
-
-2. **Functionality**
-   - Logic correctness
-   - Edge cases handled
-   - Requirements met
-
-3. **Testing**
-   - Test coverage adequate
-   - Tests meaningful and correct
-   - Edge cases tested
-
-4. **Security**
-   - No obvious vulnerabilities
-   - Sensitive data handling
-   - Input validation
-
-5. **Performance**
-   - No obvious bottlenecks
-   - Resource usage appropriate
-   - Scaling considerations
-
-### Review Comments
-
-```markdown
-# Levels of feedback
-
-# 🔴 Blocking - Must be addressed
-This introduces a security vulnerability. User input is not sanitized
-before being used in the SQL query.
-
-# 🟡 Suggestion - Should consider
-Consider extracting this logic into a separate function for reusability
-and testing.
-
-# 🟢 Nit - Minor issue
-Nit: This variable name could be more descriptive.
-`data` → `userProfileData`
-
-# 💡 Question - Seeking understanding
-Question: What's the reasoning behind using a Map here instead of an Object?
-
-# 👍 Praise - Positive feedback
-Nice catch handling the edge case where the array might be empty!
-```
-
-### Review Checklist
-
-```markdown
-## Code Review Checklist
-
-### Code Quality
-- [ ] Code is readable and self-documenting
-- [ ] No unnecessary complexity
-- [ ] DRY principle followed
-- [ ] SOLID principles followed
-
-### Testing
-- [ ] Unit tests present and passing
-- [ ] Edge cases covered
-- [ ] Integration tests if needed
-- [ ] No flaky tests introduced
-
-### Security
-- [ ] No hardcoded credentials
-- [ ] Input validation present
-- [ ] No SQL injection risks
-- [ ] No XSS vulnerabilities
-
-### Performance
-- [ ] No N+1 queries
-- [ ] Appropriate data structures used
-- [ ] No memory leaks
-- [ ] Caching considered
-
-### Documentation
-- [ ] README updated if needed
-- [ ] API documentation updated
-- [ ] Comments for complex logic
-- [ ] CHANGELOG entry added
-```
+For GitHub operations (PRs, issues, reviews, releases), reach for `gh` or the
+GitHub MCP tools before hand-rolling `curl`/REST calls or clicking through the
+web UI: consistent authentication, structured `--json` output, and clearer
+errors. Drop to raw `gh api` only for endpoints the porcelain commands don't
+cover yet.
 
 ## Atomic Commits (Default — No Squash Unless Asked)
 
