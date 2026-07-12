@@ -21,6 +21,48 @@ git rebase -i abc1234^
 # x, exec   - run shell command
 ```
 
+### Replaying Only the Tip Onto a Moved Base (`--onto`)
+
+Use when a long-lived branch is *N bootstrap commits + a few real commits*, and
+the base branch has since absorbed that bootstrap work through a different path
+(different SHAs). A plain `git rebase <base>` replays **all** N commits and hits
+an add/add conflict on every file the base already recreated — and even after
+resolving them the result is wrong.
+
+```bash
+# Symptom: the MR/PR diff shows an ENTIRE file as newly added (@@ -0,0 +1,N @@)
+# even though the base already has that file. The merge-base predates the file,
+# so base and branch each "add" it → add/add conflict. Don't trust the
+# diff-vs-base; inspect the branch's own tip commit instead:
+git show <tip>                        # the real change this branch introduces
+git cherry -v <base> <branch>         # '+' = unique to branch, '-' = already in base
+                                      #   (patch-id match; plain `log <base>..<branch>`
+                                      #   still lists absorbed commits under new SHAs)
+git merge-base <base> <branch>        # confirm how far back it forks
+
+# Replay ONLY the commits after <keep-base> onto the current base, dropping the
+# redundant bootstrap history:
+git rebase --onto origin/main <keep-base> <branch>
+#            └ new base       └ everything up to AND INCLUDING this is dropped
+
+# For a single tip commit, <keep-base> is its parent:
+git rebase --onto origin/main <tip>~1 <branch>
+```
+
+Each replayed commit is 3-way merged against its own parent tree, so as long as
+the lines it touches still exist verbatim in the new base it applies cleanly no
+matter how far the base has moved. Verify the result is exactly the intended
+change and nothing else:
+
+```bash
+git rev-list --count origin/main..HEAD   # == the number of real commits you kept
+git diff origin/main..HEAD               # == the intended delta only
+```
+
+This is equivalent to cherry-picking just the tip commits onto the new base;
+`--onto` does it in one step and preserves author and author-date. Force-push the
+rewritten branch with `--force-with-lease`.
+
 ### Squashing Commits
 
 ```bash
