@@ -223,6 +223,135 @@ git merge --ff-only feature/my-feature
 | Squash | Combined | Low | Medium |
 | Rebase | Linear | Low | Medium |
 
+## Merging Divergent Upstream History (Forks)
+
+Catching a fork up with its upstream looks like a merge-strategy question. It is
+mostly a **scope** question, and four traps sit between the two.
+
+### "Merge" is a constraint on history rewriting — not an instruction to import everything
+
+When a maintainer rejects a rebase because *"rebasing would break our releases"*
+and says **"we need to merge"**, the load-bearing word is not *merge* — it is
+*don't rewrite the SHAs our releases point at*. Merge is one mechanism that
+satisfies that; **cherry-pick satisfies it too**, and so does doing nothing.
+
+Establish the **net delta before choosing the mechanism**, and say it out loud:
+
+```bash
+UPSTREAM=hashicorp/some-project      # the repo you forked
+FORK=your-org/some-project           # your fork
+
+git fetch upstream
+git log --oneline origin/main..upstream/main | wc -l   # what we would gain
+gh api "repos/$UPSTREAM/compare/main...${FORK%%/*}:main" --jq '{ahead: .ahead_by, behind: .behind_by}'
+# Where the conflict surface actually lives — often one directory dominates
+gh api "repos/$UPSTREAM/compare/main...${FORK%%/*}:main?per_page=100" \
+  --jq '[.files[].filename | split("/")[0]] | group_by(.) | map({dir: .[0], n: length}) | sort_by(-.n) | .[0:5]'
+```
+
+For *what we add*, prefer `git cherry` over `git log`: it compares by **patch-id**,
+so a change of yours that upstream already carries under a different SHA is
+correctly reported as already-there. `git log upstream/main..origin/main` counts it
+as yours and overstates the delta.
+
+```bash
+git cherry -v upstream/main origin/main | grep -c '^+'   # genuinely ours
+git cherry -v upstream/main origin/main | grep '^-'      # already upstream, other SHA
+```
+
+This is not hypothetical: on the fork below, `git log` reported 27 commits while
+`git cherry` reported 26 — the difference being the fork's own **re-authored port**
+of an upstream fix, which `git cherry` matched to the upstream original despite a
+different SHA, author, *and* commit message.
+
+If the valuable delta is a handful of commits — or one typo fix — a merge of the
+full history buys you every conflict and every unsigned commit in that history to
+deliver it. Cherry-pick the delta instead; the SHA-preservation constraint is met
+either way.
+
+**Real case:** a fork 22 ahead / 11 behind an **archived** upstream. The merge
+produced 548 conflicts and 11 DCO-breaking commits; the entire net gain was a
+two-line typo fix (the other 10 commits were vendor churn, the upstream's own
+release CI, and dependency bumps the fork had already surpassed). The delta had
+been measured *before* the merge and the merge was run anyway. The maintainer's
+correction — *"if the typo is the only change, pull in the typo, nothing more"* —
+was the whole job.
+
+**Tell:** you are resolving conflicts in files your fork deliberately diverged on
+(vendor trees, CI, templates) to obtain something you could name in one sentence.
+
+### Resolve the repo's allowed merge methods *before* authoring a merge commit
+
+A repository that permits **only rebase-merge** cannot land a merge commit: `--rebase`
+replays the branch and **flattens the merge**, rewriting exactly the SHAs the merge
+existed to preserve. Discovering this at merge time means the work was mis-shaped from
+the start.
+
+```bash
+gh api "repos/$OWNER/$REPO" --jq '{allow_merge_commit, allow_rebase_merge, allow_squash_merge}'
+```
+
+Run it **before** you build the merge, not at step "merge". If merge commits are
+disabled but a true merge is required, the options are: enable `allow_merge_commit`
+(a repo-policy change affecting every future PR), a local fast-forward push (see
+*Signed Commits with Rebase Merge* — `main` can fast-forward to the merge commit
+when its first parent is `main`'s head), or a different mechanism entirely.
+
+### Conflicts are not the whole merge — check clean ADDs under a deleted path
+
+`git merge` only reports conflicts for paths **both sides touched**. Files the other
+side **added** that your side never had merge **silently, with no conflict** — so if
+your fork *deleted* a directory upstream still maintains, resolving every conflict
+still leaves you re-importing it.
+
+```bash
+# 545 conflicts resolved... and 252 files quietly staged as clean additions
+git status --porcelain | grep '^A' | grep ' vendor/' | wc -l
+git diff --cached --name-only -- vendor | wc -l
+```
+
+**Real case:** a fork that had run `chore: unvendor` merged an upstream that still
+vendors. 545 paths conflicted `DU` (deleted by us / modified by them) — and **252
+more merged cleanly as additions**, because upstream's vendor upgrade had *added*
+files the fork never carried. Resolving the conflicts alone would have silently
+re-vendored the project and reverted the unvendoring, with a green merge.
+
+After any merge involving a path one side removed:
+
+```bash
+git rm -rfq --ignore-unmatch -- <path>   # plain `git rm` refuses when the index has staged changes
+git ls-files -- <path> | wc -l           # must be 0
+```
+
+### DCO and third-party history are structurally incompatible
+
+A DCO check requires every commit to carry a `Signed-off-by` **matching its author**.
+Upstream's commits carry none, and **you cannot sign off on someone else's authorship**
+— sign-off is a declaration about work you have the right to submit. So *any* fork
+merging *any* third-party history fails DCO by construction. This is not a mistake to
+fix; it is a property of the operation.
+
+Do **not** follow the DCO bot's own advice here. It suggests `git rebase HEAD~N --signoff`,
+which rewrites the upstream commits and flattens the merge — destroying the ancestry the
+merge existed to record, and forging sign-offs on other people's commits.
+
+Real options, in order:
+
+1. **Don't merge the history — port the change.** Cherry-pick, then re-author under your
+   own sign-off, crediting the original in the message. `git cherry-pick -x` keeps the
+   original author and therefore still fails DCO; `git commit --amend --reset-author -S --signoff`
+   makes it your commit, which is honest for a two-line port and passes the gate:
+
+   ```bash
+   git cherry-pick -x <upstream-sha>
+   git commit --amend --reset-author -S --signoff   # message credits upstream <sha> + author
+   ```
+2. **Check whether DCO is actually required** before treating it as a blocker —
+   `gh api repos/$R/branches/$BASE/protection --jq '.required_status_checks.contexts'`.
+   A red-but-not-required DCO is a policy call, not a gate.
+3. **Third-party remediation** via `.github/dco.yml` (`allowRemediationCommits: {thirdParty: true}`)
+   — a legal declaration on someone else's work. A human decides that, never an agent.
+
 ## Automated Checks
 
 ### GitHub Actions for PRs
@@ -796,6 +925,11 @@ If the probe fails (no askpass, a locked/dropped key, or a key not registered as
 ### Signing and DCO Failures
 
 When `mergeStateStatus: BLOCKED` and the blocking check is `dco` or a "Commits must have verified signatures" branch-protection rule, act on these in order:
+
+> If the unsigned commits are **someone else's** — e.g. a fork merging upstream history —
+> none of the steps below apply: you cannot sign off on another author's work, and the
+> rebase in Step 2 would forge it. See
+> [Merging Divergent Upstream History (Forks)](#dco-and-third-party-history-are-structurally-incompatible).
 
 **Step 1 — Verify git identity is correct (not swapped).**
 A swapped name/email pair silently produces a malformed `Signed-off-by:` trailer that the DCO bot rejects:
