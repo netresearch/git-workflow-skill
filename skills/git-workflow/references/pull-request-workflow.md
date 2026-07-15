@@ -238,14 +238,31 @@ satisfies that; **cherry-pick satisfies it too**, and so does doing nothing.
 Establish the **net delta before choosing the mechanism**, and say it out loud:
 
 ```bash
+UPSTREAM=hashicorp/some-project      # the repo you forked
+FORK=your-org/some-project           # your fork
+
 git fetch upstream
-git log --oneline upstream/main..origin/main | wc -l   # what we add
 git log --oneline origin/main..upstream/main | wc -l   # what we would gain
-gh api "repos/$UP/compare/main...$FORK_OWNER:main" --jq '{ahead: .ahead_by, behind: .behind_by}'
+gh api "repos/$UPSTREAM/compare/main...${FORK%%/*}:main" --jq '{ahead: .ahead_by, behind: .behind_by}'
 # Where the conflict surface actually lives — often one directory dominates
-gh api "repos/$UP/compare/main...$FORK_OWNER:main?per_page=100" \
+gh api "repos/$UPSTREAM/compare/main...${FORK%%/*}:main?per_page=100" \
   --jq '[.files[].filename | split("/")[0]] | group_by(.) | map({dir: .[0], n: length}) | sort_by(-.n) | .[0:5]'
 ```
+
+For *what we add*, prefer `git cherry` over `git log`: it compares by **patch-id**,
+so a change of yours that upstream already carries under a different SHA is
+correctly reported as already-there. `git log upstream/main..origin/main` counts it
+as yours and overstates the delta.
+
+```bash
+git cherry -v upstream/main origin/main | grep -c '^+'   # genuinely ours
+git cherry -v upstream/main origin/main | grep '^-'      # already upstream, other SHA
+```
+
+This is not hypothetical: on the fork below, `git log` reported 27 commits while
+`git cherry` reported 26 — the difference being the fork's own **re-authored port**
+of an upstream fix, which `git cherry` matched to the upstream original despite a
+different SHA, author, *and* commit message.
 
 If the valuable delta is a handful of commits — or one typo fix — a merge of the
 full history buys you every conflict and every unsigned commit in that history to
