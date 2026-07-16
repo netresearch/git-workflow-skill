@@ -12,6 +12,15 @@ Classify every failing check BEFORE reacting:
 | **Soft, self-healing** | `codecov/*` while sibling jobs still run (partial uploads) | Ignore while `pending > 0`; if persisting after completion: one full `gh run rerun <id>` |
 | **Soft, structural** | SonarCloud PR gate on refactor PRs | Introspect before deciding (below) |
 
+## One shard red in a sharded suite: flake vs. real regression
+
+When one of N test shards fails, read its **first** error before you reach for a rerun — whether the Hard-class failure above is a flake or a real bug turns on it:
+
+- **Infra flake** — the first error is a stack-boot / health-check line (`App failed to start within timeout`, DB-not-ready, a 5xx from the app root). Every assertion failure below it is collateral: there was no app to talk to. Only that one shard is red; the siblings pass. Reaction: one `gh run rerun <id> --failed` (a rebase + push also re-triggers a clean run).
+- **Real regression** — the *same* spec(s) fail **across all shards deterministically**, and the first error is an assertion (or an actionability timeout), not a boot line. A regression in shared code does not politely confine itself to one shard.
+
+Playwright tell: `locator.check` / `locator.click: Test timeout` is an **actionability** failure — the element never became visible / stable / hit-testable — usually a CSS or DOM change that broke a hit target. Treat it as a real regression to investigate even when it surfaces on a single shard, not as a flake to rerun. (Seen: a `.field-check-row` restyle moved a label out of the node a spec located by, so `getByText`-anchored `.check()` hung 30s — red on shard 1 only, looked exactly like a boot flake, was a real DOM regression.)
+
 ## Sonar gate introspection
 
 Never merge on a red Sonar gate without knowing *why* it is red:
