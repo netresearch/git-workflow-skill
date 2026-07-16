@@ -843,6 +843,28 @@ Use `--diff-filter=ACMR` (not just `AM`) so renames and copies into a guarded
 path are caught. Verify pathspec support empirically before swapping one
 command for the other — the failure mode is silent, not loud.
 
+## Reading a File As It Is Committed on Another Branch
+
+To see what a file *actually contains on another branch or ref* — without
+switching to it — read it from the object store:
+
+```bash
+git show <branch>:<path>          # e.g. git show origin/main:src/App.tsx
+git show <tag>:<path>
+git show <sha>:<path>
+```
+
+Use this instead of trusting the working-tree copy right after a `git checkout`.
+A branch switch swaps every file on disk, so the on-disk copy (and any editor or
+harness "file was modified" notice fired by the switch) reflects the branch you
+landed on, not the one you were reasoning about — chasing that phantom "edit" is
+a real time sink. `git show <branch>:<path>` answers "what's committed there?"
+authoritatively; reserve the working tree for "what's staged/unsaved here now?".
+
+To compare a file across branches without checkout, use
+`git diff <branchA> <branchB> -- <path>` (or `git diff <branchA>...<branchB> -- <path>`
+for the merge-base–relative diff).
+
 ## Troubleshooting
 
 ### Common Issues
