@@ -351,8 +351,8 @@ contains — a dependency version constraint, whether a fix already landed on
 state, not the stale worktree:
 
 ```bash
-git fetch origin && git -C <repo> log --oneline origin/main -3   # or:
-git worktree add ../fresh origin/main                            # read from a fresh tree
+git -C <repo> fetch origin && git -C <repo> log --oneline origin/main -3   # or:
+git worktree add ../fresh origin/main                                      # read from a fresh tree
 ```
 
 Two recurring failure modes:
