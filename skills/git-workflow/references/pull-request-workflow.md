@@ -907,6 +907,24 @@ gh api graphql -F id="$PRID" \
 # Branch is pushable again; fix threads, then re-arm through this gate.
 ```
 
+**Verify a "dropped" queue entry via the issue timeline before re-arming.**
+Right after a queue merge, `gh pr view --json state` can report `OPEN` and the
+queue listing can show the entry gone for several minutes — the exact signature
+of a silent drop, except the PR already merged. Re-arming (or re-diagnosing) on
+that stale read wastes a round-trip. The issue **timeline** is authoritative:
+
+```bash
+gh api repos/{owner}/{repo}/issues/NUMBER/timeline --paginate \
+  --jq '.[]? | select(.event | IN("added_to_merge_queue", "removed_from_merge_queue",
+                                  "merged", "closed")) | "\(.created_at) \(.event)"'
+# removed_from_merge_queue immediately followed by merged  -> it landed; do nothing.
+# removed_from_merge_queue with NO merged event            -> real silent drop; re-arm.
+```
+
+Also note: queue membership is GraphQL-only — `isInMergeQueue` /
+`mergeQueueEntry` are **not** `gh pr view --json` fields (the call errors);
+query `pullRequest { mergeQueueEntry { state position } }` via `gh api graphql`.
+
 ### Signing Readiness (Preflight — Before Committing)
 
 A signing failure surfaces only at the *merge gate* (BLOCKED on DCO / "verified signatures") — i.e. **after** all the work is staged, forcing a full re-sign cycle. Catch it up front: before a commit-heavy run (e.g. `/pr-finish`), confirm a signing key is actually available and that `git commit -S` will sign, rather than assuming it.
