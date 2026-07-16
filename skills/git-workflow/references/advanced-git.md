@@ -861,9 +861,9 @@ landed on, not the one you were reasoning about — chasing that phantom "edit" 
 a real time sink. `git show <branch>:<path>` answers "what's committed there?"
 authoritatively; reserve the working tree for "what's staged/unsaved here now?".
 
-For a whole-tree comparison across branches without checkout, use
-`git diff <branchA> <branchB> -- <path>` (or `git diff <branchA>...<branchB>` for
-the merge-base–relative diff).
+To compare a file across branches without checkout, use
+`git diff <branchA> <branchB> -- <path>` (or `git diff <branchA>...<branchB> -- <path>`
+for the merge-base–relative diff).
 
 ## Troubleshooting
 
