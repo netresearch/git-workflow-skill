@@ -341,6 +341,35 @@ git worktree remove ../project-feature
 git worktree prune
 ```
 
+### A stale worktree is a stale source
+
+A worktree checked out days ago can be many commits behind `origin` — its
+`composer.json`, its "what's on `main`", its API signatures are all whatever they
+were at that checkout, not now. Before basing a **decision** on what a repo
+contains — a dependency version constraint, whether a fix already landed on
+`main`, a class/method signature you're about to code against — read the *current*
+state, not the stale worktree:
+
+```bash
+git -C <repo> fetch origin && git -C <repo> log --oneline origin/main -3   # or:
+git worktree add ../fresh origin/main                                      # read from a fresh tree
+```
+
+Two recurring failure modes:
+
+- **Reporting a stale value as fact.** Reading `"^0.13"` from an un-fetched
+  worktree and stating "the constraint needs bumping" — when current `main` already
+  says `"^0.17 || ^0.18 || ^0.19"`. Verify against `origin/main` before writing the
+  claim into a design or PR.
+- **A subagent silently reads a stale checkout.** When you dispatch an agent to
+  "read the source" for a decision, name the ref/worktree it must read, and
+  re-verify its structural claims (config keys, signatures) against the current
+  tree before building on them — half a report can come from an outdated path.
+
+Confirm the constructor/signature at the **resolved** dependency version (the one
+installed in `vendor`/`.Build`), not the library's `main` branch — they drift
+(e.g. a value object gaining a required constructor arg between minor releases).
+
 ### Bare-Repo Layouts
 
 With the bare-clone convention (`project/.bare` + one directory per branch),
