@@ -915,8 +915,8 @@ that stale read wastes a round-trip. The issue **timeline** is authoritative:
 
 ```bash
 gh api repos/{owner}/{repo}/issues/NUMBER/timeline --paginate \
-  --jq '[.[] | select(.event=="added_to_merge_queue" or .event=="removed_from_merge_queue"
-                    or .event=="merged" or .event=="closed") | "\(.created_at) \(.event)"][]'
+  --jq '.[]? | select(.event | IN("added_to_merge_queue", "removed_from_merge_queue",
+                                  "merged", "closed")) | "\(.created_at) \(.event)"'
 # removed_from_merge_queue immediately followed by merged  -> it landed; do nothing.
 # removed_from_merge_queue with NO merged event            -> real silent drop; re-arm.
 ```
