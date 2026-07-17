@@ -28,6 +28,15 @@ Then install based on what's found:
 - `.pre-commit-config.yaml` → `pre-commit install`
 - Nothing → suggest adding one based on project language
 
+## Updating Hook Versions (`pre-commit autoupdate`)
+
+`pre-commit autoupdate` bumps every hook's `rev` to the repo's **latest tag —
+including pre-releases**. It happily pins a beta (observed: isort
+`8.0.1 → 9.0.0b1`). After running it, review each bumped `rev` and pin any
+`aN`/`bN`/`rcN` back to the latest stable tag before committing. When a hook
+mirrors a locked dev dependency (black, isort), keep the hook `rev` aligned
+with the lockfile version instead of blindly taking the newest tag.
+
 ## Recommended Hooks by Stage
 
 ### pre-commit (fast, <5s)
