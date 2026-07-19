@@ -74,6 +74,22 @@ Pitfalls baked in: `grep -c` exits 1 on zero matches (`|| true`); decide hard-fa
 
 **On a docs/prose PR the loop does not decay — it must be actively terminated.** The bot re-reads the whole changed file each round and keeps surfacing a *new cosmetic* nit (wording, an illustrative example value, a spelling), so pushing a fix just triggers another round almost indefinitely. To converge: once a finding is purely cosmetic and defensible, **reply on the thread and resolve it *without* a new commit** — no push means no re-review means no new nit. Reserve fresh pushes for substantive findings; batch several real fixes into one push rather than one-per-thread.
 
+## Auto-merge armed + CLEAN but never enqueued: disable/re-enable to nudge
+
+On a merge-queue repo a PR can sit `CLEAN` with auto-merge **armed** and every required check green, yet never gets a `mergeQueueEntry` — it silently fails to enter the queue, so the watcher just times out. Confirm the symptom, then re-arm to force GitHub to re-evaluate enqueue-readiness:
+
+```bash
+gh pr view $PR --repo $R --json mergeStateStatus,autoMergeRequest \
+  --jq '{merge:.mergeStateStatus, autoMerge:(.autoMergeRequest!=null)}'   # CLEAN + true
+gh api graphql -F o="${R%/*}" -F r="${R#*/}" -F p=$PR -f query='query($o:String!,$r:String!,$p:Int!){repository(owner:$o,name:$r){pullRequest(number:$p){mergeQueueEntry{state}}}}' \
+  --jq '.data.repository.pullRequest.mergeQueueEntry // "not queued"'      # "not queued" = stalled
+
+gh pr merge $PR --repo $R --disable-auto     # then re-arm
+gh pr merge $PR --repo $R --auto             # → now enters the queue (QUEUED)
+```
+
+This is distinct from a PR that entered the queue and was then **dequeued/cancelled** (that one *was* `QUEUED` and dropped — usually a transient queue check failure; re-arm `--auto` there too). Both recover by re-arming; neither is fixed by `--admin`. Renovate/Dependabot PRs arm auto-merge via the deps workflow — a rebase onto current base (they lag) plus this nudge is the non-hand-merge way to complete them.
+
 ## Post-merge: confirm merge-triggered jobs by commit SHA, not by run list
 
 After merge, the base branch (`main`) fires its own runs (CI, release, deploy). To confirm those, query the **commit's** checks keyed on the merge SHA — never filter `gh run list` by `headSha`:
