@@ -89,6 +89,18 @@ AI reviewers (GitHub Copilot, Gemini Code Assist, SonarCloud) mix correct findin
 
 Reply citing the evidence either way. When you applied a change, the reply must still carry the commit SHA and the what/why required above (e.g. `Verified against <source>: <fact> — applied in <SHA>, which …`); when you declined, state the source and fact (e.g. `Verified against <source>: <fact> — declining.`). When the suggestion is a code change, run the project's checks (lint, types, tests) on it before resolving, so the reply cites a green result rather than a guess.
 
+**Intentional SAST findings on test code: dismiss the alert, don't contort the test.** A static-analysis finding (SonarCloud, CodeQL / GitHub Advanced Security) that fires on a *deliberate* test input — an SSRF test hitting `169.254.169.254`, a clear-text `http://…` URL a denial test asserts on, a synthetic secret fixture — is a false positive against the test's intent. Rewriting the test to satisfy the analyzer weakens the very case it exists to prove. Instead **dismiss the alert at its source**, which also clears the blocking `github-advanced-security` review thread that a plain reply cannot resolve:
+
+```bash
+# Find the alert number for the flagged file/rule, then dismiss:
+gh api repos/$R/code-scanning/alerts --jq '.[]? | {number, rule: .rule.id, path: .most_recent_instance.location.path}'
+gh api repos/$R/code-scanning/alerts/$N -X PATCH \
+  -f state=dismissed -f dismissed_reason='used in tests' \
+  -f dismissed_comment='Intentional test input — <one line why>.'
+```
+
+`dismissed_reason` is one of `false positive` / `won't fix` / `used in tests`; use `used in tests` for deliberate test inputs. SonarCloud has the equivalent "Won't fix / Safe" transition in its UI (auto-analysis ignores `sonar.issue.ignore.*`, so mark it there, not in config). Reply to the thread citing the dismissal, then resolve it.
+
 ### AI-authored commits on the branch are untrusted
 
 Distinct from a review *comment*: Copilot **Autofix**, Gemini "apply suggestion", and similar bot-authored **commits already pushed onto the PR branch** are patches, not settled work — they can carry real bugs, and they arrive looking done. In one `/pr-finish` run the autofix commits had (a) deleted a variable's initialization while keeping the line that reads it — an `UnboundLocalError` on every non-account query — and (b) added an unbounded `while True` pagination loop that later OOM-crashed the machine (see the *Cap memory when the fix activates or relies on a loop* bullet under *Fixing the failure*). Treat every bot commit like an untrusted patch:
@@ -924,6 +936,15 @@ gh api repos/{owner}/{repo}/issues/NUMBER/timeline --paginate \
 Also note: queue membership is GraphQL-only — `isInMergeQueue` /
 `mergeQueueEntry` are **not** `gh pr view --json` fields (the call errors);
 query `pullRequest { mergeQueueEntry { state position } }` via `gh api graphql`.
+
+**`autoMergeRequest: null` does NOT mean "not armed" on a merge-queue repo.**
+When you arm a queue PR, `gh pr merge --auto` prints *"merge strategy set by the
+merge queue"* and returns immediately — and `gh pr view --json autoMergeRequest`
+then reports `null`, because the queue owns the merge, not GitHub's auto-merge
+feature. Reading that `null` as "arming failed" and re-running `--auto` is a
+wasted round-trip (and can error "already queued"). Confirm the PR is enqueued
+via the GraphQL `mergeQueueEntry { state position }` or the timeline
+`added_to_merge_queue` event — never via `autoMergeRequest`.
 
 ### Signing Readiness (Preflight — Before Committing)
 
