@@ -93,7 +93,7 @@ Reply citing the evidence either way. When you applied a change, the reply must 
 
 ```bash
 # Find the alert number for the flagged file/rule, then dismiss:
-gh api repos/$R/code-scanning/alerts --jq '.[] | {number, rule: .rule.id, path: .most_recent_instance.location.path}'
+gh api repos/$R/code-scanning/alerts --jq '.[]? | {number, rule: .rule.id, path: .most_recent_instance.location.path}'
 gh api repos/$R/code-scanning/alerts/$N -X PATCH \
   -f state=dismissed -f dismissed_reason='used in tests' \
   -f dismissed_comment='Intentional test input — <one line why>.'
