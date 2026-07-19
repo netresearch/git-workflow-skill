@@ -380,6 +380,21 @@ Before nesting a `.bare` into an existing directory, check whether it already
 holds a **plain clone** — mixing the two layouts leaves a repo checkout *and* a
 worktree side by side in one directory.
 
+A reuse guard like `[ -d .bare ] || git clone --bare <url> .bare` silently *keeps*
+whatever `.bare` is already there — which may point at a **different remote** than
+you intend. Two repos can share a short name across hosts (GitHub
+`netresearch/renovate-config` vs GitLab `renovate/renovate-config`) with entirely
+different content, so a worktree off the wrong bare reads the wrong repo. After
+reusing or creating a `.bare`, verify the remote before trusting anything read
+from it:
+
+```bash
+git -C .bare remote get-url origin   # must match the intended remote
+```
+
+Skipping this once meant building an ADR off a *different* repo's config until a
+version/branch mismatch exposed it.
+
 ### Bare-Worktree Project Layout (Recommended)
 
 **One directory per branch; never switch branches in the same folder.**

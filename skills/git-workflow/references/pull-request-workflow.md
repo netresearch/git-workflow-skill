@@ -868,6 +868,15 @@ Before merging any PR, run this gate. If any check fails, stop and fix the under
 - [ ] **DCO sign-off** — every commit has a `Signed-off-by:` trailer matching `git config user.{name,email}` (required when the `probot/dco` check is enabled)
 - [ ] **No intermediate planning artifacts** — `bash skills/git-workflow/scripts/spec-cleanup-guard.sh` exits 0; superpowers specs/plans (`docs/superpowers/**`) and other scratch planning files must not reach the base branch (see "Spec-Cleanup Guard" below and `references/spec-cleanup.md`)
 
+### PR-green is not main-green — jobs gated on `push`/`merge_group` don't run on the PR
+
+A PR's checks are only the workflows that trigger on `pull_request`. A job gated on `push: [main]` (or the `merge_group` event) never runs on the PR, so a green PR does **not** clear it — the job fires *after* merge and can turn `main` red on a change the PR "passed". Before merging, diff each workflow's trigger against what actually ran on the PR; for any `push`/`merge_group`-only job (a deploy, a boot/smoke test, a container-compile), reproduce it locally on the merge result first.
+
+This bites hardest on dependency bumps. A resolver succeeding (`composer update` / `npm install` resolves cleanly) is **necessary but not sufficient**: a loose constraint can select a *released* sibling whose code predates compatibility with the new dependency, so it installs but fails at runtime.
+
+- Real case: a project bumped `nr-llm ^0.12 → ^0.22`. Every `pull_request` check passed. The `validate` job — gated on `push: main`, so absent from the PR — boots the app and compiles the DI container; post-merge it failed because a *released* sibling (`t3-cowriter v3.1.1`, constraint `nr-llm >=0.3 <1.0`) referenced a class the new `nr-llm` had removed. Resolution was green; the runtime compile was not. Recovery cost a sibling release plus a follow-up PR.
+- Verify the runtime path, not just resolution: run the actual boot/compile (or the exact `push:main`-only job) against the resolved tree locally before merging. For the class-not-found family, a fast proxy is to confirm every referenced upstream symbol still exists at the *resolved* version.
+
 ### Auto-Merge / Merge-Queue Arming Gate
 
 `gh pr merge --auto` is a **deferred merge with no human in the loop** — and a
