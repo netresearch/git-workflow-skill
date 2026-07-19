@@ -389,7 +389,7 @@ reusing or creating a `.bare`, verify the remote before trusting anything read
 from it:
 
 ```bash
-git -C <repo>/.bare remote get-url origin   # must match the intended remote
+git -C .bare remote get-url origin   # must match the intended remote
 ```
 
 Skipping this once meant building an ADR off a *different* repo's config until a
