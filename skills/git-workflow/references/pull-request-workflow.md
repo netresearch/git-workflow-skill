@@ -1344,8 +1344,9 @@ glab api "projects/$P/merge_requests/$M/discussions" \
   --jq '[.[] | select(.individual_note|not)
          | {id, resolved: .notes[0].resolved, author: .notes[0].author.username}]'
 
-# (4) what protects the target branch (GitLab's answer to rulesets)
-glab api "projects/$P/protected_branches/main"
+# (4) what protects the target branch (GitLab's answer to rulesets).
+#     Use the target_branch from (1) — it is not always the default branch.
+glab api "projects/$P/protected_branches/<target-branch>"
 
 # (5) pipeline on the MR head SHA
 glab ci status --branch <source-branch>
@@ -1409,8 +1410,8 @@ procedure calls for a rebase, drive it locally and fetch the base explicitly
 then fails with "stale info"):
 
 ```bash
-git fetch origin main:refs/remotes/origin/main
-git rebase origin/main
+git fetch origin <target-branch>:refs/remotes/origin/<target-branch>
+git rebase origin/<target-branch>
 git push --force-with-lease origin <source-branch>
 ```
 
