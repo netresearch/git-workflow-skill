@@ -1312,6 +1312,114 @@ git push origin main
 echo "PR #$PR_NUMBER merged via fast-forward"
 ```
 
+## GitLab: the same gate with `glab` (merge requests)
+
+Everything above assumes GitHub. GitLab has the same concepts under different
+field names, a different CLI and a different thread model — translate it, don't
+improvise mid-run. Export `GITLAB_HOST` (or pass `--hostname`) for self-managed
+instances.
+
+### One-block preflight
+
+The GitLab analogue of the `gh pr view` + rulesets + `reviewThreads` block.
+Run it once, up front, and re-run only after a state-changing push. Note that
+`glab api` has no `--jq` flag (verified on glab 1.95.0) — unlike `gh api`, pipe
+its output to `jq`:
+
+```bash
+export GITLAB_HOST=git.example.com
+P=<group>%2F<project>          # URL-encoded path, or the numeric project id
+M=<mr_iid>
+
+# (1) MR state and WHY it is blocked. detailed_merge_status names the blocker;
+#     merge_status alone does not.
+glab api "projects/$P/merge_requests/$M" \
+  | jq '{state,draft,merge_status,detailed_merge_status,has_conflicts,
+         blocking_discussions_resolved,user_notes_count,sha,target_branch,title}'
+
+# (2) approval rule and who approved (approvals_required null = no rule)
+glab api "projects/$P/merge_requests/$M/approvals" \
+  | jq '{approvals_required,approved_by:[.approved_by[].user.username]}'
+
+# (3) threads. individual_note==true is a plain comment, not a thread.
+glab api "projects/$P/merge_requests/$M/discussions" \
+  | jq '[.[] | select(.individual_note|not)
+         | {id, resolved: .notes[0].resolved, author: .notes[0].author.username}]'
+
+# (4) what protects the target branch (GitLab's answer to rulesets).
+#     Use the target_branch from (1) — it is not always the default branch.
+glab api "projects/$P/protected_branches/<target-branch>"
+
+# (5) pipeline on the MR head SHA
+glab ci status --branch <source-branch>
+
+# (6) how this project merges — so you do not squash by accident
+glab api "projects/$P" | jq '{merge_method,squash_option,
+  only_allow_merge_if_pipeline_succeeds,remove_source_branch_after_merge}'
+```
+
+### Field mapping
+
+| GitHub | GitLab |
+|---|---|
+| `mergeStateStatus` (`BLOCKED` / `CLEAN`) | `detailed_merge_status` (`draft_status`, `not_approved`, `discussions_not_resolved`, `ci_must_pass`, `mergeable`, …) |
+| `mergeable` | `merge_status` + `has_conflicts` |
+| `reviewDecision` | `approvals_required` + `approved_by` (`/approvals`) |
+| GraphQL `reviewThreads[].isResolved` | `/discussions` → `notes[0].resolved`; aggregate flag `blocking_discussions_resolved` |
+| `resolveReviewThread` mutation | `PUT /merge_requests/:iid/discussions/:id?resolved=true` |
+| Rulesets (`/rules/branches/main`) | `/protected_branches/:name` + approval rules |
+| `statusCheckRollup` | `glab ci status` / `/pipelines` |
+| Draft PR | `draft: true` → `glab mr update <iid> --ready` |
+
+`detailed_merge_status: draft_status` means the **only** blocker is the draft
+flag. That is the most common "the MR refuses to merge and nothing looks wrong"
+case — check it before hunting for approvals or failing jobs.
+
+### Replying to and resolving a thread
+
+Reply *into* the thread, never as a new top-level comment, then resolve and
+verify — the same discipline as the GitHub GraphQL flow:
+
+```bash
+glab api -X POST "projects/$P/merge_requests/$M/discussions/<discussion_id>/notes" \
+  -f body="Fixed in <sha>. <what changed and why>"
+
+glab api -X PUT "projects/$P/merge_requests/$M/discussions/<discussion_id>?resolved=true"
+
+# verify — the aggregate flag must be true before merging
+glab api "projects/$P/merge_requests/$M" | jq .blocking_discussions_resolved
+```
+
+### Merge
+
+```bash
+# Check merge_method FIRST (preflight 6): "merge" -> merge commit,
+# "ff" -> fast-forward only, "rebase_merge" -> semi-linear.
+# Never pass --squash unless the user asked for it.
+glab mr merge "$M" --remove-source-branch --yes
+```
+
+`glab mr merge` waits for the pipeline and refuses while it is still running, so
+a green pipeline is a precondition of the command rather than something to
+re-check afterwards.
+
+### Rebase when the MR is behind
+
+GitLab will happily report `mergeable` while the branch is behind the target —
+being behind is not a blocker there, unlike a GitHub merge queue. If the
+procedure calls for a rebase, drive it locally and fetch the base explicitly
+(bare-repo worktrees often lack `remote.origin.fetch`, and `--force-with-lease`
+then fails with "stale info"):
+
+```bash
+git fetch origin <target-branch>:refs/remotes/origin/<target-branch>
+git rebase origin/<target-branch>
+git push --force-with-lease origin <source-branch>
+```
+
+Re-run the preflight afterwards: the rebase produces a new head SHA, so the
+pipeline result you looked at no longer applies.
+
 ## Full PR Lifecycle Checklist
 
 Complete end-to-end workflow for merging a PR, from CI verification through post-merge cleanup.
