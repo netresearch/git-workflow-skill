@@ -1322,7 +1322,9 @@ instances.
 ### One-block preflight
 
 The GitLab analogue of the `gh pr view` + rulesets + `reviewThreads` block.
-Run it once, up front, and re-run only after a state-changing push:
+Run it once, up front, and re-run only after a state-changing push. Note that
+`glab api` has no `--jq` flag (verified on glab 1.95.0) — unlike `gh api`, pipe
+its output to `jq`:
 
 ```bash
 export GITLAB_HOST=git.example.com
@@ -1332,16 +1334,16 @@ M=<mr_iid>
 # (1) MR state and WHY it is blocked. detailed_merge_status names the blocker;
 #     merge_status alone does not.
 glab api "projects/$P/merge_requests/$M" \
-  --jq '{state,draft,merge_status,detailed_merge_status,has_conflicts,
+  | jq '{state,draft,merge_status,detailed_merge_status,has_conflicts,
          blocking_discussions_resolved,user_notes_count,sha,target_branch,title}'
 
 # (2) approval rule and who approved (approvals_required null = no rule)
 glab api "projects/$P/merge_requests/$M/approvals" \
-  --jq '{approvals_required,approved_by:[.approved_by[].user.username]}'
+  | jq '{approvals_required,approved_by:[.approved_by[].user.username]}'
 
 # (3) threads. individual_note==true is a plain comment, not a thread.
 glab api "projects/$P/merge_requests/$M/discussions" \
-  --jq '[.[] | select(.individual_note|not)
+  | jq '[.[] | select(.individual_note|not)
          | {id, resolved: .notes[0].resolved, author: .notes[0].author.username}]'
 
 # (4) what protects the target branch (GitLab's answer to rulesets).
@@ -1352,7 +1354,7 @@ glab api "projects/$P/protected_branches/<target-branch>"
 glab ci status --branch <source-branch>
 
 # (6) how this project merges — so you do not squash by accident
-glab api "projects/$P" --jq '{merge_method,squash_option,
+glab api "projects/$P" | jq '{merge_method,squash_option,
   only_allow_merge_if_pipeline_succeeds,remove_source_branch_after_merge}'
 ```
 
@@ -1385,7 +1387,7 @@ glab api -X POST "projects/$P/merge_requests/$M/discussions/<discussion_id>/note
 glab api -X PUT "projects/$P/merge_requests/$M/discussions/<discussion_id>?resolved=true"
 
 # verify — the aggregate flag must be true before merging
-glab api "projects/$P/merge_requests/$M" --jq .blocking_discussions_resolved
+glab api "projects/$P/merge_requests/$M" | jq .blocking_discussions_resolved
 ```
 
 ### Merge
