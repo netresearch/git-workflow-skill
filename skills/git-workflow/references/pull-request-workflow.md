@@ -18,6 +18,32 @@ gh repo view OWNER/REPO --json defaultBranchRef --jq '.defaultBranchRef.name'
 Assuming the wrong name silently pushes to (or creates) the wrong branch, or
 targets a PR at a branch that isn't the integration branch.
 
+## After a Detour to Another PR, Switch Back — and Verify
+
+Working two PRs at once, a fix for PR B often means checking out B's branch
+mid-task. Nothing switches you back afterwards, and the next edits land on B
+while you believe you are on A. Because `git status` looks normal — modified
+tracked files, no conflict — the mistake surfaces only later, e.g. when a value
+you "already added" reads back as absent.
+
+Re-assert the branch before resuming edits, and again before staging:
+
+```bash
+git branch --show-current    # cheap; run it after ANY cross-PR detour
+```
+
+If edits did land on the wrong branch, move them rather than redoing them:
+
+```bash
+git stash push -m "misplaced work" -- <paths>   # path-scoped: leaves the branch's own work alone
+git checkout <intended-branch>
+git stash pop
+```
+
+Prefer a separate worktree per PR (`references/advanced-git.md`) when the two
+are worked in parallel — then no checkout is shared and the detour cannot
+misplace anything.
+
 ## Prefer the `gh` CLI / GitHub MCP Over Raw API or Web UI
 
 For GitHub operations (PRs, issues, reviews, releases), reach for `gh` or the
