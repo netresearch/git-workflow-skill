@@ -198,6 +198,40 @@ git apply "$PATCH"
 
 Then re-run the commit (the hook envs are now built, so it is fast).
 
+### Formatter hooks rewrite files — the first commit always bounces
+
+A hook that *reformats* rather than merely reports (`black`, `isort`,
+`ruff format`, `prettier`, `shfmt`, `end-of-file-fixer`) rewrites the staged
+file and then **fails the commit**, because what it wrote is not what you
+staged:
+
+```
+black....................................................................Failed
+- hook id: black
+- files were modified by this hook
+reformatted tests/test_completion.py
+```
+
+The commit did **not** happen. The fix is `git add` the now-reformatted files
+and commit again — the second run passes because the file is already formatted.
+Budget two `commit` invocations, and never `--amend` here (see
+"Never amend a commit with pre-commit-hook failures" in
+`commit-conventions.md`): the first commit does not exist, so `--amend` would
+rewrite the *previous* one.
+
+To avoid the bounce entirely, run the formatter before committing — matching
+whatever the repo actually uses, which is not always the one you expect:
+
+```bash
+# read the hook ids the repo declares, then run those
+yq '.repos[].hooks[].id' .pre-commit-config.yaml
+pre-commit run black isort --files <changed files>   # or: ruff format . && ruff check .
+```
+
+Checking the config matters: a project can use `black`+`isort` where you assumed
+`ruff format`, and a habit built around only one of them still bounces on every
+commit in the other.
+
 ### `--no-verify` only after confirming CI parity
 
 A local hook the CI pipeline does **not** run is not a real merge gate (see
