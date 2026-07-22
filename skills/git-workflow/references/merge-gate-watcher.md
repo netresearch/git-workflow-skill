@@ -72,6 +72,15 @@ Pitfalls baked in: `grep -c` exits 1 on zero matches (`|| true`); decide hard-fa
 
 **Review bots converge over multiple rounds.** Every push invalidates the review (ruleset `copilot_code_review` needs a fresh review on the latest head), so re-request after each push: `gh api repos/$R/pulls/$PR/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`. Later rounds may flag UNCHANGED lines adjacent to the diff (latent legacy bugs) — triage each finding on its merits; expect 3–6 rounds on large refactor PRs, with finding severity decreasing per round. Re-arm the watcher after every push.
 
+**A bot review can be a failure notice, not a review — read the body, not the state.** `copilot-pull-request-reviewer` posts its quota and capacity failures as an ordinary `COMMENTED` review whose body is `Copilot was unable to review this pull request because the user who requested the review has reached their quota limit.` Every state-based check reads that as a satisfied gate: `reviews` is non-empty, `reviewThreads` is `0`, inline `comments` is `0`, and `mergeStateStatus` is `CLEAN` — indistinguishable from a clean review that found nothing. Before treating a bot review as landed, read the body:
+
+```bash
+gh pr view $PR --repo $R --json reviews \
+  --jq '.reviews[] | select(.author.login|test("copilot")) | .body'
+```
+
+Treat `unable to review` as **no review** and re-request; if the re-request returns the same notice the quota is still exhausted, and merging means merging unreviewed. Check the repo's recent merged PRs the same way before concluding that a bot review is the local norm — a quota outage can span every PR in a window, so "the last three merged PRs also show COMMENTED" is not evidence they were reviewed.
+
 **On a docs/prose PR the loop does not decay — it must be actively terminated.** The bot re-reads the whole changed file each round and keeps surfacing a *new cosmetic* nit (wording, an illustrative example value, a spelling), so pushing a fix just triggers another round almost indefinitely. To converge: once a finding is purely cosmetic and defensible, **reply on the thread and resolve it *without* a new commit** — no push means no re-review means no new nit. Reserve fresh pushes for substantive findings; batch several real fixes into one push rather than one-per-thread.
 
 ## Auto-merge armed + CLEAN but never enqueued: disable/re-enable to nudge
