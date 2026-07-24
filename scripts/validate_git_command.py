@@ -4,9 +4,9 @@ PreToolUse hook to validate git commands for best practices.
 Checks conventional commits, branch naming, and common mistakes.
 """
 
-import sys
-import re
 import json
+import re
+import sys
 
 # Conventional commit pattern
 CONVENTIONAL_COMMIT_PATTERN = (
@@ -139,7 +139,7 @@ def check_command(command: str) -> list[dict]:
 def main():
     try:
         input_data = sys.stdin.read()
-    except Exception:
+    except Exception:  # noqa: BLE001 - git hook entry point: any stdin read failure is a no-op
         return
 
     if not input_data:
