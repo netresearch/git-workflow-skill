@@ -522,6 +522,24 @@ After any merge, verify structural invariants on the **merged base** (e.g. that
 every cross-reference still resolves), not just on the branch — that is the only
 check that catches a regression introduced by the merge itself.
 
+### Cross-Worktree Static Analysis Gives False Positives
+
+Running a static analyzer (Rector, php-cs-fixer, PHPStan, ESLint) from ONE
+worktree against source files in ANOTHER resolves symbols through the *running*
+worktree's autoloader/vendor, not the branch under test. When the other branch
+changed a method signature, added an interface method, or renamed a symbol, the
+analyzer sees a mismatch that does not exist on that branch — e.g. Rector's
+`RemoveExtraParametersRector` "removing" arguments that match the branch's own
+wider signature, or a type-resolution rule firing (or staying silent) because a
+new interface method is absent from — or present only in — the running worktree.
+
+This bites hardest in bare+worktree layouts where only one worktree has a built
+`.Build/vendor` (or `node_modules`), so cross-worktree runs are the only local
+option. Treat each such finding as suspect: real, or an artifact of resolving
+against the wrong tree? CI runs each branch in isolation with its own install,
+so **CI is authoritative** — reproduce a doubtful finding by building deps inside
+the target worktree, or defer to CI, rather than "fixing" a phantom.
+
 ### Use Cases
 
 ```bash

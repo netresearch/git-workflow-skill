@@ -39,3 +39,22 @@ Two recurring failure modes:
 Use plain labels, not graded ones: "Breaking change", "Tests", "Limitations" —
 not "Tests (all green)" or "Breaking change (honest)". If a limitation's cause
 matters, it is already stated in the item.
+
+## Line wrapping — GitHub comment surfaces vs `.md` files
+
+Separate from tone: the artifacts above render through two different Markdown
+pipelines, and hard-wrapping prose is right in one and wrong in the other.
+
+- **`.md` files** (README, CHANGELOG, docs) render as CommonMark: a single
+  newline inside a paragraph collapses to a **space**, so hard-wrapping the
+  source at ~80 columns reflows invisibly on render. Match the file's existing
+  wrap.
+- **GitHub comment surfaces** — PR/MR descriptions, review comments, issue/ticket
+  bodies, and **release notes** — render with `breaks: true`: every single
+  newline becomes a `<br>`. Hard-wrapping there carries the breaks into the
+  rendered page as ragged mid-sentence line breaks. Write each paragraph and list
+  item as ONE long line; use blank lines only for real paragraph/item boundaries.
+
+Do not wrap a release body or PR/comment the way you wrap a `.md` file. Fix one
+already published with hard-wraps via `gh release edit <tag> --notes-file <file>`
+(release bodies stay editable) or by editing the PR/comment.
