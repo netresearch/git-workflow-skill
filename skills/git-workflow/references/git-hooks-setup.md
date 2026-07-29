@@ -152,6 +152,39 @@ against the repo root, before inspecting it.
   make the bypass the default; fix the hook environment or commit from the
   primary checkout when possible.
 
+### Distinguish "the hook is broken" from "the check failed"
+
+The bypass above is for a hook that cannot *run*. A hook that ran fine and
+reported a genuine failure is a different situation with the same exit code, and
+conflating them turns the sanctioned bypass into a habit.
+
+Third case, easy to misread as either: the hook ran, the check ran, and the
+check failed for a reason that lives in the **environment**, not the change.
+Tells:
+
+- `Doctrine\DBAL\Exception\DriverException: could not find driver` — the host
+  has no `pdo_mysql`; the container does.
+- `Container /path/var/cache/dev/App_KernelDevDebugContainer.xml does not exist`
+  — `phpstan-symfony` needs a warmed container: `php bin/console cache:warmup`
+  before the analysis, not a baseline entry.
+- A failure count that does not move when you revert your change.
+
+The fix is the **venue**, not the flag. Run the identical gate where the
+environment is complete — usually the project's own compose service:
+
+```bash
+docker compose run --rm app-e2e php -d memory_limit=1G bin/phpunit --testsuite unit --no-coverage
+```
+
+Only after that passes does the shim bypass apply, and say in the commit or the
+PR which gate ran where. Reaching for `--no-verify` on this class hides a
+result you could have had.
+
+Watch for a cold-start race when you script this: a suite started immediately
+after `docker compose up -d` can fail one or two DB-dependent tests while the
+database is still accepting connections. Re-run once against the warm stack
+before believing the failure.
+
 ### Fresh worktree: missing deps and stale `hooksPath`
 
 A freshly-created worktree often breaks pre-commit/pre-push hooks — and can even

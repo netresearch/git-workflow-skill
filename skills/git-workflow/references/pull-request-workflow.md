@@ -968,6 +968,31 @@ gh api repos/{owner}/{repo}/issues/NUMBER/timeline --paginate \
 # removed_from_merge_queue with NO merged event            -> real silent drop; re-arm.
 ```
 
+### "Never merge Dependabot/Renovate by hand" presumes a deps workflow exists
+
+Leaving bot PRs alone is right *because* an auto-merge workflow lands them once
+they are green. Where no such workflow is installed, the rule has no mechanism
+behind it and simply strands the PRs. One repo in a sweep carried **12 open bot
+PRs** — including a `tar` security update sitting `CLEAN` and untouched for five
+weeks — because its `.github/workflows/` held only `ci.yml` and a publish
+workflow.
+
+Check for the mechanism before deferring to it:
+
+```bash
+gh api "repos/$R/contents/.github/workflows" --jq '.[].name'
+```
+
+- **A deps auto-merge workflow exists** → the rule applies. Do not merge by
+  hand; bring the PR green and let the workflow land it. If it is green and
+  still open, the workflow ran before the checks passed — re-run it rather than
+  merging (`gh run rerun <id>` on that workflow's run for the PR's head SHA).
+- **No such workflow** → the rule does not apply. Merging bot PRs by hand is not
+  forbidden, it is simply unautomated: report the stranded PRs and the missing
+  automation instead of leaving them to rot. Flag security updates and majors
+  separately — a `tar` advisory fix and a `jest` v30 major do not carry the same
+  risk and should not be swept together.
+
 Also note: queue membership is GraphQL-only — `isInMergeQueue` /
 `mergeQueueEntry` are **not** `gh pr view --json` fields (the call errors);
 query `pullRequest { mergeQueueEntry { state position } }` via `gh api graphql`.
