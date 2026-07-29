@@ -177,6 +177,39 @@ git commit --allow-empty -S -m "chore: signing probe" && git log -1 --format='%G
 git switch - && git branch -D tmp/sign-probe
 ```
 
+### Verifying a Signed Tag
+
+A tag needs two properties, and they fail independently:
+
+```bash
+git for-each-ref refs/tags/v1.2.3 --format='%(objecttype)'   # expect: tag, not commit
+git tag -v v1.2.3
+```
+
+`objecttype: commit` means a **lightweight** tag — created without `-a`/`-s`,
+carrying no signature and no tagger. Many release pipelines reject these
+outright, and `git tag -v` on one reports an error that reads like a bad
+signature rather than a missing one.
+
+**Do not grep for `Good signature`.** The wording depends on the signing
+backend, and an SSH-signed tag does not use that phrase:
+
+| Backend | Output |
+|---|---|
+| GPG | `Good signature from "Name <mail>"` |
+| SSH (`gpg.format=ssh`) | `Good "git" signature for mail with ED25519 key SHA256:…` |
+
+With `gpg.format=ssh` set — increasingly the default in this org — a check for
+`Good signature` returns nothing and a correctly signed tag looks unsigned.
+Match on both, or on the object type plus a looser pattern:
+
+```bash
+git tag -v v1.2.3 2>&1 | grep -qE 'Good ("git" )?signature' && echo signed
+```
+
+The same applies to commits: `git log --format='%G?'` returning `G` is the
+backend-independent check, and is what to use in scripts.
+
 ## Atomic Commits
 
 Each commit should be a **single, self-contained logical change** that builds and passes tests independently.
