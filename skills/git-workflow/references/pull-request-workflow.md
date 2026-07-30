@@ -1454,6 +1454,24 @@ glab mr merge "$M" --remove-source-branch --yes
 a green pipeline is a precondition of the command rather than something to
 re-check afterwards.
 
+**The merge itself is asynchronous** — the command returns before the target
+branch has moved. A `git pull` fired right after races the server-side merge
+and can deliver the *pre-merge* tip while the MR already reports
+`state=merged`; anything derived from that checkout (a release tag, a branch
+cut from "main") then pins the old commit. One session tagged `v1.1.0` on the
+pre-merge tip this way and the tag pipeline published an image without the
+feature. Before tagging or branching off a freshly merged target:
+
+```bash
+# the remote target must equal the MR's merge commit
+test "$(git ls-remote origin "$TARGET" | cut -f1)" \
+   = "$(glab api "projects/$P/merge_requests/$M" | jq -r .merge_commit_sha)"
+```
+
+And never swallow the pull's outcome (`git pull --ff-only 2>&1 | tail -1`
+hides a refused fast-forward) — confirm with `git rev-parse HEAD` that the
+checkout actually sits on the expected commit.
+
 ### Rebase when the MR is behind
 
 GitLab will happily report `mergeable` while the branch is behind the target —
