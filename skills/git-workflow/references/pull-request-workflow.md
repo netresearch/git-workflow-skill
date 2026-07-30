@@ -127,6 +127,27 @@ gh api repos/$R/code-scanning/alerts/$N -X PATCH \
 
 `dismissed_reason` is one of `false positive` / `won't fix` / `used in tests`; use `used in tests` for deliberate test inputs. SonarCloud has the equivalent "Won't fix / Safe" transition in its UI (auto-analysis ignores `sonar.issue.ignore.*`, so mark it there, not in config). Reply to the thread citing the dismissal, then resolve it.
 
+**A SAST finding you actually fixed leaves its thread open too — and that thread still blocks the merge.** The case above is the *false positive*. The opposite case looks identical from `mergeStateStatus` and must not be handled the same way: you push a real fix, the analyzer re-scans and closes the issue, the quality gate flips to green — and the `github-advanced-security` review thread stays open, holding the PR at `BLOCKED` with zero failing checks and nothing obvious to fix. The thread is a snapshot of the commit it was posted against; a re-scan does not retract it.
+
+Before assuming either case, ask the analyzer which one you are in:
+
+```bash
+# SonarCloud: is this issue actually resolved on the PR?
+# Header auth, not `curl -u` — keeps the token out of the process list, and
+# secret scanners flag the `-u` form on sight.
+curl -s -H "Authorization: Bearer $SONAR_TOKEN" \
+  "https://sonarcloud.io/api/issues/search?issues=$KEY&pullRequest=$PR&componentKeys=$PROJECT" \
+  | jq '.issues[] | {rule, status, resolution}'
+# -> {"status":"CLOSED","resolution":"FIXED"}  = you fixed it
+# -> {"status":"OPEN"}                          = not fixed; fix or dismiss
+```
+
+The issue key is embedded in the thread body as `<!--SONAR_ISSUE_KEY:...-->`. For CodeQL, `gh api repos/$R/code-scanning/alerts/$N --jq '{state, fixed_at, dismissed_reason}'` answers the same question.
+
+On `CLOSED / FIXED`, treat it as an ordinary already-fixed bot thread: reply with the fixing SHA and resolve. **Do not dismiss the alert** — dismissal records "we decided not to act" on a finding you did act on, which is a false audit trail and hides the rule from firing again. Dismissal is only for the intentional-finding case above.
+
+Observed 2026-07-30 on a `docker:S8544` finding: gate `OK`, 0 open issues, 0 failing checks, `mergeStateStatus: BLOCKED` on one stale thread — a merge that looked inexplicably stuck until the thread was read.
+
 ### AI-authored commits on the branch are untrusted
 
 Distinct from a review *comment*: Copilot **Autofix**, Gemini "apply suggestion", and similar bot-authored **commits already pushed onto the PR branch** are patches, not settled work — they can carry real bugs, and they arrive looking done. In one `/pr-finish` run the autofix commits had (a) deleted a variable's initialization while keeping the line that reads it — an `UnboundLocalError` on every non-account query — and (b) added an unbounded `while True` pagination loop that later OOM-crashed the machine (see the *Cap memory when the fix activates or relies on a loop* bullet under *Fixing the failure*). Treat every bot commit like an untrusted patch:
