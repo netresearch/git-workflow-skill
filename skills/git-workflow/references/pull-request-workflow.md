@@ -1495,8 +1495,24 @@ checkout actually sits on the expected commit.
 
 ### Rebase when the MR is behind
 
-GitLab will happily report `mergeable` while the branch is behind the target —
-being behind is not a blocker there, unlike a GitHub merge queue. If the
+On projects with `merge_method: rebase_merge` (semi-linear history) a behind
+branch IS a blocker: `glab mr merge` fails with a bare
+`{message: 405 Method Not Allowed}` and the MR shows
+`detailed_merge_status: need_rebase`. The light path is a server-side rebase —
+no local fetch dance needed:
+
+```bash
+glab mr rebase <MR>
+# poll until the status leaves need_rebase (it passes through "checking")
+glab mr view <MR> --output json | jq -r '.detailed_merge_status'
+```
+
+The rebase creates a new head SHA, so wait for the freshly triggered pipeline
+before retrying the merge.
+
+On plain merge-commit projects GitLab will happily report `mergeable` while
+the branch is behind the target — being behind is not a blocker there, unlike
+a GitHub merge queue. If the
 procedure calls for a rebase, drive it locally and fetch the base explicitly
 (bare-repo worktrees often lack `remote.origin.fetch`, and `--force-with-lease`
 then fails with "stale info"):
