@@ -109,6 +109,11 @@ against the repo root, before inspecting it.
   falls back to `<git-dir>/hooks` otherwise). Works with captainhook's plugin in place, so other
   Composer plugins (phpstan/extension-installer, TYPO3 composer installers, etc.) continue to
   auto-register normally.
+- **Fix (scoped alternative)**: `composer config extra.captainhook.disable-plugin true`
+  before the install disables ONLY the captainhook plugin — all other Composer plugins
+  (phpstan/extension-installer, TYPO3 installers, …) keep working. It edits `composer.json`,
+  so revert it before committing (`git checkout composer.json`); useful for one-off
+  installs in throwaway worktrees where hooks are not wanted anyway.
 - **Fix (last-resort fallback)**: `composer install --no-plugins` — only if the hooks-dir
   workaround above doesn't resolve it. Be aware this disables *all* Composer plugins for that
   install, which has broader side effects: phpstan extensions won't auto-register, TYPO3
