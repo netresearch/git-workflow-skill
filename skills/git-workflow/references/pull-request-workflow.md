@@ -935,8 +935,9 @@ bottom-up — but two GitHub behaviours break the naive loop:
    the default branch (observed 2026-08-01: child PR closed mid-stack, its
    base still pointing at the deleted branch).
    Recovery, if it happens: re-push the deleted base branch (the local copy
-   still has it), `gh pr reopen <child>`, then `gh pr edit <child> --base main`
-   — the base of a *closed* PR cannot be edited, so reopen first.
+   still has it), `gh pr reopen <CHILD_NUMBER>`, then
+   `gh pr edit <CHILD_NUMBER> --base main` — the base of a *closed* PR cannot
+   be edited, so reopen first.
 2. **`mergeStateStatus` needs time and only `CLEAN` is trustworthy.** After a
    retarget it cycles through `UNKNOWN`/`BLOCKED`/`UNSTABLE` before settling.
    `UNSTABLE` means a **non-required** check is failing — decide explicitly
@@ -946,9 +947,9 @@ bottom-up — but two GitHub behaviours break the naive loop:
 The robust bottom-up sequence for each child after its parent merged:
 
 ```bash
-gh pr edit  <child> --base main          # retarget FIRST, while everything is open
+gh pr edit <CHILD_NUMBER> --base main    # retarget FIRST, while everything is open
 # wait until mergeStateStatus == CLEAN   # separate step — state recomputes async
-gh pr merge <child> --merge              # NO --delete-branch mid-stack
+gh pr merge <CHILD_NUMBER> --merge       # NO --delete-branch mid-stack
 # verify: git ls-remote origin main  ==  the PR's mergeCommit.oid
 ```
 
