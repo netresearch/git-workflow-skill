@@ -68,6 +68,7 @@ collect() {
       mergeCommitAllowed rebaseMergeAllowed squashMergeAllowed autoMergeAllowed
       pullRequest(number:$pr){
         number title state isDraft mergeable mergeStateStatus reviewDecision
+        author{login}
         baseRefName headRefName headRefOid isCrossRepository
         reviews(last:50){ nodes{ author{login} state commit{oid} } }
         reviewRequests(first:20){ nodes{ requestedReviewer{
@@ -115,7 +116,12 @@ evaluate() {
         | .parameters.required_status_checks[]?.context]) as $required
     | ([$r[]? | .type] | unique) as $ruletypes
     | (($ruletypes | index("copilot_code_review")) != null) as $needs_copilot
-    | ([$p.reviews.nodes[]? | select(.commit.oid == $head)]) as $head_reviews
+    | ($p.author.login) as $author
+    # A review by the PR author is not a review. Replying to a thread registers
+    # as COMMENTED by the author, which would otherwise satisfy the gate.
+    | ([$p.reviews.nodes[]? | select(.commit.oid == $head)
+                           | select(.author.login != $author)]) as $head_reviews
+    | ([$head_reviews[] | select(.author.login | test("copilot"; "i"))]) as $copilot_on_head
     | ([$p.reviewThreads.nodes[]? | select(.isResolved == false)]) as $unresolved
     | ($checks | map(select(.state=="FAIL"))) as $failing
     | ($checks | map(select(.state=="PENDING"))) as $pending
@@ -142,6 +148,8 @@ evaluate() {
         rulesets: $ruletypes,
         reviews_on_head: ($head_reviews|map({(.author.login): .state})|add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
+        has_copilot_review_on_head: (($copilot_on_head|length) > 0),
+        author: $author,
         requested_reviewers: [$p.reviewRequests.nodes[]?.requestedReviewer|(.login // .slug)],
         unresolved_threads: ($unresolved|length),
         threads: [$unresolved[]|{threadId: .id,
@@ -177,8 +185,8 @@ evaluate() {
          elif $s.unresolved_threads > 0 then
            {action:"resolve-threads", why:"\($s.unresolved_threads) unresolved review thread(s)",
             threads:$s.threads}
-         elif ($needs_copilot and ($s.has_review_on_head|not)) then
-           {action:"request-review", why:"ruleset requires a code review and none exists on \($s.headOid[0:8])",
+         elif ($needs_copilot and ($s.has_copilot_review_on_head|not)) then
+           {action:"request-review", why:"copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — a push invalidates the previous review, it stays on the old commit",
             cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
          elif (($s.has_review_on_head|not) and ($s.reviewDecision == "")) then
            {action:"request-review", why:"no human or bot review on the current head — do not merge unreviewed",
