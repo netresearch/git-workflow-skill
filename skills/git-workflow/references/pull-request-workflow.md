@@ -126,9 +126,9 @@ and back again all work, and take a couple of minutes:
 
 ```bash
 run_it > after.txt
-git checkout origin/main -- src/Thing.php   # old behaviour
+git checkout <base> -- src/Thing.php   # old behaviour; <base> is the PR's target, not always main
 run_it > before.txt
-git checkout HEAD -- src/Thing.php          # restore; verify with git status
+git checkout HEAD -- src/Thing.php     # restore; verify with git status
 ```
 
 Say in the body that the transcripts are captured output rather than
@@ -1001,8 +1001,12 @@ Where a pipeline publishes a test report, read it — the two disagree more ofte
 they should, and the report is the stronger statement.
 
 ```bash
+# Same placeholders as the GitLab section below: GITLAB_HOST, $P the URL-encoded
+# project path or numeric id, $TOKEN a PRIVATE-TOKEN.
+export GITLAB_HOST=git.example.com
+
 # GitLab: the report, not just the job list
-curl -s -H "PRIVATE-TOKEN: $TOKEN" "$HOST/api/v4/projects/$ID/pipelines/$PIPELINE/test_report" \
+curl -s -H "PRIVATE-TOKEN: $TOKEN" "https://$GITLAB_HOST/api/v4/projects/$P/pipelines/$PIPELINE/test_report" \
   | jq '{total_count, failed_count, suites: [.test_suites[] | {name, failed_count, total_count}]}'
 
 # GitHub: the rollup hides startup failures entirely — see the section below
@@ -1023,7 +1027,7 @@ Two ways a check stops being a gate without anyone noticing:
   block:
 
 ```bash
-curl -s -H "PRIVATE-TOKEN: $TOKEN" "$HOST/api/v4/projects/$ID/pipelines/$PIPELINE/jobs" \
+curl -s -H "PRIVATE-TOKEN: $TOKEN" "https://$GITLAB_HOST/api/v4/projects/$P/pipelines/$PIPELINE/jobs" \
   | jq -r '.[] | select(.allow_failure == false) | "\(.status)  \(.name)"'
 ```
 
@@ -1664,7 +1668,7 @@ Before concluding that a project takes issues, forks or merge requests only from
 members, read the project's own capability flags:
 
 ```bash
-curl -s -L -H "PRIVATE-TOKEN: $TOKEN" "$HOST/api/v4/projects/$ID" \
+curl -s -L -H "PRIVATE-TOKEN: $TOKEN" "https://$GITLAB_HOST/api/v4/projects/$P" \
   | jq '{issues_enabled, merge_requests_enabled, forking_access_level, permissions}'
 ```
 
