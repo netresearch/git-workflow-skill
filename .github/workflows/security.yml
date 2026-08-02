@@ -1,16 +1,36 @@
 name: Security
 
+# Aggregated security scans for skill repos: secret scanning (betterleaks),
+# workflow static analysis (zizmor), dependency review on PRs, and a composer
+# audit (every skill repo ships a composer.json for split-licensing /
+# Packagist distribution).
+#
+# Top-level `permissions: {}` denies everything by default; each reusable
+# caller job re-declares the exact union its reusable's jobs require, so the
+# token passed to each reusable is fully explicit and never relies on the
+# repo default. This is the same pattern proven in netresearch/.github's
+# go-app template (top {} + per-job security-events: write).
+
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
+
+permissions: {}
 
 jobs:
   gitleaks:
     uses: netresearch/.github/.github/workflows/gitleaks.yml@main
-    secrets:
-      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+    permissions:
+      contents: read
+      security-events: write
+
+  zizmor:
+    uses: netresearch/.github/.github/workflows/zizmor.yml@main
+    permissions:
+      contents: read
+      security-events: write
 
   dependency-review:
     if: github.event_name == 'pull_request'
@@ -21,3 +41,6 @@ jobs:
 
   composer-audit:
     uses: netresearch/typo3-ci-workflows/.github/workflows/security.yml@main
+    permissions:
+      contents: read
+      security-events: write
