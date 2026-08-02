@@ -98,6 +98,78 @@ web UI: consistent authentication, structured `--json` output, and clearer
 errors. Drop to raw `gh api` only for endpoints the porcelain commands don't
 cover yet.
 
+## Describing the Change (PR Body, Commit Message, Issue)
+
+The rest of this file is about getting a change *merged*. This section is about
+making it *reviewable*. A reviewer who cannot see what changed has to reproduce
+your work before they can judge it.
+
+### Show before/after for anything observable
+
+If the change alters output, an error message, a rendered page, a CLI line or an
+API response, the PR body carries **both states**. Not a description of them —
+the captured text:
+
+```markdown
+**Before**
+
+    Reason: An error occured on handling the request.
+
+**After**
+
+    Reason: An error occured on handling the request. (HTTP 500, code 1603956982)
+```
+
+Produce them the same way: run the old and the new code against the *same*
+input. A stub server, a fixture, or `git checkout <base> -- <file>` for one run
+and back again all work, and take a couple of minutes:
+
+```bash
+run_it > after.txt
+git checkout origin/main -- src/Thing.php   # old behaviour
+run_it > before.txt
+git checkout HEAD -- src/Thing.php          # restore; verify with git status
+```
+
+Say in the body that the transcripts are captured output rather than
+illustrations — the difference matters to a reviewer deciding how much to trust
+them.
+
+Cover the shapes the change can meet, not only the motivating one. A table of
+input → before → after exposes the cases you would otherwise never run.
+
+### "Unchanged" is a claim, and needs the same proof
+
+Negative claims escape verification because nothing looks wrong when you skip
+them. "The fallback keeps its wording", "existing callers are unaffected",
+"no behaviour change for empty input" — each asserts the result of a run you
+have to actually perform.
+
+Build the before/after table *before* writing the summary sentence. Filling in
+the rows is what catches the case you assumed was untouched; writing the
+sentence first only records the assumption.
+
+### When you already have the fix, lead with it
+
+Issue templates order evidence before solution — they are written for reports
+where the cause is still unknown. When you arrive with a diagnosis *and* a
+patch, that ordering buries the actionable part under everything that proves it,
+and a maintainer reading top-down never reaches it.
+
+State the fix in the summary, then keep the evidence below it:
+
+```markdown
+### Summary
+
+<symptom, one paragraph>
+
+**The fix is to <X>** — <why it is safe>. Diff under [Possible fixes](#possible-fixes)
+below; everything in between is the evidence for the diagnosis.
+```
+
+Keep the template's sections — reviewers navigate by them — and add the pointer
+rather than reordering them.
+
 ## Atomic Commits (Default — No Squash Unless Asked)
 
 **The project default is atomic commits preserved end-to-end.** Squash is destructive: it loses GPG signatures, collapses bisection granularity, and destroys narrative. Never squash unless the user asks for it in this task.
@@ -1500,6 +1572,38 @@ Everything above assumes GitHub. GitLab has the same concepts under different
 field names, a different CLI and a different thread model — translate it, don't
 improvise mid-run. Export `GITLAB_HOST` (or pass `--hostname`) for self-managed
 instances.
+
+### "Can I contribute here?" is a flag lookup, not an inference
+
+Before concluding that a project takes issues, forks or merge requests only from
+members, read the project's own capability flags:
+
+```bash
+curl -s -L -H "PRIVATE-TOKEN: $TOKEN" "$HOST/api/v4/projects/$ID" \
+  | jq '{issues_enabled, merge_requests_enabled, forking_access_level, permissions}'
+```
+
+Two traps sit on that call:
+
+- **Anonymous requests null the flags.** Without a token the same fields come
+  back `null`, which reads like "disabled" and means "not visible to you". Only
+  an authenticated answer distinguishes the two.
+- **Follow redirects.** Instances reachable under two hostnames answer the API
+  on one of them; without `-L` you get a `307`/`404` and may conclude the project
+  or its API does not exist.
+
+Do not substitute observation for the flags. "The last 20 MRs all came from
+in-repo branches" is consistent with forks being forbidden *and* with nobody
+having needed one — a project whose `forking_access_level` is `enabled` will
+show exactly the same history if all its contributors are members. Likewise, an
+`open_issues_count` you cannot read is not an absent tracker.
+
+The flags also separate two failure modes that look identical from outside: a
+project that refuses outside contributions, and an account that may not create
+projects (`Limit reached — You cannot create projects in your personal
+namespace`). The first is a policy to respect; the second is a permission to
+request, and saying which one blocks you is the difference between a useful
+report and a shrug.
 
 ### One-block preflight
 
