@@ -98,6 +98,78 @@ web UI: consistent authentication, structured `--json` output, and clearer
 errors. Drop to raw `gh api` only for endpoints the porcelain commands don't
 cover yet.
 
+## Describing the Change (PR Body, Commit Message, Issue)
+
+The rest of this file is about getting a change *merged*. This section is about
+making it *reviewable*. A reviewer who cannot see what changed has to reproduce
+your work before they can judge it.
+
+### Show before/after for anything observable
+
+If the change alters output, an error message, a rendered page, a CLI line or an
+API response, the PR body carries **both states**. Not a description of them —
+the captured text:
+
+```markdown
+**Before**
+
+    Reason: An error occured on handling the request.
+
+**After**
+
+    Reason: An error occured on handling the request. (HTTP 500, code 1603956982)
+```
+
+Produce them the same way: run the old and the new code against the *same*
+input. A stub server, a fixture, or `git checkout <base> -- <file>` for one run
+and back again all work, and take a couple of minutes:
+
+```bash
+run_it > after.txt
+git checkout <base> -- src/Thing.php   # old behaviour; <base> is the PR's target, not always main
+run_it > before.txt
+git checkout HEAD -- src/Thing.php     # restore; verify with git status
+```
+
+Say in the body that the transcripts are captured output rather than
+illustrations — the difference matters to a reviewer deciding how much to trust
+them.
+
+Cover the shapes the change can meet, not only the motivating one. A table of
+input → before → after exposes the cases you would otherwise never run.
+
+### "Unchanged" is a claim, and needs the same proof
+
+Negative claims escape verification because nothing looks wrong when you skip
+them. "The fallback keeps its wording", "existing callers are unaffected",
+"no behaviour change for empty input" — each asserts the result of a run you
+have to actually perform.
+
+Build the before/after table *before* writing the summary sentence. Filling in
+the rows is what catches the case you assumed was untouched; writing the
+sentence first only records the assumption.
+
+### When you already have the fix, lead with it
+
+Issue templates order evidence before solution — they are written for reports
+where the cause is still unknown. When you arrive with a diagnosis *and* a
+patch, that ordering buries the actionable part under everything that proves it,
+and a maintainer reading top-down never reaches it.
+
+State the fix in the summary, then keep the evidence below it:
+
+```markdown
+### Summary
+
+<symptom, one paragraph>
+
+**The fix is to <X>** — <why it is safe>. Diff under [Possible fixes](#possible-fixes)
+below; everything in between is the evidence for the diagnosis.
+```
+
+Keep the template's sections — reviewers navigate by them — and add the pointer
+rather than reordering them.
+
 ## Atomic Commits (Default — No Squash Unless Asked)
 
 **The project default is atomic commits preserved end-to-end.** Squash is destructive: it loses GPG signatures, collapses bisection granularity, and destroys narrative. Never squash unless the user asks for it in this task.
@@ -427,6 +499,54 @@ After any merge involving a path one side removed:
 git rm -rfq --ignore-unmatch -- <path>   # plain `git rm` refuses when the index has staged changes
 git ls-files -- <path> | wc -l           # must be 0
 ```
+
+### A clean auto-merge can drop lines neither side deleted
+
+The previous section is about files. The same silence applies *inside* a file: where
+both sides rewrote overlapping regions, git may resolve the hunk in one side's favour
+and report nothing. Entries the other side had are then simply gone, with no conflict
+marker to notice.
+
+```bash
+# After every merge, read what came out of the files both sides touched
+git diff --numstat HEAD -- composer.json package.json   # unexpected churn?
+git show HEAD:composer.json | jq -S '.["require-dev"]' > /tmp/before.json
+jq -S '.["require-dev"]' composer.json | diff /tmp/before.json -
+```
+
+**Real case:** a merge of an 82-commit `develop` into a long-lived branch resolved
+`composer.json` without conflict — and dropped two `require-dev` entries the branch had
+added. One of them registered a PHPStan extension, so the analysis would have run
+against a baseline generated *with* that extension while no longer loading it. Nothing
+in the merge output mentioned either package.
+
+### Choosing a side resolves the signature, not the body
+
+When several conflicts share a shape, it is tempting to resolve them with one rule —
+"their change is a subset of ours, take ours". The rule is about the *conflicting lines*;
+whether it holds depends on code that is **not** in the conflict.
+
+The recurring trap is a parameter whose nullability changed:
+
+```php
+// theirs — a minimal deprecation fix
+public function f(?int $max = null)
+// ours — went further, and looks like a superset
+public function f(int $max = 0)
+
+// …but the body, untouched and outside the conflict:
+$max = (int)($max ?? end($allLtsVersions) ?: 0);   // ?? is now dead, $max stays 0
+```
+
+**Real case:** six conflicts of exactly this shape, resolved with one rule. Four were
+right. In the other two the branch had tightened `?Type $x = null` to a non-null
+default while the body still tested for null — one silently returned an empty version
+range, the other resolved a path to `/` instead of the repository root. Both had been
+failing for months; the merge preserved them.
+
+After resolving by side-selection, read the body of every function whose signature you
+just decided on, and check the callers of any method whose parameters were reordered —
+positional call sites do not conflict and do not warn.
 
 ### DCO and third-party history are structurally incompatible
 
@@ -873,6 +993,47 @@ gh api graphql -f query='
 
 **Real-world lesson (PR #575):** Automated reviewers can generate 100+ comment threads.
 Without pagination, only the first 100 threads are returned, leaving others unaddressed.
+
+## A Green Job Is Not a Green Test Run
+
+Job status answers "did the command exit 0". It does not answer "did the tests pass".
+Where a pipeline publishes a test report, read it — the two disagree more often than
+they should, and the report is the stronger statement.
+
+```bash
+# Same placeholders as the GitLab section below: GITLAB_HOST, $P the URL-encoded
+# project path or numeric id, $TOKEN a PRIVATE-TOKEN.
+export GITLAB_HOST=git.example.com
+
+# GitLab: the report, not just the job list
+curl -s -H "PRIVATE-TOKEN: $TOKEN" "https://$GITLAB_HOST/api/v4/projects/$P/pipelines/$PIPELINE/test_report" \
+  | jq '{total_count, failed_count, suites: [.test_suites[] | {name, failed_count, total_count}]}'
+
+# GitHub: the rollup hides startup failures entirely — see the section below
+gh run list --repo "$R" --commit "$SHA" --json name,status,conclusion
+```
+
+Two ways a check stops being a gate without anyone noticing:
+
+- **The command mutates instead of checking.** A job running `php-cs-fixer fix`
+  (rather than `fix --dry-run`) repairs the files in the container, throws them away
+  with it, and exits 0. Every repaired file is recorded as a failed case in the JUnit
+  report while the job is green. One project had run that way for three and a half
+  years — 30 standing violations, a permanently green gate, and the evidence expiring
+  with the artifact about an hour after each run.
+- **Nothing is enforced because nothing fails.** `allow_failure: true` (GitLab) and
+  non-required checks (GitHub) are legitimate, but they make the pipeline's colour a
+  poor summary. Before reading a pipeline as approval, list which jobs can actually
+  block:
+
+```bash
+curl -s -H "PRIVATE-TOKEN: $TOKEN" "https://$GITLAB_HOST/api/v4/projects/$P/pipelines/$PIPELINE/jobs" \
+  | jq -r '.[] | select(.allow_failure == false) | "\(.status)  \(.name)"'
+```
+
+When a report's numbers look implausible — everything failing, or nothing at all —
+check the artifact before believing it. An expired or never-collected JUnit artifact
+reports `total_count: 0`, which reads like "no failures" and means "no data".
 
 ## Diagnosing CI Failures (Annotations First)
 
@@ -1500,6 +1661,38 @@ Everything above assumes GitHub. GitLab has the same concepts under different
 field names, a different CLI and a different thread model — translate it, don't
 improvise mid-run. Export `GITLAB_HOST` (or pass `--hostname`) for self-managed
 instances.
+
+### "Can I contribute here?" is a flag lookup, not an inference
+
+Before concluding that a project takes issues, forks or merge requests only from
+members, read the project's own capability flags:
+
+```bash
+curl -s -L -H "PRIVATE-TOKEN: $TOKEN" "https://$GITLAB_HOST/api/v4/projects/$P" \
+  | jq '{issues_enabled, merge_requests_enabled, forking_access_level, permissions}'
+```
+
+Two traps sit on that call:
+
+- **Anonymous requests null the flags.** Without a token the same fields come
+  back `null`, which reads like "disabled" and means "not visible to you". Only
+  an authenticated answer distinguishes the two.
+- **Follow redirects.** Instances reachable under two hostnames answer the API
+  on one of them; without `-L` you get a `307`/`404` and may conclude the project
+  or its API does not exist.
+
+Do not substitute observation for the flags. "The last 20 MRs all came from
+in-repo branches" is consistent with forks being forbidden *and* with nobody
+having needed one — a project whose `forking_access_level` is `enabled` will
+show exactly the same history if all its contributors are members. Likewise, an
+`open_issues_count` you cannot read is not an absent tracker.
+
+The flags also separate two failure modes that look identical from outside: a
+project that refuses outside contributions, and an account that may not create
+projects (`Limit reached — You cannot create projects in your personal
+namespace`). The first is a policy to respect; the second is a permission to
+request, and saying which one blocks you is the difference between a useful
+report and a shrug.
 
 ### One-block preflight
 

@@ -90,6 +90,48 @@
       "name": "worktree-review-workflow",
       "prompt": "How do I review a PR without stashing my current work?",
       "expected_output": "Should recommend git worktree to create separate working directory for the review branch"
+    },
+    {
+      "id": 16,
+      "name": "pr-body-before-after",
+      "prompt": "I changed the wording of an error message in our CLI. Write the pull request description.",
+      "expected_output": "Should include the old and the new output as captured transcripts run against the same input, not a prose description; should mention how to produce the pair (run against base via git checkout <base> -- <file>, or a stub); should cover the other response shapes the change can meet, not only the motivating one"
+    },
+    {
+      "id": 17,
+      "name": "verify-unchanged-claim",
+      "prompt": "My commit message says the fallback branch keeps its existing wording. Anything to check before I push?",
+      "expected_output": "Should treat the no-change claim as a claim needing the same proof as a changed one, and require actually exercising the fallback path (e.g. a before/after table filled in before the summary sentence is written) rather than asserting it"
+    },
+    {
+      "id": 18,
+      "name": "gitlab-contribution-capability",
+      "prompt": "On this self-managed GitLab the last 20 merge requests all came from in-repo branches and I see no forks. Can outsiders contribute?",
+      "expected_output": "Should refuse to infer policy from the MR history and instead read issues_enabled / merge_requests_enabled / forking_access_level via an AUTHENTICATED API call with -L; should note that anonymous requests return those fields as null (unknown, not disabled), and that an account-level project-creation limit is a different blocker than a project policy"
+    },
+    {
+      "id": 19,
+      "name": "issue-with-known-fix",
+      "prompt": "I found the root cause of a bug in an upstream project and have a three-line patch. File the issue using their template.",
+      "expected_output": "Should state the fix in the Summary with a pointer to the diff section, keeping the template's sections intact, because template ordering puts evidence before solution and buries the actionable part"
+    },
+    {
+      "id": 20,
+      "name": "green-job-vs-test-report",
+      "prompt": "The pipeline on my merge request is green. Is it safe to merge?",
+      "expected_output": "Should not treat job status as sufficient: should read the pipeline's test report (failed_count vs total_count per suite) and list which jobs can actually block (allow_failure false / required checks); should mention that a checking job running a mutating command such as php-cs-fixer fix without --dry-run exits 0 regardless, and that a test_report of total_count 0 means no data rather than no failures"
+    },
+    {
+      "id": 21,
+      "name": "merge-dropped-lines-without-conflict",
+      "prompt": "I merged a long-running upstream branch into my feature branch. All conflicts are resolved and the tests still pass. Anything left to check?",
+      "expected_output": "Should warn that a clean auto-merge can drop entries inside a file that both sides rewrote, without any conflict marker, and recommend diffing the merged content of shared manifests (composer.json, package.json) against the pre-merge version rather than trusting the absence of conflicts"
+    },
+    {
+      "id": 22,
+      "name": "conflict-side-selection-check-the-body",
+      "prompt": "Six merge conflicts all look the same: upstream made a minimal nullability fix to a signature my branch already rewrote further. Can I resolve them all by taking my side?",
+      "expected_output": "Should refuse a blanket rule and require checking each function body outside the conflict, specifically whether tightening a nullable parameter to a non-null default leaves a null test or null coalesce dead; should also require checking call sites of any method whose parameters were reordered, since positional calls do not conflict"
     }
   ]
 }
