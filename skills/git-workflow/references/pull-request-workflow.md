@@ -1012,6 +1012,33 @@ gh api graphql -F id="$PRID" \
 # Branch is pushable again; fix threads, then re-arm through this gate.
 ```
 
+The push rejection is a **protected-branch hook**, not a permissions problem:
+
+```
+remote: error: GH006: Protected branch update failed for refs/heads/<branch>.
+remote: - A pull request for this branch has been added to a merge queue.
+remote:   Branches that are queued for merging cannot be updated.
+```
+
+Note the mutation input field is `id:`, not `pullRequestId:` — the latter fails
+with `InputObject 'DequeuePullRequestInput' doesn't accept argument`.
+
+**`--delete-branch` is rejected while a merge queue is enabled.** `gh pr merge`
+fails outright with:
+
+```
+Cannot use -d or --delete-branch when merge queue enabled
+```
+
+This is a hard error, not a warning: the merge does not happen. In a batch
+merge loop the flag silently costs a full round per PR — four rounds were burned
+on it in one rollout before the message was read. Drop `--delete-branch` from
+any script that merges across repos where some enable a queue, and let the
+repo's own "automatically delete head branches" setting handle cleanup. Passing
+a merge-method flag (`--merge` / `--rebase`) is likewise pointless once a queue
+owns the branch; it responds with `The merge strategy for main is set by the
+merge queue`.
+
 **Verify a "dropped" queue entry via the issue timeline before re-arming.**
 Right after a queue merge, `gh pr view --json state` can report `OPEN` and the
 queue listing can show the entry gone for several minutes — the exact signature
