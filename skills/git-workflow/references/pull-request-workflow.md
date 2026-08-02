@@ -30,7 +30,7 @@ were PR-status probing**, the rulesets endpoint was queried exactly once, and
 
 ### `--watch` returns on the first actionable event, not at full settle
 
-A `until [ pending == 0 ]` loop learns nothing until the slowest matrix job
+An `until [ pending == 0 ]` loop learns nothing until the slowest matrix job
 ends — long after the first failure was visible and workable. Across sessions,
 45 such loops were written against 2 of any other shape. `--watch` returns as
 soon as a check fails, a thread needs an answer, a review is missing, or the

@@ -30,13 +30,15 @@ REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600
 
 die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
 
+need() { [ $# -ge 2 ] && [ -n "${2:-}" ] || die "$1 requires a value"; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    -R|--repo) REPO="${2:-}"; shift 2 ;;
-    --json)    JSON=1; shift ;;
-    --watch)   WATCH=1; shift ;;
-    --interval) INTERVAL="${2:-20}"; shift 2 ;;
-    --max-wait) MAXWAIT="${2:-3600}"; shift 2 ;;
+    -R|--repo)  need "$@"; REPO="$2"; shift 2 ;;
+    --json)     JSON=1; shift ;;
+    --watch)    WATCH=1; shift ;;
+    --interval) need "$@"; INTERVAL="$2"; shift 2 ;;
+    --max-wait) need "$@"; MAXWAIT="$2"; shift 2 ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  PR="$1"; shift ;;
@@ -62,6 +64,7 @@ collect() {
   gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
   query($owner:String!,$name:String!,$pr:Int!){
     repository(owner:$owner,name:$name){
+      nameWithOwner
       mergeCommitAllowed rebaseMergeAllowed squashMergeAllowed autoMergeAllowed
       pullRequest(number:$pr){
         number title state isDraft mergeable mergeStateStatus reviewDecision
@@ -83,7 +86,11 @@ collect() {
 }
 
 rules_for() { # $1 = base branch
-  gh api "repos/$REPO/rules/branches/$1" 2>/dev/null || echo '[]'
+  # A branch like release/1.2 must be percent-encoded or the path resolves to a
+  # different (usually nonexistent) endpoint and the required-check list is lost.
+  local enc
+  enc=$(printf '%s' "$1" | jq -sRr @uri)
+  gh api "repos/$REPO/rules/branches/$enc" 2>/dev/null || echo '[]'
 }
 
 evaluate() {
@@ -115,7 +122,7 @@ evaluate() {
     | ($failing | map(select(.name as $n | $required | index($n)))) as $failing_required
     | ($pending | map(select(.name as $n | $required | index($n)))) as $pending_required
     | {
-        repo: "\($repo | "")", number: $p.number, title: $p.title,
+        repo: $repo.nameWithOwner, number: $p.number, title: $p.title,
         state: $p.state, draft: $p.isDraft,
         mergeable: $p.mergeable, mergeState: $p.mergeStateStatus,
         reviewDecision: ($p.reviewDecision // ""),
@@ -155,7 +162,7 @@ evaluate() {
         (if $s.state != "OPEN" then
            {action:"none", why:"PR is \($s.state)"}
          elif $s.draft then
-           {action:"ready", why:"draft", cmd:"gh pr ready \($s.number) --repo <repo>"}
+           {action:"ready", why:"draft", cmd:"gh pr ready \($s.number) --repo \($s.repo)"}
          elif $s.mergeable == "CONFLICTING" then
            {action:"resolve-conflicts", why:"merge conflict with \($s.base)"}
          elif $s.mergeState == "BEHIND" then
@@ -172,18 +179,21 @@ evaluate() {
             threads:$s.threads}
          elif ($needs_copilot and ($s.has_review_on_head|not)) then
            {action:"request-review", why:"ruleset requires a code review and none exists on \($s.headOid[0:8])",
-            cmd:"gh api repos/<repo>/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
          elif (($s.has_review_on_head|not) and ($s.reviewDecision == "")) then
            {action:"request-review", why:"no human or bot review on the current head — do not merge unreviewed",
-            cmd:"gh api repos/<repo>/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
          elif ($s.checks.pending_required|length) > 0 then
            {action:"wait", why:"required check(s) still running: \($s.checks.pending_required|join(", "))"}
+         elif ($s.mergeState == "CLEAN"
+               and ($s.merge_methods|index("merge")|not)
+               and ($s.merge_methods|index("rebase")|not)) then
+           {action:"blocked",
+            why:"clean, but this repo allows only squash — policy forbids squash, so enable merge or rebase first"}
          elif $s.mergeState == "CLEAN" then
            ({action:"merge",
              why:"clean",
-             method:(if ($s.merge_methods|index("merge")) then "--merge"
-                     elif ($s.merge_methods|index("rebase")) then "--rebase"
-                     else "BLOCKED: only squash allowed, which policy forbids" end)}
+             method:(if ($s.merge_methods|index("merge")) then "--merge" else "--rebase" end)}
             + (if $s.queue_active
                then {note:"merge queue active — omit --delete-branch (it is rejected) and let the queue pick the strategy"}
                else {} end))
