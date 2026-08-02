@@ -185,6 +185,9 @@ evaluate() {
          elif $s.unresolved_threads > 0 then
            {action:"resolve-threads", why:"\($s.unresolved_threads) unresolved review thread(s)",
             threads:$s.threads}
+         elif ($needs_copilot and ($s.has_copilot_review_on_head|not)
+               and ($s.requested_reviewers|map(test("copilot";"i"))|any)) then
+           {action:"await-review", why:"Copilot review already requested for \($s.headOid[0:8]) and not delivered yet — waiting, not re-requesting"}
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)) then
            {action:"request-review", why:"copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — a push invalidates the previous review, it stays on the old commit",
             cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
@@ -280,7 +283,7 @@ while :; do
     emit "$s"; exit 0
   fi
   case "$act" in
-    fix-ci|triage-ci|resolve-threads|request-review|rebase|resolve-conflicts|merge|none)
+    fix-ci|triage-ci|resolve-threads|request-review|rebase|resolve-conflicts|merge|blocked|none)
       echo "ACTIONABLE: $act"
       emit "$s"; exit 0 ;;
   esac
