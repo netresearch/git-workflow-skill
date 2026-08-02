@@ -5,6 +5,52 @@ before opening a PR, commit discipline, merge strategies, review-thread
 resolution, and the merge gate. See `references/commit-conventions.md` for
 commit message formatting.
 
+## Start Here: `scripts/pr-status.sh`
+
+**Do not probe the merge gate one endpoint at a time.** `mergeStateStatus:
+BLOCKED` never says *why*, and the reason lives in five different places:
+checks, rulesets, review threads, whether a review exists on the *current*
+head, and the repository's allowed merge methods.
+
+```bash
+./scripts/pr-status.sh -R owner/repo 123        # human summary + NEXT action
+./scripts/pr-status.sh -R owner/repo 123 --json # for scripts and merge drivers
+./scripts/pr-status.sh -R owner/repo 123 --watch
+```
+
+Two API calls, and the output ends in a computed `NEXT:` — rebase, fix-ci,
+triage-ci, resolve-threads, request-review, wait, or merge (with the method
+this repo actually allows and a warning when a merge queue is active). The
+JSON form carries each unresolved thread's `threadId` *and* `commentId`, which
+is everything needed to reply and resolve without another query.
+
+Measured on a 40-PR rollout that did not have it: **183 of 370 shell calls
+were PR-status probing**, the rulesets endpoint was queried exactly once, and
+`copilot_code_review` blocked four merges by surprise.
+
+### `--watch` returns on the first actionable event, not at full settle
+
+A `until [ pending == 0 ]` loop learns nothing until the slowest matrix job
+ends — long after the first failure was visible and workable. Across sessions,
+45 such loops were written against 2 of any other shape. `--watch` returns as
+soon as a check fails, a thread needs an answer, a review is missing, or the
+required checks conclude. **Start fixing what is already red instead of
+waiting for green checks you do not need.**
+
+### Never merge an unreviewed PR
+
+If `pr-status.sh` reports `reviews: NONE on current head`, do not merge.
+Request one and say so:
+
+```bash
+gh api repos/OWNER/REPO/pulls/N/requested_reviewers -X POST \
+  -f "reviewers[]=copilot-pull-request-reviewer[bot]"
+```
+
+A force-push invalidates a prior review: the old review stays attached to the
+old commit, so a repo with a `copilot_code_review` rule goes back to BLOCKED
+and needs a fresh request against the new head.
+
 ## Check the Default Branch Before Operating
 
 Not every repo uses `main` — older repos often use `master`, and some use
