@@ -924,6 +924,42 @@ This bites hardest on dependency bumps. A resolver succeeding (`composer update`
 - Real case: a project bumped `nr-llm ^0.12 → ^0.22`. Every `pull_request` check passed. The `validate` job — gated on `push: main`, so absent from the PR — boots the app and compiles the DI container; post-merge it failed because a *released* sibling (`t3-cowriter v3.1.1`, constraint `nr-llm >=0.3 <1.0`) referenced a class the new `nr-llm` had removed. Resolution was green; the runtime compile was not. Recovery cost a sibling release plus a follow-up PR.
 - Verify the runtime path, not just resolution: run the actual boot/compile (or the exact `push:main`-only job) against the resolved tree locally before merging. For the class-not-found family, a fast proxy is to confirm every referenced upstream symbol still exists at the *resolved* version.
 
+### Stacked PRs: retarget before you merge, `--delete-branch` only at the end
+
+A stacked chain (PR2 based on PR1's branch, PR3 on PR2's, …) merges
+bottom-up — but two GitHub behaviours break the naive loop:
+
+1. **`gh pr merge --delete-branch` on a stacked base CLOSES the child PR.**
+   GitHub's automatic retargeting of dependent PRs is unreliable: when the
+   base branch disappears, the child can be closed instead of retargeted to
+   the default branch (observed 2026-08-01: child PR closed mid-stack, its
+   base still pointing at the deleted branch).
+   Recovery, if it happens: re-push the deleted base branch (the local copy
+   still has it), `gh pr reopen <child>`, then `gh pr edit <child> --base main`
+   — the base of a *closed* PR cannot be edited, so reopen first.
+2. **`mergeStateStatus` needs time and only `CLEAN` is trustworthy.** After a
+   retarget it cycles through `UNKNOWN`/`BLOCKED`/`UNSTABLE` before settling.
+   `UNSTABLE` means a **non-required** check is failing — decide explicitly
+   whether that is acceptable; a merge gate that requires `CLEAN` treats it
+   as blocked.
+
+The robust bottom-up sequence for each child after its parent merged:
+
+```bash
+gh pr edit  <child> --base main          # retarget FIRST, while everything is open
+# wait until mergeStateStatus == CLEAN   # separate step — state recomputes async
+gh pr merge <child> --merge              # NO --delete-branch mid-stack
+# verify: git ls-remote origin main  ==  the PR's mergeCommit.oid
+```
+
+Delete all stack branches in one pass **after the last PR merged** (a repo
+with "automatically delete head branches" usually does it for you).
+
+Related: a workflow **rerun executes the frozen merge commit** — it does not
+re-resolve `refs/pull/N/merge` against the moved base. A check that depends
+on base state (template drift, conflict detection) stays wrong after main
+moved; push a base-merge into the PR branch instead of rerunning.
+
 ### Auto-Merge / Merge-Queue Arming Gate
 
 `gh pr merge --auto` is a **deferred merge with no human in the loop** — and a
