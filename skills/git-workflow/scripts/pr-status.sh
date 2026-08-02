@@ -86,17 +86,16 @@ collect() {
   }' 2>/dev/null
 }
 
-rules_for() { # $1 = base branch
-  # A branch like release/1.2 must be percent-encoded or the path resolves to a
-  # different (usually nonexistent) endpoint and the required-check list is lost.
-  local enc
-  enc=$(printf '%s' "$1" | jq -sRr @uri)
-  gh api "repos/$REPO/rules/branches/$enc" 2>/dev/null || echo '[]'
-}
+# A branch legitimately has no rules and answers `[]`, so an empty result is NOT
+# an error — but a failed call must never be folded into the same value:
+# "could not fetch" silently becoming "no required checks" would make this tool
+# report a PR as more mergeable than it is, the one direction it must not get
+# wrong. The fetch is inline rather than a function because a `$( )` subshell
+# would discard the status flag.
 
 evaluate() {
-  local gql="$1" rules="$2"
-  jq -n --argjson g "$gql" --argjson r "$rules" '
+  local gql="$1" rules="$2" ok="$3"
+  jq -n --argjson g "$gql" --argjson r "$rules" --argjson ok "$ok" '
     ($g.data.repository) as $repo
     | ($repo.pullRequest) as $p
     | ($p.commits.nodes[0].commit.oid) as $head
@@ -145,6 +144,7 @@ evaluate() {
           failing_urls: ($failing|map(.url))
         },
         required_contexts: $required,
+        rules_fetched: ($ok == 1),
         rulesets: $ruletypes,
         reviews_on_head: ($head_reviews|map({(.author.login): .state})|add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
@@ -169,6 +169,9 @@ evaluate() {
     | .next =
         (if $s.state != "OPEN" then
            {action:"none", why:"PR is \($s.state)"}
+         elif ($s.rules_fetched|not) then
+           {action:"rules-unavailable",
+            why:"could not read repos/\($s.repo)/rules/branches/\($s.base) — the required-check list is unknown, so no merge verdict is possible from here"}
          elif $s.draft then
            {action:"ready", why:"draft", cmd:"gh pr ready \($s.number) --repo \($s.repo)"}
          elif $s.mergeable == "CONFLICTING" then
@@ -256,8 +259,11 @@ snapshot() {
   fi
 
   base=$(jq -r '.data.repository.pullRequest.baseRefName // "main"' <<<"$g")
-  r=$(rules_for "$base")
-  evaluate "$g" "$r"
+
+  local enc r ok
+  enc=$(printf '%s' "$base" | jq -sRr @uri)
+  if r=$(gh api "repos/$REPO/rules/branches/$enc" 2>/dev/null); then ok=1; else ok=0; r='[]'; fi
+  evaluate "$g" "$r" "$ok"
 }
 
 emit() {
