@@ -114,6 +114,24 @@
       "name": "issue-with-known-fix",
       "prompt": "I found the root cause of a bug in an upstream project and have a three-line patch. File the issue using their template.",
       "expected_output": "Should state the fix in the Summary with a pointer to the diff section, keeping the template's sections intact, because template ordering puts evidence before solution and buries the actionable part"
+    },
+    {
+      "id": 20,
+      "name": "green-job-vs-test-report",
+      "prompt": "The pipeline on my merge request is green. Is it safe to merge?",
+      "expected_output": "Should not treat job status as sufficient: should read the pipeline's test report (failed_count vs total_count per suite) and list which jobs can actually block (allow_failure false / required checks); should mention that a checking job running a mutating command such as php-cs-fixer fix without --dry-run exits 0 regardless, and that a test_report of total_count 0 means no data rather than no failures"
+    },
+    {
+      "id": 21,
+      "name": "merge-dropped-lines-without-conflict",
+      "prompt": "I merged a long-running upstream branch into my feature branch. All conflicts are resolved and the tests still pass. Anything left to check?",
+      "expected_output": "Should warn that a clean auto-merge can drop entries inside a file that both sides rewrote, without any conflict marker, and recommend diffing the merged content of shared manifests (composer.json, package.json) against the pre-merge version rather than trusting the absence of conflicts"
+    },
+    {
+      "id": 22,
+      "name": "conflict-side-selection-check-the-body",
+      "prompt": "Six merge conflicts all look the same: upstream made a minimal nullability fix to a signature my branch already rewrote further. Can I resolve them all by taking my side?",
+      "expected_output": "Should refuse a blanket rule and require checking each function body outside the conflict, specifically whether tightening a nullable parameter to a non-null default leaves a null test or null coalesce dead; should also require checking call sites of any method whose parameters were reordered, since positional calls do not conflict"
     }
   ]
 }
