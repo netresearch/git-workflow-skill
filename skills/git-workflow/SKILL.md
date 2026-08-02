@@ -20,10 +20,8 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 4. **No "tested/verified/working" without pasted command output** — else say so.
 5. **No edits to installed skill/plugin cache paths** (`~/.claude/skills/`, `~/.claude/plugins/cache/`, `**/.bare/**`) — always the repo worktree, verified by `pwd`.
 6. **Force-push only with `--force-with-lease`** — never plain `--force`.
-7. **Commit before rebase** — `add → commit → fetch → rebase → push`. Dirty tree aborts rebase.
-8. **No editorializing** — state what changed, not how good it is; no narrating expected results or self-praise. See `references/no-editorializing.md`.
-
-See `references/pull-request-workflow.md` for merge-gate and atomic-commit patterns.
+7. **Commit before rebase** — `add → commit → fetch → rebase → push`; a dirty tree aborts it.
+8. **No editorializing** — state what changed, not how good it is. See `references/no-editorializing.md`.
 
 ## Reference Files
 
@@ -33,14 +31,14 @@ Load on demand:
 |-----------|-----------------|
 | `references/commit-conventions.md` | Conventional commits, DCO sign-off |
 | `references/pull-request-workflow.md` | Default-branch check, PR merge, merge gate, signed rebase |
-| `references/ci-cd-integration.md` | Watching CI from the CLI, git mirror repositories |
-| `references/advanced-git.md` | Rebase, cherry-pick, bisect, stash, worktrees, reflog, recovery |
+| `references/ci-cd-integration.md` | Watching CI from the CLI, git mirrors |
+| `references/advanced-git.md` | Rebase, cherry-pick, bisect, stash, worktrees, reflog |
 | `references/github-releases.md` | Pointer to the `github-release` skill |
 | `references/git-hooks-setup.md` | Hook frameworks, detection, hooks per stage |
-| `references/claude-code-hooks.md` | Claude Code `settings.json` hooks — merge gate, cache-path rejection, auto-lint |
+| `references/claude-code-hooks.md` | `settings.json` hooks — merge gate, cache-path rejection, auto-lint |
 | `references/code-quality-tools.md` | shellcheck, shfmt, git-absorb, difftastic |
-| `references/merge-gate-watcher.md` | Merge-driver loop, check taxonomy, stale-SHA rerun, review-bot rounds |
-| `references/spec-cleanup.md` | Keep planning artifacts off the base branch; guard + capture-to-ADR |
+| `references/merge-gate-watcher.md` | Merge-driver loop, check taxonomy, stale-SHA rerun |
+| `references/spec-cleanup.md` | Planning artifacts off the base branch; guard, capture-to-ADR |
 | `references/no-editorializing.md` | Writing without self-praise or narrating the expected |
 
 ## Conventional Commits
@@ -57,14 +55,10 @@ Load on demand:
 
 ```
 feature/TICKET-123-description
-fix/TICKET-456-bug-name
 release/1.2.0
-hotfix/1.2.1-security-patch
 ```
 
 ## Hook Detection
-
-Detect hooks first:
 
 ```bash
 ls lefthook.yml .lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null || echo "No hooks"
@@ -76,16 +70,18 @@ Install: `lefthook install` | `composer install` | `npm install` | `pre-commit i
 
 1. **Immutable releases**: deleted releases block tag reuse; bump version.
 2. **Multi-branch releases**: Use `--latest=false` from non-default branches.
-3. **Pre-release**: Version bumped, CI green, CHANGELOG updated, `git pull` BEFORE `gh release create`.
+3. **Pre-release**: version bumped, CI green, CHANGELOG updated, `git pull` first.
 
 ## PR Merge Requirements
 
-Before merging: threads resolved, CI green (incl. annotations), rebased, signed. Rebase-only + signed: `git merge --ff-only`.
+Before merging: threads resolved, CI green (incl. annotations), rebased, signed, **and reviewed** (human or bot, on the current head). Rebase-only + signed: `git merge --ff-only`.
 
 ## Verification
 
 ```bash
 ./scripts/verify-git-workflow.sh /path/to/repository
+# Full merge-gate state + next valid action, 2 API calls:
+./scripts/pr-status.sh [-R owner/repo] [PR] [--json] [--watch]
 ```
 
 ---

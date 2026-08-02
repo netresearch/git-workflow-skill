@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+# pr-status.sh — one-shot, complete merge-readiness picture for a pull request,
+# plus the next valid action.
+#
+# Why this exists: `mergeStateStatus: BLOCKED` never says *why*. Discovering the
+# reason one API call at a time (checks, then rulesets, then threads, then the
+# allowed merge methods, then the queue) burns round-trips and still misses
+# gates — in one 40-PR rollout, 183 of 370 shell calls were PR-status probing,
+# the rulesets endpoint was queried exactly once, and `copilot_code_review`
+# blocked four merges by surprise.
+#
+# Two API calls: one GraphQL document for the PR, its checks, reviews, threads
+# and the repository's merge configuration; one REST call for the effective
+# branch rules (which is the only place rulesets show up).
+#
+# Usage:
+#   pr-status.sh                      # PR for the current branch
+#   pr-status.sh 123                  # PR number in the current repo
+#   pr-status.sh -R owner/repo 123
+#   pr-status.sh --json               # machine-readable, no prose
+#   pr-status.sh --watch              # return on the FIRST actionable event
+#
+# --watch deliberately does not wait for every check to finish. It returns as
+# soon as something can be worked on: a failing check, a new annotation, or all
+# required checks concluded. Waiting for `pending == 0` means learning nothing
+# until the slowest matrix job ends, long after the first failure was visible.
+set -uo pipefail
+
+REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600
+
+die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
+
+need() { [ $# -ge 2 ] && [ -n "${2:-}" ] || die "$1 requires a value"; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -R|--repo)  need "$@"; REPO="$2"; shift 2 ;;
+    --json)     JSON=1; shift ;;
+    --watch)    WATCH=1; shift ;;
+    --interval) need "$@"; INTERVAL="$2"; shift 2 ;;
+    --max-wait) need "$@"; MAXWAIT="$2"; shift 2 ;;
+    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "unknown flag: $1" ;;
+    *)  PR="$1"; shift ;;
+  esac
+done
+
+command -v gh  >/dev/null || die "gh not found"
+command -v jq  >/dev/null || die "jq not found"
+
+if [ -z "$REPO" ]; then
+  REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) \
+    || die "not in a repo; pass -R owner/repo"
+fi
+if [ -z "$PR" ]; then
+  PR=$(gh pr view --repo "$REPO" --json number --jq .number 2>/dev/null) \
+    || die "no PR for the current branch; pass a number"
+fi
+OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
+
+# ---------------------------------------------------------------- data ------
+collect() {
+  # shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
+  gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
+  query($owner:String!,$name:String!,$pr:Int!){
+    repository(owner:$owner,name:$name){
+      nameWithOwner
+      mergeCommitAllowed rebaseMergeAllowed squashMergeAllowed autoMergeAllowed
+      pullRequest(number:$pr){
+        number title state isDraft mergeable mergeStateStatus reviewDecision
+        author{login}
+        baseRefName headRefName headRefOid isCrossRepository
+        reviews(last:50){ nodes{ author{login} state commit{oid} } }
+        reviewRequests(first:20){ nodes{ requestedReviewer{
+          ... on User{login} ... on Bot{login} ... on Team{slug} } } }
+        reviewThreads(first:100){ nodes{ id isResolved isOutdated
+          comments(first:1){ nodes{ databaseId author{login} path } } } }
+        commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state
+          contexts(first:100){ nodes{
+            __typename
+            ... on CheckRun{ name conclusion status detailsUrl }
+            ... on StatusContext{ context state targetUrl }
+          } } } } } }
+      }
+    }
+  }' 2>/dev/null
+}
+
+# A branch legitimately has no rules and answers `[]`, so an empty result is NOT
+# an error — but a failed call must never be folded into the same value:
+# "could not fetch" silently becoming "no required checks" would make this tool
+# report a PR as more mergeable than it is, the one direction it must not get
+# wrong. The fetch is inline rather than a function because a `$( )` subshell
+# would discard the status flag.
+
+evaluate() {
+  local gql="$1" rules="$2" ok="$3"
+  jq -n --argjson g "$gql" --argjson r "$rules" --argjson ok "$ok" '
+    ($g.data.repository) as $repo
+    | ($repo.pullRequest) as $p
+    | ($p.commits.nodes[0].commit.oid) as $head
+    | ([$p.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+        | if .__typename == "CheckRun"
+          then {name, state: (if .status != "COMPLETED" then "PENDING"
+                              elif .conclusion == "SUCCESS" then "PASS"
+                              elif .conclusion == "SKIPPED" or .conclusion == "NEUTRAL" then "SKIP"
+                              else "FAIL" end), url: .detailsUrl}
+          else {name: .context, state: (if .state == "SUCCESS" then "PASS"
+                                        elif .state == "PENDING" then "PENDING"
+                                        else "FAIL" end), url: .targetUrl}
+          end]) as $checks
+    # Effective required contexts come from the rules endpoint; classic
+    # protection alone misses rulesets entirely.
+    | ([$r[]? | select(.type=="required_status_checks")
+        | .parameters.required_status_checks[]?.context]) as $required
+    | ([$r[]? | .type] | unique) as $ruletypes
+    | (($ruletypes | index("copilot_code_review")) != null) as $needs_copilot
+    | ($p.author.login) as $author
+    # A review by the PR author is not a review. Replying to a thread registers
+    # as COMMENTED by the author, which would otherwise satisfy the gate.
+    | ([$p.reviews.nodes[]? | select(.commit.oid == $head)
+                           | select(.author.login != $author)]) as $head_reviews
+    | ([$head_reviews[] | select(.author.login | test("copilot"; "i"))]) as $copilot_on_head
+    | ([$p.reviewThreads.nodes[]? | select(.isResolved == false)]) as $unresolved
+    | ($checks | map(select(.state=="FAIL"))) as $failing
+    | ($checks | map(select(.state=="PENDING"))) as $pending
+    | ($failing | map(select(.name as $n | $required | index($n)))) as $failing_required
+    | ($pending | map(select(.name as $n | $required | index($n)))) as $pending_required
+    | {
+        repo: $repo.nameWithOwner, number: $p.number, title: $p.title,
+        state: $p.state, draft: $p.isDraft,
+        mergeable: $p.mergeable, mergeState: $p.mergeStateStatus,
+        reviewDecision: ($p.reviewDecision // ""),
+        base: $p.baseRefName, head: $p.headRefName, headOid: $head,
+        checks: {
+          total: ($checks|length),
+          pass:  ($checks|map(select(.state=="PASS"))|length),
+          fail:  ($failing|length),
+          pending:($pending|length),
+          skip:  ($checks|map(select(.state=="SKIP"))|length),
+          failing: ($failing|map(.name)),
+          failing_required: ($failing_required|map(.name)),
+          pending_required: ($pending_required|map(.name)),
+          failing_urls: ($failing|map(.url))
+        },
+        required_contexts: $required,
+        rules_fetched: ($ok == 1),
+        rulesets: $ruletypes,
+        reviews_on_head: ($head_reviews|map({(.author.login): .state})|add // {}),
+        has_review_on_head: (($head_reviews|length) > 0),
+        has_copilot_review_on_head: (($copilot_on_head|length) > 0),
+        author: $author,
+        requested_reviewers: [$p.reviewRequests.nodes[]?.requestedReviewer|(.login // .slug)],
+        unresolved_threads: ($unresolved|length),
+        threads: [$unresolved[]|{threadId: .id,
+                                 commentId: .comments.nodes[0].databaseId,
+                                 author: .comments.nodes[0].author.login,
+                                 path: .comments.nodes[0].path,
+                                 outdated: .isOutdated}],
+        merge_methods: ([ (if $repo.mergeCommitAllowed then "merge" else empty end),
+                          (if $repo.rebaseMergeAllowed then "rebase" else empty end),
+                          (if $repo.squashMergeAllowed then "squash" else empty end) ]),
+        auto_merge_allowed: $repo.autoMergeAllowed,
+        queue_active: (($p.mergeStateStatus == "BLOCKED" or $p.mergeStateStatus == "CLEAN")
+                       and ($ruletypes | index("merge_queue")) != null)
+      }
+    # ---- next valid action, highest-priority first -------------------------
+    | . as $s
+    | .next =
+        (if $s.state != "OPEN" then
+           {action:"none", why:"PR is \($s.state)"}
+         elif ($s.rules_fetched|not) then
+           {action:"rules-unavailable",
+            why:"could not read repos/\($s.repo)/rules/branches/\($s.base) — the required-check list is unknown, so no merge verdict is possible from here"}
+         elif $s.draft then
+           {action:"ready", why:"draft", cmd:"gh pr ready \($s.number) --repo \($s.repo)"}
+         elif $s.mergeable == "CONFLICTING" then
+           {action:"resolve-conflicts", why:"merge conflict with \($s.base)"}
+         elif $s.mergeState == "BEHIND" then
+           {action:"rebase", why:"branch is behind \($s.base)",
+            cmd:"git fetch origin \($s.base):refs/remotes/origin/\($s.base) && git rebase origin/\($s.base) && git push --force-with-lease"}
+         elif ($s.checks.failing_required|length) > 0 then
+           {action:"fix-ci", why:"required check(s) failing: \($s.checks.failing_required|join(", "))",
+            urls:$s.checks.failing_urls}
+         elif ($s.checks.fail > 0) then
+           {action:"triage-ci", why:"non-required check(s) failing: \($s.checks.failing|join(", ")) — not merge-blocking on their own, but UNSTABLE keeps the gate shut",
+            urls:$s.checks.failing_urls}
+         elif $s.unresolved_threads > 0 then
+           {action:"resolve-threads", why:"\($s.unresolved_threads) unresolved review thread(s)",
+            threads:$s.threads}
+         elif ($needs_copilot and ($s.has_copilot_review_on_head|not)
+               and ($s.requested_reviewers|map(test("copilot";"i"))|any)) then
+           {action:"await-review", why:"Copilot review already requested for \($s.headOid[0:8]) and not delivered yet — waiting, not re-requesting"}
+         elif ($needs_copilot and ($s.has_copilot_review_on_head|not)) then
+           {action:"request-review", why:"copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — a push invalidates the previous review, it stays on the old commit",
+            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+         elif ($s.has_review_on_head|not) then
+           {action:"request-review",
+            why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed"
+                 + (if $s.reviewDecision == "APPROVED"
+                    then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
+                    else "" end)),
+            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+         elif ($s.checks.pending_required|length) > 0 then
+           {action:"wait", why:"required check(s) still running: \($s.checks.pending_required|join(", "))"}
+         elif ($s.mergeState == "CLEAN"
+               and ($s.merge_methods|index("merge")|not)
+               and ($s.merge_methods|index("rebase")|not)) then
+           {action:"blocked",
+            why:"clean, but this repo allows only squash — policy forbids squash, so enable merge or rebase first"}
+         elif $s.mergeState == "CLEAN" then
+           ({action:"merge",
+             why:"clean",
+             method:(if ($s.merge_methods|index("merge")) then "--merge" else "--rebase" end)}
+            + (if $s.queue_active
+               then {note:"merge queue active — omit --delete-branch (it is rejected) and let the queue pick the strategy"}
+               else {} end))
+         elif $s.mergeState == "UNSTABLE" then
+           {action:"triage-ci", why:"UNSTABLE: a non-required check is red; the gate stays shut until it is green or the PR is force-merged"}
+         elif $s.checks.pending > 0 then
+           {action:"wait", why:"\($s.checks.pending) check(s) still running (none of them required)"}
+         else
+           {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review — check branch protection manually"}
+         end)
+  '
+}
+
+render() {
+  jq -r '
+    "PR #\(.number)  \(.title)",
+    "  state       : \(.state)\(if .draft then " (DRAFT)" else "" end)  mergeable=\(.mergeable)  mergeState=\(.mergeState)",
+    "  head        : \(.headOid[0:8]) on \(.head) -> \(.base)",
+    "  checks      : \(.checks.pass) pass, \(.checks.fail) fail, \(.checks.pending) pending, \(.checks.skip) skip (of \(.checks.total))",
+    (if (.checks.failing|length) > 0 then "  failing     : \(.checks.failing|join(", "))" else empty end),
+    (if (.checks.failing_required|length) > 0 then "  ^ REQUIRED  : \(.checks.failing_required|join(", "))" else empty end),
+    "  rulesets    : \(if (.rulesets|length)>0 then (.rulesets|join(", ")) else "none" end)",
+    "  reviews     : \(if .has_review_on_head then (.reviews_on_head|to_entries|map("\(.key)=\(.value)")|join(", ")) else "NONE on current head" end)  decision=\(if .reviewDecision=="" then "-" else .reviewDecision end)",
+    "  threads     : \(.unresolved_threads) unresolved",
+    "  merge       : methods=[\(.merge_methods|join(","))] auto=\(.auto_merge_allowed) queue=\(.queue_active)",
+    "",
+    "NEXT: \(.next.action) — \(.next.why)",
+    (if .next.method then "  method: \(.next.method)" else empty end),
+    (if .next.note   then "  note  : \(.next.note)"   else empty end),
+    (if .next.cmd    then "  cmd   : \(.next.cmd)"    else empty end),
+    (if .next.threads then (.next.threads[]|"  thread \(.threadId) (comment \(.commentId)) by \(.author) on \(.path)") else empty end),
+    (if .next.urls then (.next.urls[]|"  \(.)") else empty end)
+  '
+}
+
+snapshot() {
+  local g r base st
+  g=$(collect) || die "GraphQL query failed"
+
+  # GitHub computes mergeStateStatus lazily: the first read of a PR often
+  # answers UNKNOWN and only schedules the calculation. Every gate decision
+  # below (BEHIND, CLEAN, UNSTABLE) depends on it, so ask again once rather
+  # than reporting a verdict built on UNKNOWN.
+  st=$(jq -r '.data.repository.pullRequest.mergeStateStatus // "UNKNOWN"' <<<"$g")
+  if [ "$st" = "UNKNOWN" ] &&
+     [ "$(jq -r '.data.repository.pullRequest.state' <<<"$g")" = "OPEN" ]; then
+    sleep 2
+    g=$(collect) || die "GraphQL query failed"
+  fi
+
+  base=$(jq -r '.data.repository.pullRequest.baseRefName // "main"' <<<"$g")
+
+  local enc r ok
+  enc=$(printf '%s' "$base" | jq -sRr @uri)
+  if r=$(gh api "repos/$REPO/rules/branches/$enc" 2>/dev/null); then ok=1; else ok=0; r='[]'; fi
+  evaluate "$g" "$r" "$ok"
+}
+
+emit() {
+  if [ "$JSON" = "1" ]; then jq . <<<"$1"; else render <<<"$1"; fi
+}
+
+# ---------------------------------------------------------------- run -------
+if [ "$WATCH" = "0" ]; then
+  emit "$(snapshot)"
+  exit 0
+fi
+
+# Watch: stop at the first thing that can be acted on, not at full settle.
+start=$(date +%s); seen_fail=""
+while :; do
+  s=$(snapshot)
+  act=$(jq -r '.next.action' <<<"$s")
+  fails=$(jq -r '.checks.failing|join(",")' <<<"$s")
+
+  if [ -n "$fails" ] && [ "$fails" != "$seen_fail" ]; then
+    seen_fail="$fails"
+    echo "ACTIONABLE: check failed -> $fails"
+    emit "$s"; exit 0
+  fi
+  case "$act" in
+    fix-ci|triage-ci|resolve-threads|request-review|rebase|resolve-conflicts|merge|blocked|none)
+      echo "ACTIONABLE: $act"
+      emit "$s"; exit 0 ;;
+  esac
+
+  now=$(date +%s)
+  if [ $((now - start)) -ge "$MAXWAIT" ]; then
+    echo "TIMEOUT after ${MAXWAIT}s — still: $(jq -r '.next.why' <<<"$s")"
+    emit "$s"; exit 1
+  fi
+  echo "waiting: $(jq -r '.next.why' <<<"$s")"
+  sleep "$INTERVAL"
+done
