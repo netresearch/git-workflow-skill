@@ -194,8 +194,12 @@ evaluate() {
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)) then
            {action:"request-review", why:"copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — a push invalidates the previous review, it stays on the old commit",
             cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
-         elif (($s.has_review_on_head|not) and ($s.reviewDecision == "")) then
-           {action:"request-review", why:"no human or bot review on the current head — do not merge unreviewed",
+         elif ($s.has_review_on_head|not) then
+           {action:"request-review",
+            why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed"
+                 + (if $s.reviewDecision == "APPROVED"
+                    then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
+                    else "" end)),
             cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
          elif ($s.checks.pending_required|length) > 0 then
            {action:"wait", why:"required check(s) still running: \($s.checks.pending_required|join(", "))"}
