@@ -1027,7 +1027,7 @@ with `InputObject 'DequeuePullRequestInput' doesn't accept argument`.
 fails outright with:
 
 ```
-Cannot use `-d` or `--delete-branch` when merge queue enabled
+Cannot use -d or --delete-branch when merge queue enabled
 ```
 
 This is a hard error, not a warning: the merge does not happen. In a batch
@@ -1036,8 +1036,8 @@ on it in one rollout before the message was read. Drop `--delete-branch` from
 any script that merges across repos where some enable a queue, and let the
 repo's own "automatically delete head branches" setting handle cleanup. Passing
 a merge-method flag (`--merge` / `--rebase`) is likewise pointless once a queue
-owns the branch; it answers `The merge strategy for main is set by the merge
-queue`.
+owns the branch; it responds with `The merge strategy for main is set by the
+merge queue`.
 
 **Verify a "dropped" queue entry via the issue timeline before re-arming.**
 Right after a queue merge, `gh pr view --json state` can report `OPEN` and the
