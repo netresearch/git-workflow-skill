@@ -215,6 +215,12 @@ evaluate() {
             + (if $s.queue_active
                then {note:"merge queue active — omit --delete-branch (it is rejected) and let the queue pick the strategy"}
                else {} end))
+         elif ($s.mergeState == "UNSTABLE" and $s.checks.pending > 0) then
+           # GitHub reports UNSTABLE while a non-required check is merely
+           # pending, not only when one is red. Calling that "a non-required
+           # check is red" sends the reader hunting for a failure that does
+           # not exist — nothing here has failed yet.
+           {action:"wait", why:"UNSTABLE while \($s.checks.pending) non-required check(s) are still running — nothing has failed"}
          elif $s.mergeState == "UNSTABLE" then
            {action:"triage-ci", why:"UNSTABLE: a non-required check is red; the gate stays shut until it is green or the PR is force-merged"}
          elif $s.checks.pending > 0 then
