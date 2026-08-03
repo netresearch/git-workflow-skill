@@ -1269,7 +1269,7 @@ been thrown out four times from a loaded pool. If an entry still drops on a
 quiet pool, the timeout is genuinely too short — read it rather than retrying:
 
 ```bash
-gh api repos/$R/rules/branches/main \
+gh api "repos/$R/rules/branches/main" \
   --jq '.[]|select(.type=="merge_queue")|.parameters'
 ```
 
@@ -1278,8 +1278,9 @@ since other PRs thrash the same way and their runs are not yours to kill:
 
 ```bash
 gh run list --repo "$R" --limit 40 --json databaseId,status,headBranch \
-  --jq '.[]|select(.status!="completed")
-        |select(.headBranch|startswith("gh-readonly-queue/main/pr-'"$PR"'-"))|.databaseId' \
+  | jq -r --arg p "gh-readonly-queue/main/pr-$PR-" \
+      '.[] | select(.status != "completed")
+           | select(.headBranch | startswith($p)) | .databaseId' \
   | xargs -r -n1 gh run cancel --repo "$R"
 ```
 
