@@ -266,6 +266,47 @@ On `CLOSED / FIXED`, treat it as an ordinary already-fixed bot thread: reply wit
 
 Observed 2026-07-30 on a `docker:S8544` finding: gate `OK`, 0 open issues, 0 failing checks, `mergeStateStatus: BLOCKED` on one stale thread — a merge that looked inexplicably stuck until the thread was read.
 
+### A suggestion against verbatim material is a suggestion to falsify it
+
+Reviewers read a diff, not its provenance. When a comment proposes tidying something
+that was **copied in verbatim** — a captured transcript, a quoted log line, an error
+string, a fixture recorded from a real system — check the source of truth before
+touching it. Improving such a line does not improve the artifact; it turns evidence
+into an approximation, and quietly breaks anyone who greps their own logs for the
+string as it is actually emitted.
+
+**Real case:** a review asked to correct "occured" to "occurred" in a before/after
+transcript. The misspelling belonged to the server under discussion:
+
+```php
+// upstream, unchanged for years
+throw new …('An error occured on handling the request.', 1603956982);
+```
+
+Declined, citing that line. The reply matters as much as the decision — a bare "no"
+reads as resistance, while the quoted source makes the reason checkable in seconds.
+
+The general form: before editing any line, know whether you are its author or its
+witness. Prose you wrote is yours to improve; recorded output is not.
+
+### Check whether the literal fix is complete before applying it
+
+A correct diagnosis does not guarantee a sufficient remedy. A reviewer sees the line
+they commented on, not the rest of the mechanism — so applying the suggestion exactly
+as written can leave a half-change that is worse than the original.
+
+**Real case:** a comment correctly objected to `time()` in a test-setup example as
+non-deterministic and asked for a fixed instant. Applying that to the shown line alone
+would have frozen the clock the code reads while the fixtures around it still came
+from `time()` — putting the two years apart and failing every assertion as expired. A
+rare flake would have become a certain failure. The fix that works pins **one**
+constant and drives both from it.
+
+Trace the suggested change through the code it touches before committing to it. When
+it turns out to be incomplete, say so in the reply and describe what you did instead —
+that is the part a reviewer cannot see, and the reason to prefer it over the literal
+reading.
+
 ### AI-authored commits on the branch are untrusted
 
 Distinct from a review *comment*: Copilot **Autofix**, Gemini "apply suggestion", and similar bot-authored **commits already pushed onto the PR branch** are patches, not settled work — they can carry real bugs, and they arrive looking done. In one `/pr-finish` run the autofix commits had (a) deleted a variable's initialization while keeping the line that reads it — an `UnboundLocalError` on every non-account query — and (b) added an unbounded `while True` pagination loop that later OOM-crashed the machine (see the *Cap memory when the fix activates or relies on a loop* bullet under *Fixing the failure*). Treat every bot commit like an untrusted patch:
