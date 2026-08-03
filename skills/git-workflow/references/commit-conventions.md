@@ -157,13 +157,13 @@ gh api /repos/{owner}/{repo}/commits/HEAD --jq '.commit.verification | {verified
 
 ```bash
 BEFORE=$(git rev-parse HEAD)
-git add <named paths>
+git add -- path/to/file path/to/other
 git commit -s -F msg.txt
 [ "$(git rev-parse HEAD)" != "$BEFORE" ] || { echo "commit aborted — re-stage and retry" >&2; exit 1; }
 git log -1 --format='%h %G?'          # now describes YOUR commit
 ```
 
-`git commit && echo done` is not enough either: with `set -o pipefail` off, in a `&&` chain after a subshell, or when the exit code is consumed by a following `echo`, the failure is easy to lose. The HEAD comparison cannot be. The same trap makes a following `git push` succeed while pushing nothing new — the branch simply has not moved.
+Checking `git commit`'s own exit code works, but only if nothing reads it first — and in practice the next thing in the block is a status line that answers from the *previous* commit and looks right. `git log -1 --format='%G?'` prints `G`, and the `git push` that follows succeeds while pushing nothing new, because the branch never moved. HEAD is the one value the aborted commit did not leave intact, which is why comparing it answers the question the others only appear to.
 
 **Never skip hooks** unless explicitly told to. `--no-verify` bypasses hook enforcement that exists for good reasons. If a hook fails, diagnose the root cause.
 
