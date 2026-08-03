@@ -2,6 +2,20 @@
 
 Canonical polling loop to drive a PR to merge once review threads are handled. Hand-rolling this per PR invites classification bugs (a soft check counted as hard ⇒ false HOLD; a missed one ⇒ premature merge).
 
+## Driving many PRs at once
+
+One `pr-status.sh --watch` per PR, all in parallel in one background command — each instance returns at *its* first actionable event, so a slow PR never delays acting on a fast one:
+
+```bash
+for p in "owner/repo-a 11" "owner/repo-b 22"; do
+  ( set -- $p
+    pr-status.sh -R "$1" "$2" --watch | grep '^NEXT:' | tail -1 | sed "s|^|$1#$2 |" >> results.txt ) &
+done
+wait; cat results.txt
+```
+
+Then act per line: `NEXT: merge` → `pr-merge.sh` in a **new** invocation (merge-gate hooks evaluate at call time — never chain the wait and the merge in one command); `resolve-threads` / `address-review` → handle that PR individually while the rest keep going. Do not write a bespoke driver that re-reads PR state in a loop and dispatches on it — that re-implements `pr-status.sh` badly, waits for the one outcome it was told about, and sleeps through the rest (verified 2026-08-03: a 7-repo release sweep completed on this pattern with zero hand-rolled polling).
+
 ## Check taxonomy
 
 Classify every failing check BEFORE reacting:
