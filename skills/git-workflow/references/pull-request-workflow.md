@@ -1236,7 +1236,7 @@ threads, bot reviews in flight, or Sonar-style informational checks. Arming at
 PR creation therefore merges over unaddressed review feedback the moment CI is
 green.
 
-Arm auto-merge / enqueue **only when all three hold**:
+Arm auto-merge / enqueue **only when all four hold**:
 
 1. **Zero unresolved review threads** (GraphQL `reviewThreads`, not the UI).
 2. **All checks green** — including non-required ones you intend to honor.
