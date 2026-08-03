@@ -269,7 +269,7 @@ Observed 2026-07-30 on a `docker:S8544` finding: gate `OK`, 0 open issues, 0 fai
 ### A suggestion against verbatim material is a suggestion to falsify it
 
 Reviewers read a diff, not its provenance. When a comment proposes tidying something
-that was **copied in verbatim** — a captured transcript, a quoted log line, an error
+that was **copied verbatim** — a captured transcript, a quoted log line, an error
 string, a fixture recorded from a real system — check the source of truth before
 touching it. Improving such a line does not improve the artifact; it turns evidence
 into an approximation, and quietly breaks anyone who greps their own logs for the
@@ -279,8 +279,8 @@ string as it is actually emitted.
 transcript. The misspelling belonged to the server under discussion:
 
 ```php
-// upstream, unchanged for years
-throw new …('An error occured on handling the request.', 1603956982);
+// ter_rest/Classes/Http/RouteHandler.php:125, quoted as it stands
+: $this->responseFactory->createErrorResponse($request, 1603956982, 'An error occured on handling the request.');
 ```
 
 Declined, citing that line. The reply matters as much as the decision — a bare "no"
