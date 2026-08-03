@@ -66,12 +66,6 @@ ls lefthook.yml .lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pr
 
 Install: `lefthook install` | `composer install` | `npm install` | `pre-commit install`
 
-## Critical Release Rules
-
-1. **Immutable releases**: deleted releases block tag reuse; bump version.
-2. **Multi-branch releases**: Use `--latest=false` from non-default branches.
-3. **Pre-release**: version bumped, CI green, CHANGELOG updated, `git pull` first.
-
 ## PR Merge Requirements
 
 Before merging: threads resolved, CI green (incl. annotations), rebased, signed, **and reviewed** (human or bot, on the current head). Rebase-only + signed: `git merge --ff-only`.
@@ -80,8 +74,10 @@ Before merging: threads resolved, CI green (incl. annotations), rebased, signed,
 
 ```bash
 ./scripts/verify-git-workflow.sh /path/to/repository
-# Full merge-gate state + next valid action, 2 API calls:
+# Merge-gate state + next valid action, 2 API calls:
 ./scripts/pr-status.sh [-R owner/repo] [PR] [--json] [--watch]
+# Merge with the method the repo allows; refuses when the gate is shut:
+./scripts/pr-merge.sh [-R owner/repo] [PR] [--dry-run]
 ```
 
 ---

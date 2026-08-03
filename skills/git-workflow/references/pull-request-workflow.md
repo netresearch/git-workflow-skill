@@ -28,6 +28,25 @@ Measured on a 40-PR rollout that did not have it: **183 of 370 shell calls
 were PR-status probing**, the rulesets endpoint was queried exactly once, and
 `copilot_code_review` blocked four merges by surprise.
 
+## Then Merge: `scripts/pr-merge.sh`
+
+```bash
+./scripts/pr-merge.sh -R owner/repo 123
+./scripts/pr-merge.sh -R owner/repo 123 --dry-run   # print the command only
+```
+
+It reads `pr-status.sh --json` and refuses unless `NEXT` is `merge`, printing
+the gate that is shut instead. When it does merge it uses the method the
+repository allows and drops `--delete-branch` where a merge queue is active.
+
+Both of those are silent traps for a hand-written `gh pr merge --merge
+--delete-branch`. A repository with `allow_merge_commit: false` answers
+"Merge commits are not allowed on this repository"; one with a merge queue
+answers "Cannot use `--delete-branch` when merge queue enabled". A 54-repository
+rollout hit each of them three times before the detection was written down
+once. Squash is never used — it discards the atomic commits and their
+signatures.
+
 ### `--watch` returns on the first actionable event, not at full settle
 
 An `until [ pending == 0 ]` loop learns nothing until the slowest matrix job
