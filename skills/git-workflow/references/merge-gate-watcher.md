@@ -7,11 +7,12 @@ Canonical polling loop to drive a PR to merge once review threads are handled. H
 One `pr-status.sh --watch` per PR, all in parallel in one background command — each instance returns at *its* first actionable event, so a slow PR never delays acting on a fast one:
 
 ```bash
+d=$(mktemp -d)   # fresh dir: no interleaved writes, no stale files from a prior run
 for p in "owner/repo-a 11" "owner/repo-b 22"; do
   ( set -- $p
-    pr-status.sh -R "$1" "$2" --watch | grep '^NEXT:' | tail -1 | sed "s|^|$1#$2 |" >> results.txt ) &
+    pr-status.sh -R "$1" "$2" --watch | grep '^NEXT:' | tail -1 | sed "s|^|$1#$2 |" > "$d/${1//\//_}-$2" ) &
 done
-wait; cat results.txt
+wait; cat "$d"/*
 ```
 
 Then act per line: `NEXT: merge` → `pr-merge.sh` in a **new** invocation (merge-gate hooks evaluate at call time — never chain the wait and the merge in one command); `resolve-threads` / `address-review` → handle that PR individually while the rest keep going. Do not write a bespoke driver that re-reads PR state in a loop and dispatches on it — that re-implements `pr-status.sh` badly, waits for the one outcome it was told about, and sleeps through the rest (verified 2026-08-03: a 7-repo release sweep completed on this pattern with zero hand-rolled polling).
