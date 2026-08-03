@@ -1236,12 +1236,53 @@ threads, bot reviews in flight, or Sonar-style informational checks. Arming at
 PR creation therefore merges over unaddressed review feedback the moment CI is
 green.
 
-Arm auto-merge / enqueue **only when all three hold**:
+Arm auto-merge / enqueue **only when all four hold**:
 
 1. **Zero unresolved review threads** (GraphQL `reviewThreads`, not the UI).
 2. **All checks green** — including non-required ones you intend to honor.
 3. **No pending review request** (`gh pr view --json reviewRequests` is `[]`)
    — a re-requested bot review that has not landed yet counts as pending.
+4. **A quiet runner pool** — see below.
+
+**Do not enqueue into a busy runner pool.** A merge queue drops an entry whose
+required checks do not report within `check_response_timeout_minutes` (default
+5). That clock starts at enqueue and covers the wait for a *runner*, not just
+the run: with the pool saturated, the jobs sit in `queued` with no runner and
+the entry is discarded having executed nothing.
+
+Retrying makes it worse. Each attempt spawns a full set of runs on a
+`gh-readonly-queue/*` branch, and a dropped entry **does not cancel them** — so
+every retry leaves more runs holding slots and slows the next attempt. In
+netresearch/ofelia this piled up 18 unfinished runs and turned a four-attempt
+loop into a guaranteed failure, while the same required checks concluded in
+**2.0 minutes** in PR context, well inside the window.
+
+Gate on it instead: enqueue when the repo has at most ~2 unfinished runs.
+
+```bash
+gh run list --repo "$R" --limit 25 --json status \
+  --jq '[.[]|select(.status!="completed")]|length'
+```
+
+Done that way, three consecutive PRs merged on the first attempt after one had
+been thrown out four times from a loaded pool. If an entry still drops on a
+quiet pool, the timeout is genuinely too short — read it rather than retrying:
+
+```bash
+gh api "repos/$R/rules/branches/main" \
+  --jq '.[]|select(.type=="merge_queue")|.parameters'
+```
+
+Before that one retry, cancel your own orphaned queue runs — only your PR's,
+since other PRs thrash the same way and their runs are not yours to kill:
+
+```bash
+gh run list --repo "$R" --limit 40 --json databaseId,status,headBranch \
+  | jq -r --arg p "gh-readonly-queue/main/pr-$PR-" \
+      '.[] | select(.status != "completed")
+           | select(.headBranch | startswith($p)) | .databaseId' \
+  | xargs -r -n1 gh run cancel --repo "$R"
+```
 
 Bot reviews (Copilot, Gemini) land 2–5 minutes after each push — wait that
 window out before concluding "no threads".
