@@ -132,6 +132,18 @@
       "name": "conflict-side-selection-check-the-body",
       "prompt": "Six merge conflicts all look the same: upstream made a minimal nullability fix to a signature my branch already rewrote further. Can I resolve them all by taking my side?",
       "expected_output": "Should refuse a blanket rule and require checking each function body outside the conflict, specifically whether tightening a nullable parameter to a non-null default leaves a null test or null coalesce dead; should also require checking call sites of any method whose parameters were reordered, since positional calls do not conflict"
+    },
+    {
+      "id": 23,
+      "name": "review-suggestion-against-verbatim-material",
+      "prompt": "A reviewer points out a spelling mistake in my pull request: an example transcript says 'occured'. Fix it?",
+      "expected_output": "Should check whether the line is verbatim material before editing: if the transcript is captured output, the misspelling belongs to the system that emitted it and correcting it turns evidence into an approximation and breaks grepping for the real string; should decline citing the upstream source line rather than declining bare"
+    },
+    {
+      "id": 24,
+      "name": "literal-review-fix-would-be-incomplete",
+      "prompt": "A reviewer says the test setup should not build its clock from time(). I'll replace it with a fixed timestamp on that line.",
+      "expected_output": "Should trace the change through the surrounding code before applying: pinning the instant the code reads while the fixtures still come from time() puts the two far apart and fails everything as expired, turning a rare flake into a certain failure; should pin one constant and drive both from it, and say in the reply what was done instead of the literal suggestion"
     }
   ]
 }
