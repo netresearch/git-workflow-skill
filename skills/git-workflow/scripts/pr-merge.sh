@@ -18,7 +18,9 @@
 #   pr-merge.sh -R owner/repo 123
 #   pr-merge.sh -R owner/repo 123 --dry-run   # print the command, run nothing
 #
-# Exit codes: 0 merged (or queued), 1 the gate is shut, 2 usage/lookup error.
+# Exit codes: 0 merged (or queued), 1 the gate is shut and nothing was
+# attempted, 2 an error — usage, lookup, or the merge call itself failed.
+# 1 is retryable later; 2 needs a human.
 set -uo pipefail
 
 REPO=""; PR=""; DRY=0
@@ -44,17 +46,23 @@ command -v jq >/dev/null || die "jq not found"
 STATUS=$("$SCRIPT_DIR/pr-status.sh" ${REPO:+-R "$REPO"} ${PR:+"$PR"} --json) \
   || die "pr-status.sh failed"
 
-read -r ACTION WHY REPO PR QUEUE METHODS <<EOF
-$(printf '%s' "$STATUS" | jq -r '
+# Tab-separated, read with a tab-only IFS: the default IFS splits on spaces too,
+# which would tear `why` apart, and it collapses an empty field so every later
+# variable shifts by one. `jq -e` turns a schema change or truncated output into
+# a failure here rather than an empty ACTION further down.
+FIELDS=$(printf '%s' "$STATUS" | jq -er '
   [ .next.action,
-    (.next.why // "-" | gsub(" ";" ")),
+    (.next.why // "-"),
     .repo,
     (.number|tostring),
     (.queue_active|tostring),
     (.merge_methods|join(","))
-  ] | @tsv')
+  ] | @tsv') || die "pr-status.sh returned unexpected JSON"
+
+IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS <<EOF
+$FIELDS
 EOF
-WHY=${WHY//$' '/ }
+[ -n "$ACTION" ] && [ -n "$REPO" ] && [ -n "$PR" ] || die "pr-status.sh returned no action"
 
 if [ "$ACTION" != "merge" ]; then
   printf 'pr-merge: not merging %s#%s — %s: %s\n' "$REPO" "$PR" "$ACTION" "$WHY" >&2
@@ -86,7 +94,7 @@ fi
 OUT=$("${CMD[@]}" 2>&1); RC=$?
 if [ "$RC" -ne 0 ]; then
   printf 'pr-merge: %s#%s failed: %s\n' "$REPO" "$PR" "$(printf '%s' "$OUT" | tr '\n' ' ')" >&2
-  exit 1
+  exit 2
 fi
 
 if [ "$QUEUE" = "true" ]; then
