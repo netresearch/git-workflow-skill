@@ -153,6 +153,18 @@ gh api /repos/{owner}/{repo}/commits/HEAD --jq '.commit.verification | {verified
 
 **Never amend a commit with pre-commit-hook failures.** If the pre-commit hook fails, the commit **did not happen**. Running `git commit --amend` then modifies the PREVIOUS commit, which can destroy work. Fix the hook issue, re-stage, and create a new commit.
 
+**Prove the commit landed before reporting it — compare HEAD, not the last commit.** A reformatting hook (`ruff format`, `black`, `isort`, `prettier`) rewrites the staged files and *aborts* the commit. Every check that reads "the last commit" then describes the commit before yours and reports success:
+
+```bash
+BEFORE=$(git rev-parse HEAD)
+git add <named paths>
+git commit -s -F msg.txt
+[ "$(git rev-parse HEAD)" != "$BEFORE" ] || { echo "commit aborted — re-stage and retry" >&2; exit 1; }
+git log -1 --format='%h %G?'          # now describes YOUR commit
+```
+
+`git commit && echo done` is not enough either: with `set -o pipefail` off, in a `&&` chain after a subshell, or when the exit code is consumed by a following `echo`, the failure is easy to lose. The HEAD comparison cannot be. The same trap makes a following `git push` succeed while pushing nothing new — the branch simply has not moved.
+
 **Never skip hooks** unless explicitly told to. `--no-verify` bypasses hook enforcement that exists for good reasons. If a hook fails, diagnose the root cause.
 
 **Never bypass signing** unless explicitly told to. `--no-gpg-sign` and `-c commit.gpgsign=false` disable commit signing; the result will fail branch-protection or policy checks that require signed commits later.
