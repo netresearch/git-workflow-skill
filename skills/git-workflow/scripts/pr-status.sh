@@ -208,7 +208,11 @@ evaluate() {
            {action:"wait",
             why:("already in the merge queue at position \($s.queue_entry.position)"
                  + " (\($s.queue_entry.state))"
-                 + (if $s.queue_entry.eta
+                 # Spelled `!= null` rather than left implicit: jq counts only
+                 # null and false as false, so a 0-second ETA does render — but
+                 # a reader arriving from a language where 0 is falsy reads a
+                 # bug here that is not present.
+                 + (if ($s.queue_entry.eta != null)
                     then ", ~\((($s.queue_entry.eta) / 60) | floor) min to go"
                     else "" end)
                  + " — the queue merges it once its own checks pass; enqueueing"
@@ -269,7 +273,7 @@ render() {
     "  threads     : \(.unresolved_threads) unresolved",
     "  merge       : methods=[\(.merge_methods|join(","))] auto=\(.auto_merge_allowed) queue=\(.queue_active)",
     (if .queue_entry then
-       "  in queue    : position \(.queue_entry.position), \(.queue_entry.state)\(if .queue_entry.eta then ", ~\(((.queue_entry.eta) / 60) | floor) min" else "" end)"
+       "  in queue    : position \(.queue_entry.position), \(.queue_entry.state)\(if (.queue_entry.eta != null) then ", ~\(((.queue_entry.eta) / 60) | floor) min" else "" end)"
      else empty end),
     "",
     "NEXT: \(.next.action) — \(.next.why)",

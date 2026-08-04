@@ -1354,7 +1354,7 @@ gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){
   pullRequest(number:NNN){ mergeQueueEntry{ state position estimatedTimeToMerge } }}}'
 ```
 
-`mergeQueueEntry` is null unless this PR holds an entry; when it does not, it
+`mergeQueueEntry` is null unless this PR holds an entry; when it does, it
 carries `position`, `state` (`QUEUED`, `AWAITING_CHECKS`, `MERGEABLE`,
 `UNMERGEABLE`, `LOCKED`) and an ETA in seconds. The repo-level signal — a
 `merge_queue` ruleset exists — answers a different question and cannot stand in
