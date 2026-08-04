@@ -1248,6 +1248,10 @@ re-resolve `refs/pull/N/merge` against the moved base. A check that depends
 on base state (template drift, conflict detection) stays wrong after main
 moved; push a base-merge into the PR branch instead of rerunning.
 
+### Follow-up pushes to an armed PR branch: confirm the PR is still OPEN
+
+Once auto-merge (or a queue) is armed, a fast merge plus branch auto-delete can land the PR before your follow-up commit does. `git push` to the deleted branch then silently **re-creates it** — off a now-stale base, with your commit dangling and no PR attached; nothing errors and nothing merges. Before pushing any follow-up to an armed branch, check `gh pr view <n> --json state` — if `MERGED`, put the follow-up on a fresh branch off updated main and open a new PR. If a dangling re-created branch already exists, delete it and rescue the commit via cherry-pick.
+
 ### Auto-Merge / Merge-Queue Arming Gate
 
 `gh pr merge --auto` is a **deferred merge with no human in the loop** — and a
