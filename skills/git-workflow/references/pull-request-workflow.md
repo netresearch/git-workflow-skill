@@ -1203,6 +1203,14 @@ This bites hardest on dependency bumps. A resolver succeeding (`composer update`
 - Real case: a project bumped `nr-llm ^0.12 → ^0.22`. Every `pull_request` check passed. The `validate` job — gated on `push: main`, so absent from the PR — boots the app and compiles the DI container; post-merge it failed because a *released* sibling (`t3-cowriter v3.1.1`, constraint `nr-llm >=0.3 <1.0`) referenced a class the new `nr-llm` had removed. Resolution was green; the runtime compile was not. Recovery cost a sibling release plus a follow-up PR.
 - Verify the runtime path, not just resolution: run the actual boot/compile (or the exact `push:main`-only job) against the resolved tree locally before merging. For the class-not-found family, a fast proxy is to confirm every referenced upstream symbol still exists at the *resolved* version.
 
+### A parallel-merged config PR turns your green check red on main
+
+The second way PR-green diverges from main-green needs no `push:`-gated job: a PR's lint/analysis runs are pinned to the **config on the PR branch**, and a sibling PR that adopts a stricter shared config (rector/eslint/phpstan rule sets) can merge between your last CI run and your merge. Both PRs are green in isolation; the merge result on `main` fails the very check both passed. Nothing lied — the config changed under you.
+
+- Real case (2026-08-04, t3x-nr-vault): PR A was rebased and merged in parallel with PR B ("adopt the shared org rector config", which added `NewlineAfterStatementRector`). PR A's green Rector run predated that config; `ci / Rector` went red on `main` over one missing blank line. Recovery was a one-line fix-forward PR.
+- Rebasing before merge does **not** close the window — the config PR can land after your rebase. Only a merge queue or a "require branches to be up to date" rule makes it structurally impossible; where neither is on, expect this occasionally on active repos.
+- Consequence: watching the post-merge run on `main` is part of the merge, because this failure class is visible nowhere else. When it fires, diff `main`'s history for config-touching merges since your branch's last CI run and fix forward against the new config — it is mechanical, not an investigation into which check was wrong.
+
 ### Stacked PRs: retarget before you merge, `--delete-branch` only at the end
 
 A stacked chain (PR2 based on PR1's branch, PR3 on PR2's, …) merges
