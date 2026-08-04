@@ -1250,7 +1250,20 @@ moved; push a base-merge into the PR branch instead of rerunning.
 
 ### Follow-up pushes to an armed PR branch: confirm the PR is still OPEN
 
-Once auto-merge (or a queue) is armed, a fast merge plus branch auto-delete can land the PR before your follow-up commit does. `git push` to the deleted branch then silently **re-creates it** — off a now-stale base, with your commit dangling and no PR attached; nothing errors and nothing merges. Before pushing any follow-up to an armed branch, check `gh pr view <n> --json state` — if `MERGED`, put the follow-up on a fresh branch off updated main and open a new PR. If a dangling re-created branch already exists, delete it and rescue the commit via cherry-pick.
+Once auto-merge (or a queue) is armed, a fast merge plus branch auto-delete can
+land the PR before your follow-up commit does. `git push` to the deleted branch
+then silently **re-creates it** — off a now-stale base, with your commit
+dangling and no PR attached; nothing errors and nothing merges.
+
+Before pushing any follow-up to an armed branch, confirm the PR is still open:
+
+```bash
+gh pr view NUMBER --json state --jq '.state'   # must print OPEN
+```
+
+Any other state (`MERGED`, `CLOSED`) is a stop signal: put the follow-up on a
+fresh branch off updated main and open a new PR. If a dangling re-created
+branch already exists, delete it and rescue the commit via cherry-pick.
 
 ### Auto-Merge / Merge-Queue Arming Gate
 
