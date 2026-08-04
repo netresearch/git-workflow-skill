@@ -409,6 +409,15 @@ Rationale: IDEs that index the tree (gopls, IntelliJ, VS Code) choke on in-place
 └── bugfix-y/       # optional bugfix branch worktree
 ```
 
+**`main/` is reference only — all work happens in fresh worktrees.** `main/` exists for reading code, running `git fetch`, and serving as the base for new worktrees. Never commit, edit, or develop directly in it. Every task — feature, fix, release, experiment — gets its own fresh worktree on its own branch, cut from a freshly fetched `origin/main` (in this layout `origin/*` does NOT auto-update, so always fetch first):
+
+```bash
+git -C /projects/<repo>/.bare fetch origin
+git -C /projects/<repo>/.bare worktree add -b <branch> /projects/<repo>/<branch> origin/main
+```
+
+Remove the worktree and the local branch once the PR merges.
+
 **Set up a new project this way:**
 
 ```bash
