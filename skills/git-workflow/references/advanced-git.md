@@ -409,6 +409,15 @@ Rationale: IDEs that index the tree (gopls, IntelliJ, VS Code) choke on in-place
 └── bugfix-y/       # optional bugfix branch worktree
 ```
 
+**`main/` is reference only — all work happens in fresh worktrees.** `main/` exists for reading code, running `git fetch`, and serving as the base for new worktrees. Never commit, edit, or develop directly in it. Every task — feature, fix, release, experiment — gets its own fresh worktree on its own branch, cut from a freshly fetched `origin/main` (in this layout `origin/*` does NOT auto-update, so always fetch first):
+
+```bash
+git -C /projects/<repo>/.bare fetch origin
+git -C /projects/<repo>/.bare worktree add -b <branch> /projects/<repo>/<branch> origin/main
+```
+
+Remove the worktree and the local branch once the PR merges.
+
 **Set up a new project this way:**
 
 ```bash
@@ -438,8 +447,8 @@ git -C .bare worktree remove ../feature-x   # clean up when the PR merges
 
 ```bash
 # WRONG — both of these land INSIDE the bare repo
-git -C .bare worktree add -b feature-x feature-x main
-git -C .bare worktree add feature-x -b feature-x main
+git -C .bare worktree add -b feature-x feature-x origin/main
+git -C .bare worktree add feature-x -b feature-x origin/main
 # → creates .bare/feature-x as a worktree of the bare repo — the
 #   worktree is functional (it has a .git file pointing at .bare),
 #   but it violates the sibling-layout convention and confuses any
@@ -452,12 +461,14 @@ Note on the branch argument: plain `worktree add <path> <branch>` requires the b
 
 ```bash
 # RIGHT — absolute path (preferred; works from any cwd)
-git -C /projects/<repo>/.bare worktree add -b feature-x /projects/<repo>/feature-x main
+git -C /projects/<repo>/.bare worktree add -b feature-x /projects/<repo>/feature-x origin/main
 
 # Also fine when you're certain of cwd — sibling-relative resolves
 # against .bare/, so '..' lands next to it.
-git -C .bare worktree add -b feature-x ../feature-x main
+git -C .bare worktree add -b feature-x ../feature-x origin/main
 ```
+
+Use `origin/main` as the start point, not local `main` — local `main` is only current if you explicitly fast-forwarded it after the fetch.
 
 **Recovery if you already created the worktree in the wrong place:**
 
