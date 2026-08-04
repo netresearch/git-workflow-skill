@@ -16,9 +16,14 @@ Merge carefully — read the existing `hooks:` block, add to arrays, never repla
 
 ## Recipe 1: Block `gh pr merge` When Review Threads Are Open
 
-Blocks any `gh pr merge` invocation that would merge a PR with unresolved threads or missing approval.
+Blocks any `gh pr merge` invocation that would merge a PR with unresolved review threads or a non-CLEAN merge state.
 
-Because the merge-gate logic is non-trivial, keep it as an external script rather than inline JSON. Install `scripts/merge-gate.sh` and reference it:
+The merge-gate logic is non-trivial, so it ships as an external script — `scripts/merge-gate.sh` in this skill — rather than inline JSON. Install it and reference it:
+
+```bash
+cp <skill>/scripts/merge-gate.sh ~/.claude/hooks/merge-gate.sh
+chmod +x ~/.claude/hooks/merge-gate.sh
+```
 
 ```json
 {
@@ -39,59 +44,8 @@ Because the merge-gate logic is non-trivial, keep it as an external script rathe
 }
 ```
 
-`~/.claude/hooks/merge-gate.sh`:
 
-```bash
-#!/usr/bin/env bash
-# Reads the Claude Code hook payload on stdin; emits a PreToolUse deny if the
-# target PR has unresolved review threads, pending/rejected review, or a
-# non-CLEAN merge state.
-set -euo pipefail
-CMD=$(jq -r '.tool_input.command // ""')
-
-# Extract PR identifier. Supports the three forms that cover all real usage:
-#   gh pr merge 123
-#   gh pr merge --auto 123
-#   gh pr merge https://github.com/owner/repo/pull/123
-#   gh pr merge owner/repo#123
-PR=""; REPO_FLAG=()
-if [[ "$CMD" =~ gh[[:space:]]+pr[[:space:]]+merge[[:space:]]+(--[a-z-]+[[:space:]]+)*([0-9]+)([[:space:]]|$) ]]; then
-  PR="${BASH_REMATCH[2]}"
-elif [[ "$CMD" =~ gh[[:space:]]+pr[[:space:]]+merge[[:space:]]+(--[a-z-]+[[:space:]]+)*https?://github\.com/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
-  PR="${BASH_REMATCH[3]}"; REPO_FLAG=(--repo "${BASH_REMATCH[2]}")
-elif [[ "$CMD" =~ gh[[:space:]]+pr[[:space:]]+merge[[:space:]]+(--[a-z-]+[[:space:]]+)*([^/[:space:]]+/[^#[:space:]]+)#([0-9]+) ]]; then
-  PR="${BASH_REMATCH[3]}"; REPO_FLAG=(--repo "${BASH_REMATCH[2]}")
-fi
-
-# Could not parse a PR id — let the call through rather than false-positive block.
-[[ -z "$PR" ]] && exit 0
-
-# NB: `reviewThreads` is NOT a valid `gh pr view --json` field — gh errors
-# "Unknown JSON field: reviewThreads" (its whitelist has reviews /
-# reviewRequests / reviewDecision, not reviewThreads). Fetch mergeStateStatus +
-# url via `gh pr view`, then get thread resolution via GraphQL (owner / repo /
-# number parsed from the url). Passing reviewThreads to --json makes the whole
-# call fail → `|| exit 0` → the gate silently allows every merge.
-INFO=$(gh pr view "$PR" "${REPO_FLAG[@]}" --json mergeStateStatus,url 2>/dev/null) || exit 0
-MSS=$(echo "$INFO" | jq -r '.mergeStateStatus // "null"')
-URL=$(echo "$INFO" | jq -r '.url // ""')
-[[ "$URL" =~ github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]] || exit 0
-UNRES=$(gh api graphql -f query="{repository(owner:\"${BASH_REMATCH[1]}\",name:\"${BASH_REMATCH[2]}\"){pullRequest(number:${BASH_REMATCH[3]}){reviewThreads(first:100){nodes{isResolved}}}}}" \
-  --jq '[.data.repository.pullRequest?.reviewThreads?.nodes[]? | select(.isResolved==false)] | length' 2>/dev/null) || UNRES=0
-
-# Gate on unresolved threads + merge state only. Deliberately NOT on
-# reviewDecision: repos with no required-approval rule report reviewDecision ""
-# and merge fine when CLEAN, and mergeStateStatus==CLEAN already encodes the
-# required-approval gate — so gating on reviewDecision!=APPROVED would
-# false-positive-block every such repo.
-if [[ "${UNRES:-0}" -gt 0 || "$MSS" != "CLEAN" ]]; then
-  jq -cn \
-    --arg r "merge-gate: unresolved-threads=$UNRES, mergeState=$MSS — resolve threads / clear the block before merging" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-fi
-```
-
-The hook denies `gh pr merge` when review threads are unresolved or `mergeStateStatus != CLEAN`. It parses the three PR-reference forms `gh pr merge` accepts (plain number, full URL, `owner/repo#N`); if parsing fails, the hook allows the call rather than producing false-positive denies.
+The hook denies `gh pr merge` when review threads are unresolved or `mergeStateStatus != CLEAN` (`UNSTABLE` — a non-required check red — is still a deny). It deliberately does not gate on `reviewDecision`: repos without a required-approval rule report `""` and merge legitimately when CLEAN. It parses the three PR-reference forms `gh pr merge` accepts (plain number — with long/short and `=`-joined flags before it — full URL, `owner/repo#N`), paginates the thread list, and honors an explicit `--repo`/`-R` flag — without that, the PR number resolves against the CWD repo and produces false denials when the command targets another repo. If parsing or the PR lookup fails, the hook allows the call rather than producing false-positive denies. Two usage caveats: the hook evaluates at Bash-call time, so never chain a wait-until-CLEAN loop and the merge in one invocation (wait in one call, merge in the next); and it is a personal-harness gate — server-side branch protection remains the authoritative enforcement.
 
 ## Recipe 2: Reject Edits to Installed Cache Paths
 
