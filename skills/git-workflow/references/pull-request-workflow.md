@@ -1343,6 +1343,26 @@ remote:   Branches that are queued for merging cannot be updated.
 Note the mutation input field is `id:`, not `pullRequestId:` — the latter fails
 with `InputObject 'DequeuePullRequestInput' doesn't accept argument`.
 
+**An enqueued PR still reads as `CLEAN`, so "clean, go merge" is the wrong
+verdict.** `mergeStateStatus` describes the branch, not the queue: a PR sitting
+in the queue keeps answering `CLEAN` with every check green and no open thread,
+which is exactly what a merge-readiness check looks for. Ask the PR itself
+whether it is already in line:
+
+```bash
+gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){
+  pullRequest(number:NNN){ mergeQueueEntry{ state position estimatedTimeToMerge } }}}'
+```
+
+`mergeQueueEntry` is null unless this PR holds an entry; when it does, it
+carries `position`, `state` (`QUEUED`, `AWAITING_CHECKS`, `MERGEABLE`,
+`UNMERGEABLE`, `LOCKED`) and an ETA in seconds. The repo-level signal — a
+`merge_queue` ruleset exists — answers a different question and cannot stand in
+for it. `pr-status.sh` reports both, as `queue=` and an `in queue` line, and
+answers `wait` rather than `merge` while an entry is held; `pr-merge.sh`
+refuses on that same verdict. Enqueueing an entry that already exists only
+restarts its checks and pushes the merge further out.
+
 **`--delete-branch` is rejected while a merge queue is enabled.** `gh pr merge`
 fails outright with:
 

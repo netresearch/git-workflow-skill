@@ -68,6 +68,7 @@ collect() {
       mergeCommitAllowed rebaseMergeAllowed squashMergeAllowed autoMergeAllowed
       pullRequest(number:$pr){
         number title state isDraft mergeable mergeStateStatus reviewDecision
+        mergeQueueEntry{ state position estimatedTimeToMerge }
         author{login}
         baseRefName headRefName headRefOid isCrossRepository
         reviews(last:50){ nodes{ author{login} state commit{oid} } }
@@ -162,7 +163,16 @@ evaluate() {
                           (if $repo.squashMergeAllowed then "squash" else empty end) ]),
         auto_merge_allowed: $repo.autoMergeAllowed,
         queue_active: (($p.mergeStateStatus == "BLOCKED" or $p.mergeStateStatus == "CLEAN")
-                       and ($ruletypes | index("merge_queue")) != null)
+                       and ($ruletypes | index("merge_queue")) != null),
+        # queue_active describes the REPO — a queue exists and this PR would go
+        # through it. queue_entry describes THIS PR: non-null only while it is
+        # actually sitting in the queue. Without the second one, an enqueued PR
+        # still reads as CLEAN and gets answered "merge", which re-enqueues it.
+        queue_entry: (if $p.mergeQueueEntry then
+                        {state: $p.mergeQueueEntry.state,
+                         position: $p.mergeQueueEntry.position,
+                         eta: $p.mergeQueueEntry.estimatedTimeToMerge}
+                      else null end)
       }
     # ---- next valid action, highest-priority first -------------------------
     | . as $s
@@ -188,6 +198,25 @@ evaluate() {
          elif $s.unresolved_threads > 0 then
            {action:"resolve-threads", why:"\($s.unresolved_threads) unresolved review thread(s)",
             threads:$s.threads}
+         # Sits after the branches that report real work (failing checks,
+         # open threads) — those stay worth doing while queued, and a queue
+         # entry that fails its own checks is dropped anyway. It sits before
+         # every review and merge branch: GitHub already let this PR past the
+         # rulesets when it accepted the entry, so "request a review" or
+         # "merge" here is advice that would dequeue it and start over.
+         elif ($s.queue_entry != null) then
+           {action:"wait",
+            why:("already in the merge queue at position \($s.queue_entry.position)"
+                 + " (\($s.queue_entry.state))"
+                 # Spelled `!= null` rather than left implicit: jq counts only
+                 # null and false as false, so a 0-second ETA does render — but
+                 # a reader arriving from a language where 0 is falsy reads a
+                 # bug here that is not present.
+                 + (if ($s.queue_entry.eta != null)
+                    then ", ~\((($s.queue_entry.eta) / 60) | floor) min to go"
+                    else "" end)
+                 + " — the queue merges it once its own checks pass; enqueueing"
+                 + " again only restarts them")}
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)
                and ($s.requested_reviewers|map(test("copilot";"i"))|any)) then
            {action:"await-review", why:"Copilot review already requested for \($s.headOid[0:8]) and not delivered yet — waiting, not re-requesting"}
@@ -243,6 +272,9 @@ render() {
     "  reviews     : \(if .has_review_on_head then (.reviews_on_head|to_entries|map("\(.key)=\(.value)")|join(", ")) else "NONE on current head" end)  decision=\(if .reviewDecision=="" then "-" else .reviewDecision end)",
     "  threads     : \(.unresolved_threads) unresolved",
     "  merge       : methods=[\(.merge_methods|join(","))] auto=\(.auto_merge_allowed) queue=\(.queue_active)",
+    (if .queue_entry then
+       "  in queue    : position \(.queue_entry.position), \(.queue_entry.state)\(if (.queue_entry.eta != null) then ", ~\(((.queue_entry.eta) / 60) | floor) min" else "" end)"
+     else empty end),
     "",
     "NEXT: \(.next.action) — \(.next.why)",
     (if .next.method then "  method: \(.next.method)" else empty end),

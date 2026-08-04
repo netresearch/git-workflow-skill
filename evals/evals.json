@@ -144,6 +144,12 @@
       "name": "literal-review-fix-would-be-incomplete",
       "prompt": "A reviewer says the test setup should not build its clock from time(). I'll replace it with a fixed timestamp on that line.",
       "expected_output": "Should trace the change through the surrounding code before applying: pinning the instant the code reads while the fixtures still come from time() puts the two far apart and fails everything as expired, turning a rare flake into a certain failure; should pin one constant and drive both from it, and say in the reply what was done instead of the literal suggestion"
+    },
+    {
+      "id": 25,
+      "name": "already-enqueued-pr-reads-as-clean",
+      "prompt": "I queued my PR for merge ten minutes ago. The status check now says mergeState CLEAN, every check green, no open threads, NEXT: merge. Should I run the merge again?",
+      "expected_output": "Should say no and check the PR's own queue entry first: mergeStateStatus describes the branch, so an enqueued PR keeps reading CLEAN and looks merge-ready; mergeQueueEntry (position, state, estimatedTimeToMerge) is the field that distinguishes 'ready to enqueue' from 'already in line', and a repo-level merge_queue ruleset does not answer it; should wait for the queue to merge it and note that enqueueing again only restarts its checks"
     }
   ]
 }
