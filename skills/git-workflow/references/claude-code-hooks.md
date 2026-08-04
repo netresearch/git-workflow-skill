@@ -16,7 +16,7 @@ Merge carefully — read the existing `hooks:` block, add to arrays, never repla
 
 ## Recipe 1: Block `gh pr merge` When Review Threads Are Open
 
-Blocks any `gh pr merge` invocation that would merge a PR with unresolved threads or missing approval.
+Blocks any `gh pr merge` invocation that would merge a PR with unresolved review threads or a non-CLEAN merge state.
 
 The merge-gate logic is non-trivial, so it ships as an external script — `scripts/merge-gate.sh` in this skill — rather than inline JSON. Install it and reference it:
 
@@ -45,7 +45,7 @@ chmod +x ~/.claude/hooks/merge-gate.sh
 ```
 
 
-The hook denies `gh pr merge` when review threads are unresolved or `mergeStateStatus != CLEAN` (`UNSTABLE` — a non-required check red — is still a deny). It deliberately does not gate on `reviewDecision`: repos without a required-approval rule report `""` and merge legitimately when CLEAN. It parses the three PR-reference forms `gh pr merge` accepts (plain number, full URL, `owner/repo#N`) and honors an explicit `--repo`/`-R` flag — without that, the PR number resolves against the CWD repo and produces false denials when the command targets another repo. If parsing or the PR lookup fails, the hook allows the call rather than producing false-positive denies. Two usage caveats: the hook evaluates at Bash-call time, so never chain a wait-until-CLEAN loop and the merge in one invocation (wait in one call, merge in the next); and it is a personal-harness gate — server-side branch protection remains the authoritative enforcement.
+The hook denies `gh pr merge` when review threads are unresolved or `mergeStateStatus != CLEAN` (`UNSTABLE` — a non-required check red — is still a deny). It deliberately does not gate on `reviewDecision`: repos without a required-approval rule report `""` and merge legitimately when CLEAN. It parses the three PR-reference forms `gh pr merge` accepts (plain number — with long/short and `=`-joined flags before it — full URL, `owner/repo#N`), paginates the thread list, and honors an explicit `--repo`/`-R` flag — without that, the PR number resolves against the CWD repo and produces false denials when the command targets another repo. If parsing or the PR lookup fails, the hook allows the call rather than producing false-positive denies. Two usage caveats: the hook evaluates at Bash-call time, so never chain a wait-until-CLEAN loop and the merge in one invocation (wait in one call, merge in the next); and it is a personal-harness gate — server-side branch protection remains the authoritative enforcement.
 
 ## Recipe 2: Reject Edits to Installed Cache Paths
 

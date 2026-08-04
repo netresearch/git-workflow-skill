@@ -10,10 +10,12 @@
 set -euo pipefail
 CMD=$(jq -r '.tool_input.command // ""')
 
-# Parse the PR id from the three `gh pr merge` reference forms.
+# Parse the PR id from the three `gh pr merge` reference forms. Flags before
+# the number may be long or short, with a separate or =-joined value
+# (--merge, --repo owner/repo, --repo=owner/repo, -R owner/repo).
 PR=""; REPO_FLAG=()
-if [[ "$CMD" =~ gh[[:space:]]+pr[[:space:]]+merge[[:space:]]+(--[a-z-]+([[:space:]]+[^[:space:]]+)?[[:space:]]+)*([0-9]+)([[:space:]]|$) ]]; then
-  PR="${BASH_REMATCH[3]}"
+if [[ "$CMD" =~ gh[[:space:]]+pr[[:space:]]+merge[[:space:]]+((-{1,2}[A-Za-z][A-Za-z-]*(=[^[:space:]]*)?([[:space:]]+[^-][^[:space:]]*)?)[[:space:]]+)*([0-9]+)([[:space:]]|$) ]]; then
+  PR="${BASH_REMATCH[5]}"
 elif [[ "$CMD" =~ gh[[:space:]]+pr[[:space:]]+merge[[:space:]]+.*https?://github\.com/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
   PR="${BASH_REMATCH[2]}"; REPO_FLAG=(--repo "${BASH_REMATCH[1]}")
 elif [[ "$CMD" =~ gh[[:space:]]+pr[[:space:]]+merge[[:space:]]+.*([^/[:space:]]+/[^#[:space:]]+)#([0-9]+) ]]; then
@@ -37,8 +39,19 @@ MSS=$(echo "$INFO" | jq -r '.mergeStateStatus // "null"')
 URL=$(echo "$INFO" | jq -r '.url // ""')
 [[ "$URL" =~ github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]] || exit 0
 O="${BASH_REMATCH[1]}"; RN="${BASH_REMATCH[2]}"; NUM="${BASH_REMATCH[3]}"
-UNRES=$(gh api graphql -f query="{repository(owner:\"$O\",name:\"$RN\"){pullRequest(number:$NUM){reviewThreads(first:100){nodes{isResolved}}}}}" \
-  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved==false)] | length' 2>/dev/null) || UNRES=0
+# Paginate the thread list — first:100 alone silently under-counts on PRs
+# with more threads (a round count is a truncation smell).
+UNRES=0; CURSOR=""
+while :; do
+  ARGS=(-F owner="$O" -F name="$RN" -F num="$NUM")
+  [[ -n "$CURSOR" ]] && ARGS+=(-F cursor="$CURSOR")
+  # shellcheck disable=SC2016  # $-names are GraphQL variables, not shell
+  PAGE=$(gh api graphql "${ARGS[@]}" -f query='query($owner:String!,$name:String!,$num:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$num){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}nodes{isResolved}}}}}' 2>/dev/null) || break
+  N=$(jq -r '[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved==false)] | length' <<<"$PAGE" 2>/dev/null) || break
+  UNRES=$((UNRES + N))
+  [[ "$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$PAGE")" == "true" ]] || break
+  CURSOR=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$PAGE")
+done
 
 if [[ "${UNRES:-0}" -gt 0 || "$MSS" != "CLEAN" ]]; then
   jq -cn --arg r "merge-gate: unresolved-threads=$UNRES, mergeState=$MSS — resolve threads / clear the block (check the ruleset & thread state) before merging" \
