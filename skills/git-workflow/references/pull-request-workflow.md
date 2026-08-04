@@ -285,6 +285,18 @@ On `CLOSED / FIXED`, treat it as an ordinary already-fixed bot thread: reply wit
 
 Observed 2026-07-30 on a `docker:S8544` finding: gate `OK`, 0 open issues, 0 failing checks, `mergeStateStatus: BLOCKED` on one stale thread — a merge that looked inexplicably stuck until the thread was read.
 
+### Triage findings one by one — batched "out of scope" hides cheap fits
+
+When several reviewers (or parallel review agents) return a list of findings, do not sort them into "applied" vs "out of scope" as a batch. Fit-check each finding individually first:
+
+1. **Does it require a code change at all?** "Document the invariant" / "explain the discarded return" is a comment-only addition — it fits in any PR that touches the code it explains.
+2. **If it needs code: is it under ~10 lines and inside already-touched files?** Then it fits.
+3. **Is there a doc-only alternative?** A comment documenting the trade-off often satisfies the concern at near-zero cost.
+
+Default to "fits" for comment- or docstring-only suggestions; reserve "out of scope" for real surgery (interface changes, cross-file refactors, unrelated pre-existing bugs). In one 12-finding round, batching hid two one-line doc-comment additions among genuinely out-of-scope refactors — the reviewer asked "none of them fit?" and the re-examination cost an extra round-trip.
+
+When you do defer a finding, "filed as follow-up" is a claim of action: file the issue in the same turn and quote its URL in the summary, or ask explicitly whether to file — never write "will file" / "tracked separately" without the link in the same paragraph.
+
 ### A suggestion against verbatim material is a suggestion to falsify it
 
 Reviewers read a diff, not its provenance. When a comment proposes tidying something
