@@ -1356,6 +1356,22 @@ netresearch/ofelia this piled up 18 unfinished runs and turned a four-attempt
 loop into a guaranteed failure, while the same required checks concluded in
 **2.0 minutes** in PR context, well inside the window.
 
+**Tell a busy pool from a slow one before deciding.** `queued` and
+`in_progress` are different states and the API reports them separately;
+collapsing both into "pending" reads as "CI is running" when in truth no runner
+has picked anything up. `pr-status.sh` keeps them apart — the checks line shows
+`N pending (X running, Y queued)` — and answers `await-capacity` instead of
+`wait` when a *required* check is queued while nothing at all is running. That
+is the precondition for the paragraph above: enqueueing in that state is what
+gets the entry dropped.
+
+The concurrency limit itself is not readable. `GET /orgs/{org}/actions/hosted-runners/limits`
+answers `404 "GitHub hosted runners are not supported for this organization"`
+outside the larger-runner product, and the per-plan ceiling for standard runners
+exists only in the documentation. So do not try to compare against a number —
+observe the state instead: required checks queued with zero running is
+sufficient on its own, and needs no knowledge of the plan.
+
 Gate on it instead: enqueue when the repo has at most ~2 unfinished runs.
 
 ```bash

@@ -150,6 +150,12 @@
       "name": "already-enqueued-pr-reads-as-clean",
       "prompt": "I queued my PR for merge ten minutes ago. The status check now says mergeState CLEAN, every check green, no open threads, NEXT: merge. Should I run the merge again?",
       "expected_output": "Should say no and check the PR's own queue entry first: mergeStateStatus describes the branch, so an enqueued PR keeps reading CLEAN and looks merge-ready; mergeQueueEntry (position, state, estimatedTimeToMerge) is the field that distinguishes 'ready to enqueue' from 'already in line', and a repo-level merge_queue ruleset does not answer it; should wait for the queue to merge it and note that enqueueing again only restarts its checks"
+    },
+    {
+      "id": 26,
+      "name": "required-check-queued-not-running",
+      "prompt": "My PR has been waiting on CI for forty minutes and the status tool says the required checks are still running. Should I enqueue it for merge so it goes in as soon as they finish?",
+      "expected_output": "Should check whether those checks are actually running or merely queued: queued and in_progress are different API states, and a required check sitting in queued with nothing running means no runner has picked it up, not that CI is slow; should warn that a merge queue drops an entry whose required check does not report inside check_response_timeout_minutes and that the clock covers waiting for a runner, so enqueueing now risks a silent dequeue and each retry leaves more runs holding slots; should not try to look up the concurrency limit, which is not exposed by the API"
     }
   ]
 }
