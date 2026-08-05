@@ -909,6 +909,68 @@ To compare a file across branches without checkout, use
 `git diff <branchA> <branchB> -- <path>` (or `git diff <branchA>...<branchB> -- <path>`
 for the merge-base–relative diff).
 
+### Never `git checkout <ref> -- <path>` while the change is uncommitted
+
+`git checkout <ref> -- <path>` overwrites the working-tree file **without
+warning and without a reflog entry**. Uncommitted content is never written to
+the object store, so there is usually nothing in Git to recover from — only an
+editor's local history or a filesystem snapshot can still hold it. The pattern
+that bites is comparing current behaviour against a baseline:
+
+```bash
+git checkout <base-ref> -- src/Service.php   # measure the old behaviour
+# … run the probe …
+git checkout HEAD -- src/Service.php         # "restore"
+```
+
+That last line restores the file as it is **committed**. If the fix you were
+measuring was still only in the working tree, it is now gone, silently, and the
+next `git add` commits the file without it. Observed cost: a commit pushed
+without the fix it was created for, discovered only because the test output was
+read line by line afterwards.
+
+Use `git show <ref>:<path>` (above) to read the baseline instead — it never
+touches the working tree. Where a baseline must genuinely be *on disk* (an
+autoloader, a bundler), commit or stash first, or check the baseline out into a
+throwaway worktree:
+
+```bash
+git worktree add /tmp/baseline <base-ref>
+```
+
+### Never chain `git push` behind a test run with `&&`
+
+```bash
+composer test | grep -E 'OK|FAILURES' && git add -A && git commit -s -m … && git push
+```
+
+This pushes on a failing suite. `&&` propagates the exit status of the **last**
+command in the pipeline, and `grep` exits 0 as soon as it matches *anything* —
+including the word `FAILURES`. Filtering test output for readability discards
+the very status the chain depends on.
+
+Run the suite as its own command, read the result, and only then commit and
+push. If it must be one invocation, gate on the runner rather than the filter —
+capture the runner's status explicitly, which works in any POSIX shell:
+
+```bash
+composer test > out.txt; rc=$?
+grep -E 'OK|FAILURES' out.txt          # read it, but don't gate on it
+[ "$rc" -eq 0 ] || exit 1
+```
+
+(`set -o pipefail` does the same in bash, zsh and ksh, but it is not in POSIX
+`sh` — a script with `#!/bin/sh` under dash will fail on it.)
+
+Afterwards verify what actually landed, on the remote rather than locally.
+Match one unique line from the change — `grep -c` counts matching *lines*, so a
+multi-line pattern will not match at all; `-F` avoids regex surprises in code:
+
+```bash
+git fetch <remote> <branch>
+git show FETCH_HEAD:<path> | grep -cF '<one distinctive line of the fix>'
+```
+
 ## Troubleshooting
 
 ### Common Issues
@@ -975,4 +1037,3 @@ gh api repos/OWNER/REPO/compare/<base>...<head> \
 
 Verify against `origin` (or the compare API) before deleting a tag, choosing a
 release version, or concluding two lines forked — not against local refs.
-
