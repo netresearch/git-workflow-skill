@@ -848,23 +848,29 @@ whatever order they review.
 It only works if the text matches **byte for byte** — same wording, same
 indentation, same position, and the same import placement (run the project's
 formatter in both branches, or the import sorter will reorder one of them). Copy
-it mechanically rather than retyping:
+it mechanically rather than retyping, and compare the two extracts. `<first-line>`
+and `<last-line>` are the first and last lines of the hunk, used as `sed`
+address patterns:
 
 ```bash
-git show <other-branch>:<path> | sed -n '/<start marker>/,/<end marker>/p' > /tmp/hunk
-diff <(sed -n '/…/,/…/p' <path>) /tmp/hunk && echo identical
+git show <other-branch>:<path> | sed -n '/<first-line>/,/<last-line>/p' > /tmp/hunk
+diff <(sed -n '/<first-line>/,/<last-line>/p' <path>) /tmp/hunk && echo identical
 ```
 
 Then prove the property instead of assuming it — merge every order in a
-throwaway clone and check the result:
+throwaway clone and check the result. Abort the run on the first conflict:
+continuing would leave the repo mid-merge and every later result meaningless.
 
 ```bash
 git clone -q --shared <bare-repo> /tmp/mergetest && cd /tmp/mergetest
-for order in "A B" "B A"; do
+for order in "<branch-A> <branch-B>" "<branch-B> <branch-A>"; do
   git reset -q --hard <base>
-  for b in $order; do git merge -q --no-edit "$b" || echo "CONFLICT in $order"; done
+  for b in $order; do
+    git merge -q --no-edit "$b" || { echo "CONFLICT: $b in order [$order]"; git merge --abort; exit 1; }
+  done
 done
-grep -c '<the hunk>' <path>   # must be 1, not 2
+# counts matching LINES, so use one distinctive line of the hunk, not the hunk
+grep -cF '<one distinctive line of the hunk>' <path>   # must be 1, not 2
 ```
 
 State in both PR bodies that the hunk is identical and why, so a reviewer does

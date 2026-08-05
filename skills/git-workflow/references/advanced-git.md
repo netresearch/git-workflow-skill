@@ -912,13 +912,15 @@ for the merge-base–relative diff).
 ### Never `git checkout <ref> -- <path>` while the change is uncommitted
 
 `git checkout <ref> -- <path>` overwrites the working-tree file **without
-warning and without a reflog entry** — there is nothing to recover from. The
-pattern that bites is comparing current behaviour against a baseline:
+warning and without a reflog entry**. Uncommitted content is never written to
+the object store, so there is usually nothing in Git to recover from — only an
+editor's local history or a filesystem snapshot can still hold it. The pattern
+that bites is comparing current behaviour against a baseline:
 
 ```bash
-git checkout develop -- src/Service.php   # measure the old behaviour
+git checkout <base-ref> -- src/Service.php   # measure the old behaviour
 # … run the probe …
-git checkout HEAD -- src/Service.php      # "restore"
+git checkout HEAD -- src/Service.php         # "restore"
 ```
 
 That last line restores the file as it is **committed**. If the fix you were
@@ -933,7 +935,7 @@ autoloader, a bundler), commit or stash first, or check the baseline out into a
 throwaway worktree:
 
 ```bash
-git worktree add /tmp/baseline develop
+git worktree add /tmp/baseline <base-ref>
 ```
 
 ### Never chain `git push` behind a test run with `&&`
@@ -948,12 +950,25 @@ including the word `FAILURES`. Filtering test output for readability discards
 the very status the chain depends on.
 
 Run the suite as its own command, read the result, and only then commit and
-push. If it must be one invocation, gate on the runner rather than the filter
-(`set -o pipefail`, or `composer test > out.txt; rc=$?; grep … out.txt; [ $rc -eq 0 ] || exit 1`).
-Afterwards verify what actually landed, on the remote rather than locally:
+push. If it must be one invocation, gate on the runner rather than the filter —
+capture the runner's status explicitly, which works in any POSIX shell:
 
 ```bash
-git fetch fork <branch> && git show FETCH_HEAD:<path> | grep -c '<the fix>'
+composer test > out.txt; rc=$?
+grep -E 'OK|FAILURES' out.txt          # read it, but don't gate on it
+[ "$rc" -eq 0 ] || exit 1
+```
+
+(`set -o pipefail` does the same in bash, zsh and ksh, but it is not in POSIX
+`sh` — a script with `#!/bin/sh` under dash will fail on it.)
+
+Afterwards verify what actually landed, on the remote rather than locally.
+Match one unique line from the change — `grep -c` counts matching *lines*, so a
+multi-line pattern will not match at all; `-F` avoids regex surprises in code:
+
+```bash
+git fetch <remote> <branch>
+git show FETCH_HEAD:<path> | grep -cF '<one distinctive line of the fix>'
 ```
 
 ## Troubleshooting
