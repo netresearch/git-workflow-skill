@@ -828,6 +828,48 @@ jobs:
 
 ## Conflict Resolution
 
+### Two independent PRs needing the same hunk — make it byte-identical
+
+When two PRs split out of one piece of work both need the same addition (a
+`catch` block both paths now reach, an enum case both use, the same import),
+there are three options and only one of them is good:
+
+| Approach | Cost |
+|---|---|
+| Stack the second PR on the first | Second PR can no longer merge on its own |
+| Put the hunk in one PR only | The other PR is broken until that one lands — a merge-order trap |
+| **Put the identical hunk in both** | **Git merges it once, in any order** |
+
+Git treats the same change at the same place as *one* change, so both PRs merge
+cleanly and the hunk appears exactly once in the result. That removes the
+ordering constraint entirely, which matters because maintainers merge in
+whatever order they review.
+
+It only works if the text matches **byte for byte** — same wording, same
+indentation, same position, and the same import placement (run the project's
+formatter in both branches, or the import sorter will reorder one of them). Copy
+it mechanically rather than retyping:
+
+```bash
+git show <other-branch>:<path> | sed -n '/<start marker>/,/<end marker>/p' > /tmp/hunk
+diff <(sed -n '/…/,/…/p' <path>) /tmp/hunk && echo identical
+```
+
+Then prove the property instead of assuming it — merge every order in a
+throwaway clone and check the result:
+
+```bash
+git clone -q --shared <bare-repo> /tmp/mergetest && cd /tmp/mergetest
+for order in "A B" "B A"; do
+  git reset -q --hard <base>
+  for b in $order; do git merge -q --no-edit "$b" || echo "CONFLICT in $order"; done
+done
+grep -c '<the hunk>' <path>   # must be 1, not 2
+```
+
+State in both PR bodies that the hunk is identical and why, so a reviewer does
+not "clean up" the duplicate in one of them.
+
 ### Before Merging
 
 ```bash
