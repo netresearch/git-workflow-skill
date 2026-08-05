@@ -285,6 +285,20 @@ On `CLOSED / FIXED`, treat it as an ordinary already-fixed bot thread: reply wit
 
 Observed 2026-07-30 on a `docker:S8544` finding: gate `OK`, 0 open issues, 0 failing checks, `mergeStateStatus: BLOCKED` on one stale thread — a merge that looked inexplicably stuck until the thread was read.
 
+### Signature verification: the GitHub API is the source of truth, not your keyring
+
+For "is this commit signed?" in a review, ask the API:
+
+```bash
+gh api repos/OWNER/REPO/commits/SHA --jq '.commit.verification'   # verified: true|false, reason
+```
+
+Local `git log --show-signature` / `--format='%G?'` only consults the reviewer's local keyring — a status of `E` means "key not imported here", NOT "unsigned". Flagging `%G? = E` as a missing signature produces a false finding the contributor cannot fix (one such finding had to be publicly retracted; GitHub showed "verified" all along).
+
+### A systemic failure mode gets fixed centrally — not per-symptom plus a follow-up issue
+
+When a PR fixes one code path of a failure that can occur on every path (one endpoint catching a session-expiry redirect while all endpoints share the failure mode), the review recommendation is NOT "keep it narrowly scoped + open a follow-up for centralization". Rework the fix at the central layer (session hook, base class, middleware) — the symptom-fix then becomes unnecessary or trivial. Opening a follow-up issue "for the real fix later" is the smell that the current PR sits in the wrong place: it cements the wrong location, ships a known-imperfect fix, and adds tracking overhead to undo. The only accepted split: the central fix has a hard external dependency that genuinely cannot land in the same PR.
+
 ### Triage findings one by one — batched "out of scope" hides cheap fits
 
 When several reviewers (or parallel review agents) return a list of findings, do not sort them into "applied" vs "out of scope" as a batch. Fit-check each finding individually first:
