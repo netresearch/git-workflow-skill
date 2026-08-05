@@ -79,7 +79,7 @@ collect() {
         commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state
           contexts(first:100){ nodes{
             __typename
-            ... on CheckRun{ name conclusion status detailsUrl }
+            ... on CheckRun{ name conclusion status detailsUrl startedAt }
             ... on StatusContext{ context state targetUrl }
           } } } } } }
       }
@@ -111,7 +111,7 @@ evaluate() {
                               elif .status != "COMPLETED" then "PENDING"
                               elif .conclusion == "SUCCESS" then "PASS"
                               elif .conclusion == "SKIPPED" or .conclusion == "NEUTRAL" then "SKIP"
-                              else "FAIL" end), url: .detailsUrl}
+                              else "FAIL" end), url: .detailsUrl, started: .startedAt}
           else {name: .context, state: (if .state == "SUCCESS" then "PASS"
                                         elif .state == "PENDING" then "PENDING"
                                         else "FAIL" end), url: .targetUrl}
@@ -137,6 +137,16 @@ evaluate() {
     | ($failing | map(select(.name as $n | $required | index($n)))) as $failing_required
     | ($pending | map(select(.name as $n | $required | index($n)))) as $pending_required
     | ($queued  | map(select(.name as $n | $required | index($n)))) as $queued_required
+    # Right after a push every check is queued and none is running, which is
+    # normal for a few seconds and says nothing about runner capacity. Age the
+    # signal before acting on it, using the tolerance the merge queue itself
+    # applies (check_response_timeout_minutes, default 5) as the threshold:
+    # queued longer than the queue would wait is when it stops being fresh.
+    # No apostrophes in here — the whole jq program sits in a single-quoted
+    # shell string, and one would end it.
+    | (($queued_required | map(.started // empty) | min) // null) as $oldest_q
+    | (if $oldest_q == null then 0
+       else (((now - ($oldest_q | fromdateiso8601)) / 60) | floor) end) as $queued_minutes
     | {
         repo: $repo.nameWithOwner, number: $p.number, title: $p.title,
         state: $p.state, draft: $p.isDraft,
@@ -155,6 +165,7 @@ evaluate() {
           failing_required: ($failing_required|map(.name)),
           pending_required: ($pending_required|map(.name)),
           queued_required: ($queued_required|map(.name)),
+          queued_minutes: $queued_minutes,
           failing_urls: ($failing|map(.url))
         },
         required_contexts: $required,
@@ -248,9 +259,10 @@ evaluate() {
          # because the answer differs: waiting is right for a running check,
          # while a queued one that never starts gets a merge-queue entry
          # dropped, and the operator wants to know that before enqueueing.
-         elif (($s.checks.queued_required|length) > 0 and $s.checks.running == 0) then
+         elif (($s.checks.queued_required|length) > 0 and $s.checks.running == 0
+               and $s.checks.queued_minutes >= 5) then
            {action:"await-capacity",
-            why:("required check(s) queued and not started: \($s.checks.queued_required|join(", "))"
+            why:("required check(s) queued \($s.checks.queued_minutes) min and not started: \($s.checks.queued_required|join(", "))"
                  + " — \($s.checks.queued) queued, 0 running, so no runner has picked them up."
                  + " Enqueueing now risks the merge queue dropping the entry when its"
                  + " required check never starts")}
