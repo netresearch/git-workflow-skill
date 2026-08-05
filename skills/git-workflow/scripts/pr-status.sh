@@ -76,6 +76,11 @@ collect() {
           ... on User{login} ... on Bot{login} ... on Team{slug} } } }
         reviewThreads(first:100){ nodes{ id isResolved isOutdated
           comments(first:1){ nodes{ databaseId author{login} path } } } }
+        # One unsigned commit anywhere on the branch shuts a required_signatures
+        # ruleset, and GitHub surfaces that only as mergeStateStatus BLOCKED —
+        # no red check, nothing in the rollup. Without this the tool can only
+        # say "investigate".
+        allCommits: commits(first:100){ nodes{ commit{ oid signature{ isValid } } } }
         commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state
           contexts(first:100){ nodes{
             __typename
@@ -170,6 +175,9 @@ evaluate() {
         },
         required_contexts: $required,
         rules_fetched: ($ok == 1),
+        unsigned: [$p.allCommits.nodes[]?.commit
+                   | select((.signature.isValid // false) | not)
+                   | .oid[0:8]],
         rulesets: $ruletypes,
         reviews_on_head: ($head_reviews|map({(.author.login): .state})|add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
@@ -292,6 +300,20 @@ evaluate() {
            {action:"triage-ci", why:"UNSTABLE: a non-required check is red; the gate stays shut until it is green or the PR is force-merged"}
          elif $s.checks.pending > 0 then
            {action:"wait", why:"\($s.checks.pending) check(s) still running (none of them required)"}
+         # Checked last, because it only matters once everything visible is
+         # green: an unsigned commit produces no red check and no rollup entry,
+         # so it surfaces purely as BLOCKED and used to end here as
+         # "investigate".
+         elif (($s.unsigned|length) > 0 and (($ruletypes | index("required_signatures")) != null)) then
+           {action:"fix-signatures",
+            why:("\($s.unsigned|length) commit(s) on this branch carry no valid signature — \($s.unsigned|join(", "))"
+                 + " — and the required_signatures ruleset is active. GitHub reports this"
+                 + " only as mergeStateStatus \($s.mergeState), never as a failing check"),
+            # No single quotes in here: the whole jq program lives in a
+            # single-quoted shell string and one would end it (shellcheck
+            # SC2026 catches it, but only after the parse has already gone
+            # wrong further down).
+            cmd:"git rebase --exec \"git commit --amend --no-edit -S\" $(git merge-base HEAD origin/\($s.base)) ; git push --force-with-lease"}
          else
            {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review — check branch protection manually"}
          end)
