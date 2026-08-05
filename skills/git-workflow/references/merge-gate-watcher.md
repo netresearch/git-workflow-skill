@@ -150,3 +150,7 @@ the remote (`git fetch origin` then re-add the worktree tracking
 `origin/<branch>`) — but only while the remote ref still exists (a merged PR's
 branch is often auto-deleted). The discipline is cheaper than the recovery:
 **confirm `state == MERGED` before any destructive cleanup.**
+
+## A queued PR can silently leave the merge queue
+
+A PR queued via `gh pr merge --auto` on a merge-queue repo can drop back out with no visible event: `isInMergeQueue` flips to `false`, `mergeStateStatus` reads `CLEAN`, and nothing merges. Verify the real queue state via GraphQL (`state` / `merged` / `isInMergeQueue` / `mergeStateStatus`) — a status read that only looks at `mergeStateStatus` reports a dropped PR as merge-ready. Re-arm once (`gh pr merge --disable-auto`, then `--auto`, which forces the queue to re-evaluate); if it drops again, diagnose the queue's required contexts instead of re-arming repeatedly.
