@@ -493,7 +493,7 @@ When removing a worktree leaves a dangling branch reference (e.g., after deletin
 ```bash
 # For each branch whose PR landed, delete the worktree + local branch:
 for wt in feature-x bugfix-y sync/template-foo; do
-  git -C /projects/<repo>/.bare worktree remove --force /projects/<repo>/$wt 2>&1 | tail -1
+  git -C /projects/<repo>/.bare worktree remove --force /projects/<repo>/$wt
   git -C /projects/<repo>/main branch -D "$wt" 2>&1 | tail -1
 done
 
@@ -1037,3 +1037,19 @@ gh api repos/OWNER/REPO/compare/<base>...<head> \
 
 Verify against `origin` (or the compare API) before deleting a tag, choosing a
 release version, or concluding two lines forked — not against local refs.
+
+## Rebasing a branch whose tip is a merge commit can collapse the PR
+
+Plain `git rebase base` flattens/omits merge commits and skips patches whose patch-id is already upstream — if the branch's unique content lives *inside* a merge resolution, the rebase silently drops it, the branch becomes equal to base, and GitHub auto-closes the now-empty PR (content survives only in local reflog). After any batch rebase, verify `compare base...branch` shows `ahead >= 1` — `ahead = 0` means collapsed. Use `--rebase-merges` when the merge structure carries content. (Real case: a release-merge tip carried the feature edits; rebase → branch == main → PR auto-closed.)
+
+## Never pipe state-changing git/CLI commands through tail/head in `&&` chains
+
+`git pull --rebase 2>&1 | tail -1 && git tag …` is a double trap: the chain's exit code is tail's (always 0), and the one shown line is usually not the error. Burned repeatedly: tags created on stale pre-merge HEADs, a rejected push that "succeeded" on screen, a failed verification build that printed OK and let the push through. Gate steps run unpiped — redirect to a log, check `$?`, then read the log. Compounding race: `glab mr merge` returns before the merge commit exists, so an immediate pull can still see the old HEAD.
+
+## Stage by name — never `git add -A`/`.` when legacy untracked files exist
+
+A tree can hold untracked files the user explicitly keeps untracked; `-A`/`.` sweeps them into the commit, and after a push the cleanup needs a second commit (the add+delete stays in history). The staging step after a change is always: named files, or a named directory you fully own.
+
+## Bulk sed/rename across a worktree must not touch its `.git` FILE
+
+A linked worktree's `.git` is a file holding a `gitdir:` pointer, not a directory — `--exclude-dir=.git` does NOT protect it, and a blind `sed -i` over `grep -rl` output rewrites the pointer and breaks the worktree (`fatal: not a git repository`). Exclude the path explicitly (`grep -rl --exclude=.git` or filter the file list) before any bulk edit.
