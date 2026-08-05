@@ -36,6 +36,18 @@ fi
 # resolution via GraphQL (owner/repo/number parsed from the url).
 INFO=$(gh pr view "$PR" "${REPO_FLAG[@]}" --json mergeStateStatus,url 2>/dev/null) || exit 0
 MSS=$(echo "$INFO" | jq -r '.mergeStateStatus // "null"')
+# UNKNOWN usually means GitHub is still computing the state (fresh push, or a
+# merge landed elsewhere moments ago). Re-poll briefly before evaluating, so a
+# legitimate merge isn't denied on a transient; a persistent UNKNOWN still
+# denies below (fail-closed). This is a bounded pre-check inside a PreToolUse
+# hook, not a merge-driver loop — pr-status.sh --watch remains the watcher.
+tries=0
+while [[ "$MSS" == "UNKNOWN" && $tries -lt 3 ]]; do
+  sleep 3
+  INFO=$(gh pr view "$PR" "${REPO_FLAG[@]}" --json mergeStateStatus,url 2>/dev/null) || exit 0
+  MSS=$(echo "$INFO" | jq -r '.mergeStateStatus // "null"')
+  tries=$((tries + 1))
+done
 URL=$(echo "$INFO" | jq -r '.url // ""')
 [[ "$URL" =~ github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]] || exit 0
 O="${BASH_REMATCH[1]}"; RN="${BASH_REMATCH[2]}"; NUM="${BASH_REMATCH[3]}"
