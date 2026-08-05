@@ -79,7 +79,7 @@ collect() {
         commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state
           contexts(first:100){ nodes{
             __typename
-            ... on CheckRun{ name conclusion status detailsUrl }
+            ... on CheckRun{ name conclusion status detailsUrl startedAt }
             ... on StatusContext{ context state targetUrl }
           } } } } } }
       }
@@ -102,10 +102,16 @@ evaluate() {
     | ($p.commits.nodes[0].commit.oid) as $head
     | ([$p.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
         | if .__typename == "CheckRun"
-          then {name, state: (if .status != "COMPLETED" then "PENDING"
+          # QUEUED and IN_PROGRESS are kept apart. Collapsing both into
+          # "pending" reads as "CI is running" when in truth nothing has
+          # started — and that is a different situation with a different
+          # answer: a merge queue drops an entry whose required check never
+          # starts, so "wait" is the wrong advice.
+          then {name, state: (if .status == "QUEUED" then "QUEUED"
+                              elif .status != "COMPLETED" then "PENDING"
                               elif .conclusion == "SUCCESS" then "PASS"
                               elif .conclusion == "SKIPPED" or .conclusion == "NEUTRAL" then "SKIP"
-                              else "FAIL" end), url: .detailsUrl}
+                              else "FAIL" end), url: .detailsUrl, started: .startedAt}
           else {name: .context, state: (if .state == "SUCCESS" then "PASS"
                                         elif .state == "PENDING" then "PENDING"
                                         else "FAIL" end), url: .targetUrl}
@@ -124,9 +130,23 @@ evaluate() {
     | ([$head_reviews[] | select(.author.login | test("copilot"; "i"))]) as $copilot_on_head
     | ([$p.reviewThreads.nodes[]? | select(.isResolved == false)]) as $unresolved
     | ($checks | map(select(.state=="FAIL"))) as $failing
-    | ($checks | map(select(.state=="PENDING"))) as $pending
+    | ($checks | map(select(.state=="QUEUED"))) as $queued
+    | ($checks | map(select(.state=="PENDING"))) as $running
+    # "pending" downstream keeps meaning "not finished", queued or running.
+    | ($queued + $running) as $pending
     | ($failing | map(select(.name as $n | $required | index($n)))) as $failing_required
     | ($pending | map(select(.name as $n | $required | index($n)))) as $pending_required
+    | ($queued  | map(select(.name as $n | $required | index($n)))) as $queued_required
+    # Right after a push every check is queued and none is running, which is
+    # normal for a few seconds and says nothing about runner capacity. Age the
+    # signal before acting on it, using the tolerance the merge queue itself
+    # applies (check_response_timeout_minutes, default 5) as the threshold:
+    # queued longer than the queue would wait is when it stops being fresh.
+    # No apostrophes in here — the whole jq program sits in a single-quoted
+    # shell string, and one would end it.
+    | (($queued_required | map(.started // empty) | min) // null) as $oldest_q
+    | (if $oldest_q == null then 0
+       else (((now - ($oldest_q | fromdateiso8601)) / 60) | floor) end) as $queued_minutes
     | {
         repo: $repo.nameWithOwner, number: $p.number, title: $p.title,
         state: $p.state, draft: $p.isDraft,
@@ -138,10 +158,14 @@ evaluate() {
           pass:  ($checks|map(select(.state=="PASS"))|length),
           fail:  ($failing|length),
           pending:($pending|length),
+          queued: ($queued|length),
+          running:($running|length),
           skip:  ($checks|map(select(.state=="SKIP"))|length),
           failing: ($failing|map(.name)),
           failing_required: ($failing_required|map(.name)),
           pending_required: ($pending_required|map(.name)),
+          queued_required: ($queued_required|map(.name)),
+          queued_minutes: $queued_minutes,
           failing_urls: ($failing|map(.url))
         },
         required_contexts: $required,
@@ -230,6 +254,18 @@ evaluate() {
                     then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
                     else "" end)),
             cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+         # A required check that is QUEUED with nothing running is not "CI is
+         # slow" — no runner has picked it up. It is reported separately
+         # because the answer differs: waiting is right for a running check,
+         # while a queued one that never starts gets a merge-queue entry
+         # dropped, and the operator wants to know that before enqueueing.
+         elif (($s.checks.queued_required|length) > 0 and $s.checks.running == 0
+               and $s.checks.queued_minutes >= 5) then
+           {action:"await-capacity",
+            why:("required check(s) queued \($s.checks.queued_minutes) min and not started: \($s.checks.queued_required|join(", "))"
+                 + " — \($s.checks.queued) queued, 0 running, so no runner has picked them up."
+                 + " Enqueueing now risks the merge queue dropping the entry when its"
+                 + " required check never starts")}
          elif ($s.checks.pending_required|length) > 0 then
            {action:"wait", why:"required check(s) still running: \($s.checks.pending_required|join(", "))"}
          elif ($s.mergeState == "CLEAN"
@@ -249,7 +285,9 @@ evaluate() {
            # pending, not only when one is red. Calling that "a non-required
            # check is red" sends the reader hunting for a failure that does
            # not exist — nothing here has failed yet.
-           {action:"wait", why:"UNSTABLE while \($s.checks.pending) non-required check(s) are still running — nothing has failed"}
+           {action:"wait",
+            why:("UNSTABLE while \($s.checks.pending) non-required check(s) have not finished"
+                 + " (\($s.checks.running) running, \($s.checks.queued) queued) — nothing has failed")}
          elif $s.mergeState == "UNSTABLE" then
            {action:"triage-ci", why:"UNSTABLE: a non-required check is red; the gate stays shut until it is green or the PR is force-merged"}
          elif $s.checks.pending > 0 then
@@ -265,7 +303,7 @@ render() {
     "PR #\(.number)  \(.title)",
     "  state       : \(.state)\(if .draft then " (DRAFT)" else "" end)  mergeable=\(.mergeable)  mergeState=\(.mergeState)",
     "  head        : \(.headOid[0:8]) on \(.head) -> \(.base)",
-    "  checks      : \(.checks.pass) pass, \(.checks.fail) fail, \(.checks.pending) pending, \(.checks.skip) skip (of \(.checks.total))",
+    "  checks      : \(.checks.pass) pass, \(.checks.fail) fail, \(.checks.pending) pending\(if .checks.pending > 0 then " (\(.checks.running) running, \(.checks.queued) queued)" else "" end), \(.checks.skip) skip (of \(.checks.total))",
     (if (.checks.failing|length) > 0 then "  failing     : \(.checks.failing|join(", "))" else empty end),
     (if (.checks.failing_required|length) > 0 then "  ^ REQUIRED  : \(.checks.failing_required|join(", "))" else empty end),
     "  rulesets    : \(if (.rulesets|length)>0 then (.rulesets|join(", ")) else "none" end)",
