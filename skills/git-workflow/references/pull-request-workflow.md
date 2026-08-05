@@ -293,7 +293,7 @@ For "is this commit signed?" in a review, ask the API:
 gh api repos/OWNER/REPO/commits/SHA --jq '.commit.verification'   # verified: true|false, reason
 ```
 
-Local `git log --show-signature` / `--format='%G?'` checks against the REVIEWER's keyring — a status of `E` means "key not imported here", NOT "unsigned". Flagging `%G? = E` as a missing signature produces a false finding the contributor cannot fix (one such finding had to be publicly retracted; GitHub showed "verified" all along).
+Local `git log --show-signature` / `--format='%G?'` only consults the reviewer's local keyring — a status of `E` means "key not imported here", NOT "unsigned". Flagging `%G? = E` as a missing signature produces a false finding the contributor cannot fix (one such finding had to be publicly retracted; GitHub showed "verified" all along).
 
 ### A systemic failure mode gets fixed centrally — not per-symptom plus a follow-up issue
 
