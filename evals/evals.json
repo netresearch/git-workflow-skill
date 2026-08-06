@@ -156,6 +156,12 @@
       "name": "required-check-queued-not-running",
       "prompt": "My PR has been waiting on CI for forty minutes and the status tool says the required checks are still running. Should I enqueue it for merge so it goes in as soon as they finish?",
       "expected_output": "Should check whether those checks are actually running or merely queued: queued and in_progress are different API states, and a required check sitting in queued with nothing running means no runner has picked it up, not that CI is slow; should warn that a merge queue drops an entry whose required check does not report inside check_response_timeout_minutes and that the clock covers waiting for a runner, so enqueueing now risks a silent dequeue and each retry leaves more runs holding slots; should not try to look up the concurrency limit, which is not exposed by the API"
+    },
+    {
+      "id": 27,
+      "name": "blocked-with-everything-green",
+      "prompt": "My PR is mergeStateStatus BLOCKED. Every check passes, no review thread is open, the ruleset needs zero approvals and every required context is present. What is holding it?",
+      "expected_output": "Should suspect an unsigned commit rather than re-reading branch protection: a required_signatures ruleset is shut by one commit anywhere on the branch that carries no valid signature, and GitHub surfaces that only as BLOCKED, never as a failing check or a rollup entry, so nothing visible names it; should check every commit on the branch, not just the head, and re-sign the branch with a rebase that amends each commit rather than only the tip"
     }
   ]
 }
