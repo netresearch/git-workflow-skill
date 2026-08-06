@@ -501,6 +501,29 @@ done
 git -C /projects/<repo>/main fetch --prune origin
 ```
 
+**The explicit list is the point — never replace it with a directory glob.**
+`for wt in feature-x bugfix-y …` is the record of what *this* session created.
+A pattern like `for d in */release-v*` looks like the same loop with less
+typing, but it cannot tell your worktrees from ones that were already there,
+and `worktree remove --force` plus `branch -D` is not undoable from the shell.
+Build the list as you create each worktree and iterate over that.
+
+(Observed 2026-08-06: a 19-repo release sweep cleaned up with `*/release-v*`
+and took out a leftover `release-v1.12.0` worktree and its branch from an
+unrelated release months earlier. Nothing was lost only because that branch had
+already been merged and tagged — `git branch -D` reports the dangling sha, but a
+sweep that discards its output never sees it.)
+
+Two habits make the blast radius survivable when the list is wrong anyway:
+
+```bash
+# 1. See what would go, before anything goes.
+git -C /projects/<repo>/.bare worktree list
+
+# 2. Prefer plain -d over -D: it refuses to delete an unmerged branch.
+git -C /projects/<repo>/main branch -d "$wt" || echo "unmerged, kept: $wt"
+```
+
 ### Sync the Base Before Branching (Stale-Base Trap)
 
 A per-branch worktree layout makes it easy to branch from a checkout that is
