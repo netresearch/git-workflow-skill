@@ -49,6 +49,28 @@ CASES = [
         "PASS",
         "echo 'use repos/o/r/pulls/comments/1/replies'",
     ),
+    # A prefix must not become a bypass: both of these slipped the anchor.
+    (
+        "env assignment before the call",
+        "DENY",
+        "env FOO=1 gh api repos/o/r/pulls/comments/1/replies -f body=x",
+    ),
+    (
+        "sudo before the call",
+        "DENY",
+        "sudo gh api repos/o/r/pulls/comments/1/replies -f body=x",
+    ),
+    (
+        "bare assignment before the call",
+        "DENY",
+        "GH_TOKEN=x gh api repos/o/r/pulls/comments/1/replies -f body=x",
+    ),
+    # Second segment of a chain still counts.
+    (
+        "after && still counts",
+        "DENY",
+        "git status && gh api repos/o/r/pulls/comments/1/replies -f body=x",
+    ),
     (
         "sleep-loop over PR state",
         "DENY",

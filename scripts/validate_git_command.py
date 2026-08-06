@@ -69,7 +69,15 @@ BODY_INLINE = re.compile(r"--(?:body|notes)[= ]+(['\"])(.*?)\1", re.DOTALL)
 # and only a segment that actually invokes gh/curl counts — matching the path
 # anywhere would block writing about it in an echo or a commit message.
 REPLY_WITHOUT_PR = re.compile(r"/pulls/comments/[^/\s'\"]+/replies\b")
-INVOKES_FORGE_API = re.compile(r"^\s*(?:gh\s+api|curl)\b")
+# The anchor matters: matching the path anywhere would block writing ABOUT it
+# in an echo or a commit message. But anchoring on gh/curl alone let any
+# prefix through -- `env FOO=1 gh api …` and `sudo gh api …` both slipped the
+# gate -- so leading assignments and the usual wrapper words are skipped over
+# first. Still anchored, so quoted prose stays unaffected.
+INVOKES_FORGE_API = re.compile(
+    r"^\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S*|sudo|env|time|command|nohup|xargs)\s+)*"
+    r"(?:gh\s+api|curl)\b"
+)
 
 POLL_LOOP = re.compile(r"\b(?:until|while)\b.*?\bsleep\b", re.DOTALL)
 FOR_LOOP_POLL = re.compile(r"\bfor\b[^\n]*\bin\b[^\n]*\bseq\b.*?\bsleep\b", re.DOTALL)
