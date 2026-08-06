@@ -51,9 +51,11 @@ CHECKS = [
 # ---------------------------------------------------------------------------
 
 # Bodies posted to a forge: gh pr/issue/release create|edit|comment.
-FORGE_BODY = re.compile(r"\bgh\s+(pr|issue|release)\s+(create|edit|comment)\b", re.I)
+FORGE_BODY = re.compile(
+    r"\bgh\s+(pr|issue|release)\s+(create|edit|comment)\b", re.IGNORECASE
+)
 BODY_FILE = re.compile(r"--(?:body|notes)-file[= ]+(\S+)")
-BODY_INLINE = re.compile(r"--(?:body|notes)[= ]+(['\"])(.*?)\1", re.S)
+BODY_INLINE = re.compile(r"--(?:body|notes)[= ]+(['\"])(.*?)\1", re.DOTALL)
 
 # Replying to a review comment needs the PR number in the path:
 # repos/O/R/pulls/{pr}/comments/{id}/replies. Without it GitHub answers 404 and
@@ -116,7 +118,7 @@ def hard_wrapped(text: str) -> int:
     hits = 0
     for i, ln in enumerate(lines):
         s = ln.strip()
-        if s.startswith("```") or s.startswith("~~~"):
+        if s.startswith(("```", "~~~")):
             fenced = not fenced
             continue
         if fenced or not s:
