@@ -5,8 +5,13 @@ Checks conventional commits, branch naming, and common mistakes.
 """
 
 import json
+import os
 import re
 import sys
+
+# Enough of a body to count wrapped lines in; a cap so an accidentally huge
+# file cannot stall the hook.
+BODY_READ_LIMIT = 256 * 1024
 
 # Conventional commit pattern
 CONVENTIONAL_COMMIT_PATTERN = (
@@ -142,8 +147,15 @@ def forge_body_hard_wrapped(cmd: str) -> str | None:
     for m in BODY_FILE.finditer(cmd):
         p = m.group(1).strip("'\"")
         try:
+            # Regular files only, and only the first chunk. `--body-file` can
+            # name a pipe -- process substitution (`--body-file <(...)`) hands
+            # over /dev/fd/N -- and reading one here blocks until a writer this
+            # process cannot see appears. A hook that hangs is worse than one
+            # that misses a finding, so a non-regular path is skipped.
+            if not os.path.isfile(p):
+                continue
             with open(p, encoding="utf-8") as fh:
-                bodies.append((p, fh.read()))
+                bodies.append((p, fh.read(BODY_READ_LIMIT)))
         except OSError:
             pass
     for m in BODY_INLINE.finditer(cmd):
