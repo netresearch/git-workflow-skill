@@ -255,9 +255,17 @@ evaluate() {
     # active, has_copilot_review_on_head implies has_review_on_head, so the
     # generic branch is unreachable there — which is why fixing one of them
     # left the other silently unwarned.
-    | (if $s.reviewDecision == "APPROVED"
+    # Both conditions matter: an APPROVED decision only sits on an OLDER commit
+    # when nothing reviewed the current head. The copilot branch below is not
+    # gated on has_review_on_head, so without the second test this note fires on
+    # a current, valid approval and tells the operator to disregard it.
+    | (if ($s.reviewDecision == "APPROVED") and ($s.has_review_on_head | not)
        then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
        else "" end) as $stale_approval
+    # Same reason: only claim "nothing reviewed this head" when that is true.
+    | (if ($s.has_review_on_head | not)
+       then "no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed. "
+       else "" end) as $unreviewed
     | .next =
         (if $s.state != "OPEN" then
            {action:"none", why:"PR is \($s.state)"}
@@ -319,8 +327,8 @@ evaluate() {
                and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
            (if $copilot_exhausted then
              {action:"request-review",
-              why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed."
-                   + " Copilot failed \($s.copilot_error_count)x on it, so the COMMENTED rows"
+              why:($unreviewed
+                   + "Copilot failed \($s.copilot_error_count)x on \($s.headOid[0:8]), so the COMMENTED rows"
                    + " carry an error in the body rather than a review. Do not keep"
                    + " re-requesting: an outage may clear, a quota ceiling does not clear by"
                    + " asking. Review the diff yourself, say in the PR that the bot review was"
@@ -329,10 +337,11 @@ evaluate() {
                    + " diff\($stale_approval)")}
             else
              {action:"request-review",
-              why:("Copilot answered on \($s.headOid[0:8]) but the review FAILED — the COMMENTED"
+              why:($unreviewed
+                   + "Copilot answered on \($s.headOid[0:8]) but the review FAILED — the COMMENTED"
                    + " row carries an error in its body (an outage, or the requesting account is"
                    + " out of quota), not a review. Re-request once; if it fails again, review it"
-                   + " yourself rather than retrying."),
+                   + " yourself rather than retrying\($stale_approval)"),
               cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
             end)
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)

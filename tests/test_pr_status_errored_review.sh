@@ -119,9 +119,13 @@ head = "deadbeefcafe"
 reviews = []
 approved = False
 for s in specs:
-    parts = s.split("|", 3)
-    who, state, body = parts[0], parts[1], parts[2]
-    oid = "0ldc0mm1t" if len(parts) > 3 and parts[3] == "older" else head
+    # Split the optional trailing flag off the RIGHT, so a body containing a
+    # pipe stays intact instead of being silently truncated into the flag slot.
+    if s.endswith("|older"):
+        s, oid = s[: -len("|older")], "0ldc0mm1t"
+    else:
+        oid = head
+    who, state, body = s.split("|", 2)
     reviews.append({"author": {"login": who}, "state": state,
                     "commit": {"oid": oid}, "body": body})
     approved = approved or state == "APPROVED"
@@ -292,6 +296,40 @@ make_stub_reviews \
 check "has_review_on_head" "false"          "$(run_flag has_review_on_head)"
 check "next.action"        "request-review" "$(run_next)"
 check "next.cmd absent"    "null"           "$(run_flag 'next.cmd')"
+for phrase in "do not merge unreviewed" "sits on an older commit"; do
+    if status | jq -e --arg p "$phrase" '.next.why | test($p)' >/dev/null; then
+        echo "  ok   why keeps: $phrase"
+    else
+        echo "  FAIL why lost: $phrase"
+        fail=1
+    fi
+done
+
+# The copilot branch is NOT gated on has_review_on_head, so wording written for
+# "nothing reviewed this head" must not be asserted there unconditionally: with a
+# valid approval ON the head, claiming otherwise tells the operator to disregard
+# a current review.
+echo "case 13: two errors + valid APPROVED ON the head — no false claims"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
+  "a-human|APPROVED|LGTM on the current head"
+check "has_review_on_head" "true" "$(run_flag has_review_on_head)"
+for phrase in "no review on the current head" "sits on an older commit"; do
+    if status | jq -e --arg p "$phrase" '.next.why | test($p)' >/dev/null; then
+        echo "  FAIL why falsely claims: $phrase"
+        fail=1
+    else
+        echo "  ok   why does not claim: $phrase"
+    fi
+done
+
+# The single-error branch had neither warning while the generic one did.
+echo "case 14: ONE error + stale APPROVED — warnings on the first strike too"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|APPROVED|approved before the last push|older"
+check "copilot_error_count" "1" "$(run_flag copilot_error_count)"
 for phrase in "do not merge unreviewed" "sits on an older commit"; do
     if status | jq -e --arg p "$phrase" '.next.why | test($p)' >/dev/null; then
         echo "  ok   why keeps: $phrase"
