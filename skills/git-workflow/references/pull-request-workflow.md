@@ -84,9 +84,11 @@ the review has reached their quota limit.
 Nothing in the review's `state` distinguishes that from a real review, so
 "a review exists on the head" is not the same as "this PR was reviewed".
 `pr-status.sh` detects it and reports `copilot_review_errored: true` with
-`NEXT: request-review` and a `copilot_error_count`; from the second failure on a
-head it drops the retry command and tells you to review it yourself. By hand,
-read the review **body**, not just its state.
+`NEXT: request-review` and a `copilot_error_count`. From the second failure on a
+head it drops the retry command and tells you to review it yourself — in every
+repo, with or without the `copilot_code_review` ruleset, since the generic
+review gate re-requests the same bot. By hand, read the review **body**, not
+just its state.
 
 The action stays `request-review` even then, deliberately. The tool cannot
 observe that a human read the diff — a review by the PR author is excluded from

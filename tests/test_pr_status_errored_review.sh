@@ -226,9 +226,32 @@ make_stub_reviews \
 check "has_review_on_head" "false"          "$(run_flag has_review_on_head)"
 check "next.action"        "request-review" "$(run_next)"
 
-echo "case 9: NO ruleset + two errors — generic gate, no review exists"
+# The action alone cannot detect this regression — it is request-review either
+# way. What distinguishes "stop retrying" from "retry forever" is the cmd, so
+# assert on that. An earlier revision moved the two-strikes suppression inside
+# the $needs_copilot guard, which handed the retry command back to every repo
+# without the ruleset; this case passed regardless until the cmd was checked.
+echo "case 9: NO ruleset + two errors — retry command dropped here too"
 RULES_JSON='[]' make_stub "$ERR_GENERIC" "$ERR_QUOTA"
-check "next.action" "request-review" "$(run_next)"
+check "next.action"     "request-review" "$(run_next)"
+check "next.cmd absent" "null"           "$(run_flag 'next.cmd')"
+if status | jq -e '.next.why | test("Review the diff yourself")' >/dev/null; then
+    echo "  ok   why carries the self-review instruction without the ruleset"
+else
+    echo "  FAIL why lacks the self-review instruction when no ruleset is set"
+    fail=1
+fi
+
+# Keeps the recovery path covered: a real APPROVED review by someone other than
+# the author opens the gate even though the error rows are still on the head.
+# Also the only case that exercises the reviewDecision == APPROVED branch.
+echo "case 10: NO ruleset + two errors + human APPROVED — gate opens"
+RULES_JSON='[]' make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
+  "a-human|APPROVED|LGTM"
+check "has_review_on_head" "true"  "$(run_flag has_review_on_head)"
+check "next.action"        "merge" "$(run_next)"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"

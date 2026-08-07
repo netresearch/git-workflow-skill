@@ -326,12 +326,27 @@ evaluate() {
            {action:"request-review", why:"copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — a push invalidates the previous review, it stays on the old commit",
             cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
          elif ($s.has_review_on_head|not) then
-           {action:"request-review",
-            why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed"
-                 + (if $s.reviewDecision == "APPROVED"
-                    then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
-                    else "" end)),
-            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+           # The generic gate is also reached by repos WITHOUT the
+           # copilot_code_review ruleset, and its cmd re-requests Copilot. Once
+           # Copilot has failed twice on this head, handing that command back
+           # is an unbounded loop: the retry errors, no review lands, the same
+           # cmd is offered again. The two-strikes suppression therefore lives
+           # here as well as in the ruleset branch above — it must not be gated
+           # on $needs_copilot.
+           (if $s.copilot_error_count >= 2 then
+             {action:"request-review",
+              why:("no review on the current head (\($s.headOid[0:8])) — and Copilot failed"
+                   + " \($s.copilot_error_count)x on it, so its rows carry an error rather than"
+                   + " a review. Do not keep re-requesting: an outage may clear, a quota ceiling"
+                   + " does not clear by asking. Review the diff yourself and decide on that.")}
+            else
+             {action:"request-review",
+              why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed"
+                   + (if $s.reviewDecision == "APPROVED"
+                      then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
+                      else "" end)),
+              cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+            end)
          # A required check that is QUEUED with nothing running is not "CI is
          # slow" — no runner has picked it up. It is reported separately
          # because the answer differs: waiting is right for a running check,
