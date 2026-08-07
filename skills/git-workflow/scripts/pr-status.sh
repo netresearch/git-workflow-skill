@@ -285,37 +285,40 @@ evaluate() {
                     else "" end)
                  + " — the queue merges it once its own checks pass; enqueueing"
                  + " again only restarts them")}
-         # Two strikes -> stop asking the bot. Deliberately NOT gated on
-         # $needs_copilot: a repo without the ruleset reaches the generic
-         # "no review on head" branch below, whose cmd re-requests the very bot
-         # that just reported a quota ceiling, with no way out of the loop.
-         # `has_review_on_head|not` is what ends the escalation: once ANY valid
-         # review lands — the self-review this branch asks for, or a human one —
-         # the run falls through to merge. Without it the branch is a dead end
-         # that re-fires forever on the error rows, which never age off the head.
-         elif ($s.copilot_error_count >= 2
-               and ($s.has_review_on_head | not)
-               and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
-           {action:"review-yourself",
-            why:("Copilot failed \($s.copilot_error_count)x on \($s.headOid[0:8]) — the COMMENTED"
-                 + " rows carry an error in the body, not a review. Do not re-request again:"
-                 + " an outage may clear, a quota ceiling does not clear by asking. Review the"
-                 + " diff yourself, say in the PR that the bot review was unavailable, and"
-                 + " merge on that.")}
          # `|` binds looser than `and`, so the negation needs its own parens:
          # `a and b|not` parses as `(a and b)|not` and inverts the whole test.
          # has_copilot_review_on_head must be false too: the error row stays on
          # the head forever, so without it a successful re-review would still
          # report request-review and loop the operator.
+         #
+         # Repeated failures change the ADVICE, not the action. An earlier
+         # version escalated to a distinct "review-yourself" action; it was
+         # unreachable-to-leave, because a review by the PR author is excluded
+         # from $head_reviews by design (line above) — and the operator driving
+         # this script IS usually the author, so doing what the action asked
+         # produced a row that was then discarded and the action re-fired
+         # forever. The tool cannot observe "a human read the diff", so it no
+         # longer pretends to: it keeps reporting the honest state and only
+         # stops handing over a retry command a quota ceiling will reject.
          elif ($needs_copilot and $s.copilot_review_errored
                and ($s.has_copilot_review_on_head | not)
                and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
-           {action:"request-review",
-            why:("Copilot answered on \($s.headOid[0:8]) but the review FAILED — the COMMENTED"
-                 + " row carries an error in its body (an outage, or the requesting account is"
-                 + " out of quota), not a review. Re-request once; if it fails again this"
-                 + " turns into review-yourself rather than another retry."),
-            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+           (if $s.copilot_error_count >= 2 then
+             {action:"request-review",
+              why:("Copilot failed \($s.copilot_error_count)x on \($s.headOid[0:8]) — the COMMENTED"
+                   + " rows carry an error in the body, not a review. Do not keep re-requesting:"
+                   + " an outage may clear, a quota ceiling does not clear by asking. Review the"
+                   + " diff yourself, say in the PR that the bot review was unavailable, and"
+                   + " decide on that. This stays request-review because the ruleset still has"
+                   + " no bot review — the tool cannot see that you read the diff.")}
+            else
+             {action:"request-review",
+              why:("Copilot answered on \($s.headOid[0:8]) but the review FAILED — the COMMENTED"
+                   + " row carries an error in its body (an outage, or the requesting account is"
+                   + " out of quota), not a review. Re-request once; if it fails again, review it"
+                   + " yourself rather than retrying."),
+              cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+            end)
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)
                and ($s.requested_reviewers|map(test("copilot";"i"))|any)) then
            {action:"await-review", why:"Copilot review already requested for \($s.headOid[0:8]) and not delivered yet — waiting, not re-requesting"}
@@ -474,7 +477,7 @@ while :; do
     emit "$s"; exit 0
   fi
   case "$act" in
-    fix-ci|triage-ci|resolve-threads|request-review|review-yourself|rebase|resolve-conflicts|merge|blocked|none)
+    fix-ci|triage-ci|resolve-threads|request-review|rebase|resolve-conflicts|merge|blocked|none)
       echo "ACTIONABLE: $act"
       emit "$s"; exit 0 ;;
   esac

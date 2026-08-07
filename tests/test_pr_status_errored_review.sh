@@ -42,16 +42,18 @@ make_stub() {
         rules='[{"type":"copilot_code_review","parameters":{}}]'
     fi
     printf '%s\n' "$rules" > "$STUB_DIR/rules.json"
-    cat > "$STUB_DIR/gh" <<'STUB'
+    # Unquoted delimiter so $STUB_DIR expands now; \$@ stays literal for the
+    # stub. Avoids `sed -i`, whose no-suffix form is GNU-only and fails the
+    # suite on BSD/macOS with an error pointing at sed, not at the test.
+    cat > "$STUB_DIR/gh" <<STUB
 #!/usr/bin/env bash
-for a in "$@"; do
-  case "$a" in
+for a in "\$@"; do
+  case "\$a" in
     repos/*/rules/branches/*) cat "$STUB_DIR/rules.json"; exit 0 ;;
   esac
 done
 cat "$STUB_DIR/graphql.json"
 STUB
-    sed -i "s|\$STUB_DIR|$STUB_DIR|g" "$STUB_DIR/gh"
     chmod +x "$STUB_DIR/gh"
     python3 - "$STUB_DIR/graphql.json" "$@" <<'PY'
 import sys, json
@@ -92,16 +94,18 @@ make_stub_reviews() {
         rules='[{"type":"copilot_code_review","parameters":{}}]'
     fi
     printf '%s\n' "$rules" > "$STUB_DIR/rules.json"
-    cat > "$STUB_DIR/gh" <<'STUB'
+    # Unquoted delimiter so $STUB_DIR expands now; \$@ stays literal for the
+    # stub. Avoids `sed -i`, whose no-suffix form is GNU-only and fails the
+    # suite on BSD/macOS with an error pointing at sed, not at the test.
+    cat > "$STUB_DIR/gh" <<STUB
 #!/usr/bin/env bash
-for a in "$@"; do
-  case "$a" in
+for a in "\$@"; do
+  case "\$a" in
     repos/*/rules/branches/*) cat "$STUB_DIR/rules.json"; exit 0 ;;
   esac
 done
 cat "$STUB_DIR/graphql.json"
 STUB
-    sed -i "s|\$STUB_DIR|$STUB_DIR|g" "$STUB_DIR/gh"
     chmod +x "$STUB_DIR/gh"
     python3 - "$STUB_DIR/graphql.json" "$@" <<'PY'
 import sys, json
@@ -180,46 +184,51 @@ check "copilot_review_errored"     "true"  "$(run_flag copilot_review_errored)"
 check "has_copilot_review_on_head" "true"  "$(run_flag has_copilot_review_on_head)"
 check "next.action"                "merge" "$(run_next)"
 
-echo "case 7: two errors — stop retrying, say review it yourself"
+# Repeated failures change the advice, not the action: the retry command is
+# dropped so an agent following NEXT stops re-requesting a bot that is out of
+# quota. The action stays request-review because the ruleset genuinely still has
+# no bot review — anything else would claim a state the tool cannot observe.
+echo "case 7: two errors — same action, no retry command, different advice"
 make_stub "$ERR_GENERIC" "$ERR_QUOTA"
-check "copilot_error_count" "2"               "$(run_flag copilot_error_count)"
-check "next.action"         "review-yourself" "$(run_next)"
+check "copilot_error_count" "2"              "$(run_flag copilot_error_count)"
+check "next.action"         "request-review" "$(run_next)"
+check "next.cmd absent"     "null"           "$(run_flag 'next.cmd')"
+if status | jq -e '.next.why | test("Review the diff yourself")' >/dev/null; then
+    echo "  ok   why carries the self-review instruction"
+else
+    echo "  FAIL why does not carry the self-review instruction"
+    fail=1
+fi
 
-# review-yourself has to be an instruction you can carry out, not a state you
-# cannot leave: the error rows never age off the head, so without a
-# has_review_on_head guard the branch re-fires forever and the gate never opens
-# again — including after a human approves.
-echo "case 8a: two errors + human review, ruleset active — escalation must end"
+# One retry IS offered on the first failure — an outage may simply have cleared.
+echo "case 7b: one error — retry command still offered"
+make_stub "$ERR_GENERIC"
+check "copilot_error_count" "1" "$(run_flag copilot_error_count)"
+if [ "$(run_flag 'next.cmd')" = "null" ]; then
+    echo "  FAIL first failure should still offer the re-request command"
+    fail=1
+else
+    echo "  ok   retry command offered on the first failure"
+fi
+
+# Regression for a dead end that shipped once: an earlier version escalated to a
+# distinct "review-yourself" action guarded on has_review_on_head. A review by
+# the PR author is excluded from that gate by design, and the operator driving
+# this script IS usually the author — so carrying out the instruction produced a
+# row that was discarded and the action re-fired forever, with pr-merge.sh
+# refusing anything but "merge". Every emitted action must be one --watch and
+# pr-merge.sh recognise.
+echo "case 8: author self-reviews after two errors — action stays a known one"
 make_stub_reviews \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
-  "a-human|APPROVED|LGTM"
-check "copilot_error_count" "2"    "$(run_flag copilot_error_count)"
-check "has_review_on_head"  "true" "$(run_flag has_review_on_head)"
-# Not asserting "merge": with the ruleset active the script asks for a COPILOT
-# review specifically, human approval or not. That predates this PR and is not
-# ours to change here. What must hold is that review-yourself has stopped
-# re-firing — otherwise the action is unreachable-by-design.
-if [ "$(run_next)" = "review-yourself" ]; then
-    echo "  FAIL next.action: still review-yourself after a review landed"
-    fail=1
-else
-    echo "  ok   next.action left review-yourself ($(run_next))"
-fi
+  "someone|COMMENTED|Reviewed this myself, the bot was unavailable."
+check "has_review_on_head" "false"          "$(run_flag has_review_on_head)"
+check "next.action"        "request-review" "$(run_next)"
 
-echo "case 8b: same without the ruleset — generic gate satisfied, merge"
-RULES_JSON='[]' make_stub_reviews \
-  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
-  "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
-  "a-human|APPROVED|LGTM"
-check "next.action" "merge" "$(run_next)"
-
-# Without the ruleset the flow lands on the generic "no review on head" branch,
-# whose cmd re-requests the bot that just reported a quota ceiling. The
-# escalation must not be gated behind the ruleset.
-echo "case 9: NO ruleset + two errors — must escalate, not loop on request-review"
+echo "case 9: NO ruleset + two errors — generic gate, no review exists"
 RULES_JSON='[]' make_stub "$ERR_GENERIC" "$ERR_QUOTA"
-check "next.action" "review-yourself" "$(run_next)"
+check "next.action" "request-review" "$(run_next)"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
