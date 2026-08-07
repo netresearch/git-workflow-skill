@@ -360,6 +360,22 @@ else
     fail=1
 fi
 
+# Case 15 uses two distinct logins, so no key collides and it cannot catch a
+# lossy per-author projection. The SAME reviewer approving the head and then
+# commenting on it is what collapses the state.
+echo "case 16: same reviewer approves the head then comments — no false staleness"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|APPROVED|LGTM on the current head" \
+  "a-human|COMMENTED|one more thought on the same head"
+check "next.action" "request-review" "$(run_next)"
+if status | jq -e '.next.why | test("sits on an older commit")' >/dev/null; then
+    echo "  FAIL claims staleness for an approval that is on the head"
+    fail=1
+else
+    echo "  ok   no false staleness after the approver comments"
+fi
+
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
 else

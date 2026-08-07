@@ -260,7 +260,13 @@ evaluate() {
     # non-author review including a COMMENTED one, and a thread reply registers
     # as exactly that (see the $reviews_raw comment), so one reply after the
     # last push would drop this warning while the approval is still stale.
-    | ([$s.reviews_on_head[]? | select(. == "APPROVED")] | length == 0) as $no_current_approval
+    # Read the LIST, not reviews_on_head: that field is map({login: state})|add,
+    # so it keeps one state per author and the last review wins. A reviewer who
+    # approves the head and then replies to a thread collapses to COMMENTED
+    # there, which would resurrect this warning against an approval that is on
+    # the head — the mirror image of the bug above, and order-dependent, so it
+    # would look intermittent.
+    | ([$head_reviews[] | select(.state == "APPROVED")] | length == 0) as $no_current_approval
     | (if ($s.reviewDecision == "APPROVED") and $no_current_approval
        then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
        else "" end) as $stale_approval
