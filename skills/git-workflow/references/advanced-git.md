@@ -524,6 +524,44 @@ git -C /projects/<repo>/.bare worktree list
 git -C /projects/<repo>/main branch -d "$wt" || echo "unmerged, kept: $wt"
 ```
 
+### "Is This Branch Safe to Delete?" Is Not an Ancestry Question
+
+`git merge-base --is-ancestor <branch> origin/main` answers *is this commit an
+ancestor* — which is not the same question as *is this work safe to delete*. A
+squash-merged PR puts the content on `main` under a single new commit, so the
+branch's own SHAs are nowhere in `main`'s history and the ancestry test says
+"unmerged" about work that shipped weeks ago. Rebase-merge does the same.
+
+Both directions of that mistake matter:
+
+- **Reporting it** as unmerged inflates the number of branches that look like
+  unsaved work, and buries the few that genuinely are. (Observed 2026-08-06: a
+  cleanup reported 18 unmerged branches; 10 had merged PRs, 6 had deliberately
+  closed ones, and exactly 2 commits existed nowhere else — one of them a real
+  bug fix that had never landed.)
+- **Acting on it** is only safe in the conservative direction. Ancestry is a
+  sufficient condition for "already on main", never a necessary one, so using it
+  to *keep* is safe and using it to *delete* is not what makes deletion safe —
+  what makes it safe is that ancestry never produces a false positive.
+
+Ask the question you actually mean:
+
+```bash
+# Authoritative: what happened to the PR this branch belongs to?
+gh pr list --repo "$R" --head "$B" --state all --json number,state --jq '.[].state'
+glab api "projects/$P/merge_requests?source_branch=$B&state=all" | jq -r '.[].state'
+
+# No PR, or the host is unreachable: is every commit patch-equivalent upstream?
+git cherry origin/main "$B"     # "-" = an equivalent patch is upstream, "+" = not
+[ "$(git cherry origin/main "$B" | grep -c '^+')" -eq 0 ] && echo "nothing unique"
+```
+
+`git cherry` compares patch-ids, so it sees through a rebase and through a
+squash of a single-commit branch. It does *not* see through a squash of several
+commits into one — there the PR state is the only honest answer. A branch whose
+PR is `CLOSED` (not merged) holds work somebody deliberately dropped: that is a
+judgment call for a human, not a mechanical delete.
+
 ### Sync the Base Before Branching (Stale-Base Trap)
 
 A per-branch worktree layout makes it easy to branch from a checkout that is
