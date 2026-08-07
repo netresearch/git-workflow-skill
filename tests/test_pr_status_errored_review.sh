@@ -396,6 +396,16 @@ make_stub_reviews \
   "a-human|APPROVED|fixed, good now"
 check "reviews_on_head[a-human]" "CHANGES_REQUESTED+APPROVED" "$(run_flag '"reviews_on_head"."a-human"')"
 
+# No other fixture repeats a state, so the dedupe branch of the reduce is never
+# reached by the suite. Recurrence is what separates keep-first from keep-last.
+echo "case 19: state recurs — the trailing entry must be the current one"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|CHANGES_REQUESTED|not yet" \
+  "a-human|APPROVED|fixed" \
+  "a-human|CHANGES_REQUESTED|found something else"
+check "reviews_on_head[a-human]" "APPROVED+CHANGES_REQUESTED" "$(run_flag '"reviews_on_head"."a-human"')"
+
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
 else

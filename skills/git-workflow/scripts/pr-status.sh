@@ -216,14 +216,17 @@ evaluate() {
         # from the only surface that shows it — beside decision=APPROVED, which
         # then reads as an approval on an older commit. Shape is unchanged
         # (login -> string) so consumers indexing by login still work.
-        # Order-preserving dedupe, NOT unique: unique sorts alphabetically, so
-        # APPROVED would lead even when a later CHANGES_REQUESTED on the same
-        # commit superseded it. Chronology is the point here — newest state last.
+        # Dedupe keeping the LAST occurrence, not unique and not keep-first.
+        # unique sorts alphabetically, so APPROVED would lead even when a later
+        # CHANGES_REQUESTED on the same commit superseded it; keep-first has the
+        # same flaw once a state recurs (CHANGES_REQUESTED, APPROVED,
+        # CHANGES_REQUESTED would end on the withdrawn APPROVED). The trailing
+        # entry is read as the current state, so it has to be the newest one.
         reviews_on_head: ($head_reviews
                           | group_by(.author.login)
                           | map({(.[0].author.login):
                                  (map(.state)
-                                  | reduce .[] as $st ([]; if index($st) then . else . + [$st] end)
+                                  | reduce .[] as $st ([]; (. - [$st]) + [$st])
                                   | join("+"))})
                           | add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
