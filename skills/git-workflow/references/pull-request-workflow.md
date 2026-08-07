@@ -70,6 +70,31 @@ A force-push invalidates a prior review: the old review stays attached to the
 old commit, so a repo with a `copilot_code_review` rule goes back to BLOCKED
 and needs a fresh request against the new head.
 
+#### A failed Copilot review looks exactly like a delivered one
+
+Copilot reports its own failures *as a review* — a normal `COMMENTED` row whose
+body is the error:
+
+```text
+Copilot encountered an error and was unable to review this pull request.
+Copilot was unable to review this pull request because the user who requested
+the review has reached their quota limit.
+```
+
+Nothing in the review's `state` distinguishes that from a real review, so
+"a review exists on the head" is not the same as "this PR was reviewed".
+`pr-status.sh` detects it and reports `copilot_review_errored: true` with
+`NEXT: request-review`; by hand, read the review **body**, not just its state.
+
+The failure is also a failing `copilot-pull-request-reviewer` check-run — but
+only in the REST `check-runs` API. It is **absent from GraphQL
+`statusCheckRollup`**, so a rollup-based check cannot see it.
+
+Re-request once. If it fails a second time, stop retrying and **review it
+yourself**: an outage may clear, but a quota ceiling does not clear by asking
+again, and the alternatives — merging unreviewed or waiting indefinitely on
+third-party infrastructure — are both worse than a self-review that says so.
+
 ## Check the Default Branch Before Operating
 
 Not every repo uses `main` — older repos often use `master`, and some use

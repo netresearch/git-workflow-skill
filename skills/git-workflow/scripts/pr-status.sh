@@ -71,7 +71,7 @@ collect() {
         mergeQueueEntry{ state position estimatedTimeToMerge }
         author{login}
         baseRefName headRefName headRefOid isCrossRepository
-        reviews(last:50){ nodes{ author{login} state commit{oid} } }
+        reviews(last:50){ nodes{ author{login} state commit{oid} body } }
         reviewRequests(first:20){ nodes{ requestedReviewer{
           ... on User{login} ... on Bot{login} ... on Team{slug} } } }
         reviewThreads(first:100){ nodes{ id isResolved isOutdated
@@ -136,7 +136,23 @@ evaluate() {
     # as COMMENTED by the author, which would otherwise satisfy the gate.
     | ([$p.reviews.nodes[]? | select(.commit.oid == $head)
                            | select(.author.login != $author)]) as $head_reviews
-    | ([$head_reviews[] | select(.author.login | test("copilot"; "i"))]) as $copilot_on_head
+    # A Copilot review that FAILED still arrives as an ordinary COMMENTED row.
+    # Counting it as a review reports NEXT=merge for a PR nothing has read —
+    # the exact gate this script exists to close. Two observed bodies:
+    #   "Copilot encountered an error and was unable to review this pull request."
+    #   "Copilot was unable to review this pull request because the user who
+    #    requested the review has reached their quota limit."
+    # Both are matched by "starts with Copilot … unable to review", which a real
+    # review body does not. The same failure is ALSO a failing
+    # copilot-pull-request-reviewer check-run — but that one is absent from
+    # GraphQL statusCheckRollup (it is only in the REST check-runs API), so
+    # $checks cannot see it and using it would cost a third API call.
+    | ([$head_reviews[]
+        | select(.author.login | test("copilot"; "i"))
+        | select((.body // "") | test("^Copilot\\b.*unable to review"; "i"))]) as $copilot_errored
+    | (($copilot_errored | length) > 0) as $copilot_review_errored
+    | ([$head_reviews[] | select(.author.login | test("copilot"; "i"))
+                        | select((.body // "") | test("^Copilot\\b.*unable to review"; "i") | not)]) as $copilot_on_head
     | ([$p.reviewThreads.nodes[]? | select(.isResolved == false)]) as $unresolved
     | ($checks | map(select(.state=="FAIL"))) as $failing
     | ($checks | map(select(.state=="QUEUED"))) as $queued
@@ -187,6 +203,9 @@ evaluate() {
         reviews_on_head: ($head_reviews|map({(.author.login): .state})|add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
         has_copilot_review_on_head: (($copilot_on_head|length) > 0),
+        # True when Copilot answered but every one of its check-runs failed —
+        # i.e. the review rows on this head carry an error, not a review.
+        copilot_review_errored: $copilot_review_errored,
         author: $author,
         requested_reviewers: [$p.reviewRequests.nodes[]?.requestedReviewer|(.login // .slug)],
         unresolved_threads: ($unresolved|length),
@@ -254,6 +273,17 @@ evaluate() {
                     else "" end)
                  + " — the queue merges it once its own checks pass; enqueueing"
                  + " again only restarts them")}
+         # `|` binds looser than `and`, so the negation needs its own parens:
+         # `a and b|not` parses as `(a and b)|not` and inverts the whole test.
+         elif ($needs_copilot and $s.copilot_review_errored
+               and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
+           {action:"request-review",
+            why:("Copilot answered on \($s.headOid[0:8]) but the review FAILED — its check-run"
+                 + " concluded failure, so the COMMENTED row carries an error"
+                 + " (outage, or the requesting account is out of quota), not a review."
+                 + " Re-request once; if it fails again, review it yourself rather than"
+                 + " retrying — a quota ceiling does not clear by asking again."),
+            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)
                and ($s.requested_reviewers|map(test("copilot";"i"))|any)) then
            {action:"await-review", why:"Copilot review already requested for \($s.headOid[0:8]) and not delivered yet — waiting, not re-requesting"}
