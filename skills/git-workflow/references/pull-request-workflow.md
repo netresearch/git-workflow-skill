@@ -982,6 +982,8 @@ tail -20 build.log            # inspection only — never part of the gate
 
 ### `--force-with-lease` Rejected with "stale info"
 
+Two different causes produce this message: the tracking ref moved (below), or there is no tracking ref at all (the subsection after it). Neither is a reason to escalate to plain `--force`.
+
 On PRs that bots touch (auto-approve, Renovate/Dependabot, a CI step that pushes), `git push --force-with-lease` can be rejected with `stale info` even when your local work is correct: a bot updated the remote branch since your last fetch, so the lease's expected ref (your `origin/<branch>` tracking ref) no longer matches and the push aborts. This is the safety check working — don't escalate to plain `--force`.
 
 Fetch, see what arrived, then push — the lease now matches the ref you just fetched:
@@ -998,6 +1000,27 @@ If a bot keeps pushing inside the fetch→push window so the plain lease never m
 ```bash
 git push --force-with-lease="$BR:$(git rev-parse origin/"$BR")" origin "$BR"
 ```
+
+#### When the push target is a URL, not a remote
+
+Fetching does not help — and cannot — if the push names a URL:
+
+```bash
+git push --force-with-lease git@github.com:me/repo.git HEAD:my-branch
+# ! [rejected]  HEAD -> my-branch (stale info)
+```
+
+A URL has no remote-tracking ref, so the lease has nothing to compare against and the push is rejected every time, however recently you fetched. This is not the safety check catching a real race; it is the check with no input. Typically hit when pushing to a fork that was never added as a remote — `gh repo fork --clone=false` creates the fork on the server but adds nothing locally.
+
+Add the remote once, fetch it, then push to it by name:
+
+```bash
+git remote add fork git@github.com:me/repo.git
+git fetch fork
+git push --force-with-lease fork HEAD:my-branch
+```
+
+`git remote -v` before force-pushing is the cheap check: if the target is not listed there, the lease cannot work. Do not reach for plain `--force` — that discards the protection instead of supplying it.
 
 ### Complex Conflicts
 
