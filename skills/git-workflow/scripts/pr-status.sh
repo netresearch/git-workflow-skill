@@ -125,6 +125,10 @@ evaluate() {
     # protection alone misses rulesets entirely.
     | ([$r[]? | select(.type=="required_status_checks")
         | .parameters.required_status_checks[]?.context]) as $required
+    # Required contexts with no check-run at all. A context that never
+    # reported is invisible on the PR page — the rollup only lists what ran —
+    # so this reads as BLOCKED with everything green.
+    | ([$required[] | select(. as $c | ($checks | map(.name) | index($c)) == null)]) as $undispatched
     | ([$r[]? | .type] | unique) as $ruletypes
     | (($ruletypes | index("copilot_code_review")) != null) as $needs_copilot
     | ($p.author.login) as $author
@@ -178,6 +182,7 @@ evaluate() {
         unsigned: [$p.allCommits.nodes[]?.commit
                    | select((.signature.isValid // false) | not)
                    | .oid[0:8]],
+        undispatched: $undispatched,
         rulesets: $ruletypes,
         reviews_on_head: ($head_reviews|map({(.author.login): .state})|add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
@@ -314,6 +319,22 @@ evaluate() {
             # SC2026 catches it, but only after the parse has already gone
             # wrong further down).
             cmd:"git rebase --exec \"git commit --amend --no-edit -S\" $(git merge-base HEAD origin/\($s.base)) ; git push --force-with-lease"}
+         # Same shape as fix-signatures above: a required context that never
+         # reported produces no red check and no rollup entry, so it used to
+         # end here as "investigate". Two causes, both mechanical: the
+         # workflows were never dispatched, or this is a fork PR whose runs
+         # sit at action_required and need approving once per push.
+         elif (($s.undispatched|length) > 0) then
+           {action:"await-checks",
+            why:("\($s.undispatched|length) required check(s) never reported — \($s.undispatched|join(", "))"
+                 + ". Nothing is red; they were never dispatched, or this is a fork PR"
+                 + " whose runs need approving (once per push)"),
+            # No single quotes: this jq program lives in a single-quoted
+            # shell string (same trap the fix-signatures cmd above notes).
+            cmd:("gh run list --repo \($s.repo) --branch \($s.head) --json databaseId,status,name"
+                 + " — then for each action_required id:"
+                 + " gh api -X POST repos/\($s.repo)/actions/runs/ID/approve."
+                 + " If none await approval, close+reopen the PR to re-fire the events")}
          else
            {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review — check branch protection manually"}
          end)
