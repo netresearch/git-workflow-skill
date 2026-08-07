@@ -765,6 +765,23 @@ required_status_checks:
 /src/crypto/ @security-team
 ```
 
+## Contributing to a Repo You Do Not Own
+
+Before opening the PR, run the target repo's own contribution gate — all of it, from its `CONTRIBUTING.md`, not the subset that resembles your usual one. Their checklist is the review contract, and the items that look like boilerplate are the ones that fail.
+
+```bash
+gh api repos/OWNER/REPO/contents/CONTRIBUTING.md --jq '.content' | base64 -d
+```
+
+Then actually run each item. Two that are routinely skipped and routinely red:
+
+- **The whole-tree analyzer, not the package you touched.** `staticcheck ./...`, `go vet ./...`, `phpstan analyse` at the configured level — scoping it to your directory hides failures your change caused elsewhere.
+- **The spell checker.** Repos running cspell in CI usually set `incremental_files_only: true`, so it checks exactly the files your PR touched — a domain term absent from the project dictionary fails the build on a doc-only change. Run it before pushing, and add the word to the project word list using the repo's own tooling rather than rewording to dodge it.
+
+Check `SECURITY.md` before filing anything security-flavoured as a public issue. Many projects route vulnerabilities to a private address, so a public issue is both wrong and unwelcome — and this applies to a finding you were going to *mention* in a PR body too.
+
+Match the repo's commit conventions exactly: Conventional Commits type and scope, sign-off, signature, and any attribution trailer their `CONTRIBUTING.md` requires. A commit-message linter is a pre-commit hook in many repos and will reject the message locally before CI ever sees it.
+
 ## PR Lifecycle
 
 ### States
