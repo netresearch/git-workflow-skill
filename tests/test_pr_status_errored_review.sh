@@ -85,8 +85,12 @@ json.dump({"data": {"repository": {
 PY
 }
 
-# Same stub, but each arg is "author|state|body" so a case can mix a Copilot
-# error row with a human review on the same head.
+# Same stub, but each arg is "author|state|body" — optionally with a fourth
+# field "older" to place that review on a PREVIOUS commit rather than the head.
+# Needed to model a stale approval honestly: GitHub does not let an author
+# approve their own PR, so "APPROVED by the author on the head" is a state that
+# cannot occur in production and would test the author filter instead of the
+# commit-staleness filter the warning is actually about.
 make_stub_reviews() {
     local rules
     if [ -n "${RULES_JSON:-}" ]; then
@@ -115,9 +119,11 @@ head = "deadbeefcafe"
 reviews = []
 approved = False
 for s in specs:
-    who, state, body = s.split("|", 2)
+    parts = s.split("|", 3)
+    who, state, body = parts[0], parts[1], parts[2]
+    oid = "0ldc0mm1t" if len(parts) > 3 and parts[3] == "older" else head
     reviews.append({"author": {"login": who}, "state": state,
-                    "commit": {"oid": head}, "body": body})
+                    "commit": {"oid": oid}, "body": body})
     approved = approved or state == "APPROVED"
 json.dump({"data": {"repository": {
     "nameWithOwner": "o/r",
@@ -255,17 +261,34 @@ RULES_JSON='[]' make_stub_reviews \
 check "has_review_on_head" "true"  "$(run_flag has_review_on_head)"
 check "next.action"        "merge" "$(run_next)"
 
-# Finding from review: the comment on case 10 claimed it covered the
-# reviewDecision == APPROVED branch. It does not — case 10 lands on merge, while
-# that string lives only on the generic "no review on head" branch. Reaching it
-# needs APPROVED with an EMPTY $head_reviews, i.e. the approval sitting on an
-# older commit. That gap is why the stale-approval warning could go missing from
-# the exhausted variant unnoticed.
-echo "case 11: stale APPROVED on an older commit + two errors — warning survives"
+# The approval is by ANOTHER user and sits on an OLDER commit — the state the
+# warning is written for, and the only way to reach the reviewDecision ==
+# APPROVED branch through the commit filter rather than the author filter.
+# Run for both repo populations: the ruleset branch and the generic branch serve
+# disjoint sets (with the ruleset active the generic one is unreachable), which
+# is how a fix landed on one of them and left the other unwarned.
+echo "case 11: stale APPROVED on an older commit + two errors — NO ruleset"
 RULES_JSON='[]' make_stub_reviews \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
-  "someone|APPROVED|approved on an older commit"
+  "a-human|APPROVED|approved before the last push|older"
+check "has_review_on_head" "false"          "$(run_flag has_review_on_head)"
+check "next.action"        "request-review" "$(run_next)"
+check "next.cmd absent"    "null"           "$(run_flag 'next.cmd')"
+for phrase in "do not merge unreviewed" "sits on an older commit"; do
+    if status | jq -e --arg p "$phrase" '.next.why | test($p)' >/dev/null; then
+        echo "  ok   why keeps: $phrase"
+    else
+        echo "  FAIL why lost: $phrase"
+        fail=1
+    fi
+done
+
+echo "case 12: same, WITH the copilot ruleset — the other branch must warn too"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
+  "a-human|APPROVED|approved before the last push|older"
 check "has_review_on_head" "false"          "$(run_flag has_review_on_head)"
 check "next.action"        "request-review" "$(run_next)"
 check "next.cmd absent"    "null"           "$(run_flag 'next.cmd')"

@@ -250,6 +250,14 @@ evaluate() {
     # re-request loop in the other — the same trap `is_errored_copilot_review`
     # is factored out to avoid.
     | ($s.copilot_error_count >= 2) as $copilot_exhausted
+    # Hoisted so BOTH exhausted variants can append it. The two branches below
+    # serve disjoint repo populations — with the copilot_code_review ruleset
+    # active, has_copilot_review_on_head implies has_review_on_head, so the
+    # generic branch is unreachable there — which is why fixing one of them
+    # left the other silently unwarned.
+    | (if $s.reviewDecision == "APPROVED"
+       then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
+       else "" end) as $stale_approval
     | .next =
         (if $s.state != "OPEN" then
            {action:"none", why:"PR is \($s.state)"}
@@ -311,12 +319,14 @@ evaluate() {
                and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
            (if $copilot_exhausted then
              {action:"request-review",
-              why:("Copilot failed \($s.copilot_error_count)x on \($s.headOid[0:8]) — the COMMENTED"
-                   + " rows carry an error in the body, not a review. Do not keep re-requesting:"
-                   + " an outage may clear, a quota ceiling does not clear by asking. Review the"
-                   + " diff yourself, say in the PR that the bot review was unavailable, and"
-                   + " decide on that. This stays request-review because the ruleset still has"
-                   + " no bot review — the tool cannot see that you read the diff.")}
+              why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed."
+                   + " Copilot failed \($s.copilot_error_count)x on it, so the COMMENTED rows"
+                   + " carry an error in the body rather than a review. Do not keep"
+                   + " re-requesting: an outage may clear, a quota ceiling does not clear by"
+                   + " asking. Review the diff yourself, say in the PR that the bot review was"
+                   + " unavailable, and decide on that. This stays request-review because the"
+                   + " ruleset still has no bot review — the tool cannot see that you read the"
+                   + " diff\($stale_approval)")}
             else
              {action:"request-review",
               why:("Copilot answered on \($s.headOid[0:8]) but the review FAILED — the COMMENTED"
@@ -339,15 +349,11 @@ evaluate() {
            # cmd is offered again. The two-strikes suppression therefore lives
            # here as well as in the ruleset branch above — it must not be gated
            # on $needs_copilot.
-           # The stale-APPROVED warning belongs on BOTH variants. It matters most
-           # in the exhausted one: render prints mergeState=CLEAN and
-           # decision=APPROVED directly above this line, so dropping "do not
-           # merge unreviewed" there reads as license to merge on a review that
-           # sits on an older commit.
-           ((if $s.reviewDecision == "APPROVED"
-             then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
-             else "" end)) as $stale_approval
-           | (if $copilot_exhausted then
+           # The stale-APPROVED warning belongs on BOTH exhausted variants: render
+           # prints mergeState=CLEAN and decision=APPROVED directly above this
+           # line, so dropping "do not merge unreviewed" reads as license to
+           # merge on a review that sits on an older commit.
+           (if $copilot_exhausted then
                {action:"request-review",
                 why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed."
                      + " Copilot failed \($s.copilot_error_count)x on it, so its rows carry an error"
