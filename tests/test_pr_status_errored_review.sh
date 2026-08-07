@@ -385,6 +385,17 @@ make_stub_reviews \
   "a-human|COMMENTED|one more thought on the same head"
 check "reviews_on_head[a-human]" "APPROVED+COMMENTED" "$(run_flag '"reviews_on_head"."a-human"')"
 
+# Chronology matters, and the fixture has to make alphabetical order DISAGREE
+# with it — otherwise `unique` produces the same string and the case proves
+# nothing. CHANGES_REQUESTED then APPROVED: sorted gives APPROVED first (the
+# superseded state leading), chronological keeps the current one last.
+echo "case 18: CHANGES_REQUESTED then APPROVED — chronology, not alphabet"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|CHANGES_REQUESTED|not yet" \
+  "a-human|APPROVED|fixed, good now"
+check "reviews_on_head[a-human]" "CHANGES_REQUESTED+APPROVED" "$(run_flag '"reviews_on_head"."a-human"')"
+
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
 else

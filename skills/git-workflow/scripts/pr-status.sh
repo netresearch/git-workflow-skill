@@ -216,9 +216,15 @@ evaluate() {
         # from the only surface that shows it — beside decision=APPROVED, which
         # then reads as an approval on an older commit. Shape is unchanged
         # (login -> string) so consumers indexing by login still work.
+        # Order-preserving dedupe, NOT unique: unique sorts alphabetically, so
+        # APPROVED would lead even when a later CHANGES_REQUESTED on the same
+        # commit superseded it. Chronology is the point here — newest state last.
         reviews_on_head: ($head_reviews
                           | group_by(.author.login)
-                          | map({(.[0].author.login): (map(.state)|unique|join("+"))})
+                          | map({(.[0].author.login):
+                                 (map(.state)
+                                  | reduce .[] as $st ([]; if index($st) then . else . + [$st] end)
+                                  | join("+"))})
                           | add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
         has_copilot_review_on_head: (($copilot_on_head|length) > 0),
@@ -269,12 +275,10 @@ evaluate() {
     # non-author review including a COMMENTED one, and a thread reply registers
     # as exactly that (see the $reviews_raw comment), so one reply after the
     # last push would drop this warning while the approval is still stale.
-    # Read the LIST, not reviews_on_head: that field is map({login: state})|add,
-    # so it keeps one state per author and the last review wins. A reviewer who
-    # approves the head and then replies to a thread collapses to COMMENTED
-    # there, which would resurrect this warning against an approval that is on
-    # the head — the mirror image of the bug above, and order-dependent, so it
-    # would look intermittent.
+    # Read the LIST, not reviews_on_head: that field joins the states per author
+    # into one string for display, so testing it would mean substring-matching
+    # "APPROVED" out of e.g. "APPROVED+CHANGES_REQUESTED" and calling a
+    # superseded approval current. The list carries each review as its own row.
     | ([$head_reviews[] | select(.state == "APPROVED")] | length == 0) as $no_current_approval
     | (if ($s.reviewDecision == "APPROVED") and $no_current_approval
        then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
