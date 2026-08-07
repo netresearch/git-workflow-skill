@@ -19,8 +19,10 @@ head, and the repository's allowed merge methods.
 ```
 
 Two API calls, and the output ends in a computed `NEXT:` — rebase, fix-ci,
-triage-ci, resolve-threads, request-review, wait, or merge (with the method
-this repo actually allows and a warning when a merge queue is active). The
+triage-ci, resolve-threads, request-review, review-yourself, wait, or merge
+(with the method this repo actually allows and a warning when a merge queue is
+active). `review-yourself` means the bot reviewer failed twice and you are the
+fallback — see "A failed Copilot review looks exactly like a delivered one". The
 JSON form carries each unresolved thread's `threadId` *and* `commentId`, which
 is everything needed to reply and resolve without another query.
 
@@ -69,6 +71,32 @@ gh api repos/OWNER/REPO/pulls/N/requested_reviewers -X POST \
 A force-push invalidates a prior review: the old review stays attached to the
 old commit, so a repo with a `copilot_code_review` rule goes back to BLOCKED
 and needs a fresh request against the new head.
+
+#### A failed Copilot review looks exactly like a delivered one
+
+Copilot reports its own failures *as a review* — a normal `COMMENTED` row whose
+body is the error:
+
+```text
+Copilot encountered an error and was unable to review this pull request.
+Copilot was unable to review this pull request because the user who requested
+the review has reached their quota limit.
+```
+
+Nothing in the review's `state` distinguishes that from a real review, so
+"a review exists on the head" is not the same as "this PR was reviewed".
+`pr-status.sh` detects it and reports `copilot_review_errored: true`: the first
+failure on a head yields `NEXT: request-review`, the second `NEXT:
+review-yourself`. By hand, read the review **body**, not just its state.
+
+The failure is also a failing `copilot-pull-request-reviewer` check-run — but
+only in the REST `check-runs` API. It is **absent from GraphQL
+`statusCheckRollup`**, so a rollup-based check cannot see it.
+
+Re-request once. If it fails a second time, stop retrying and **review it
+yourself**: an outage may clear, but a quota ceiling does not clear by asking
+again, and the alternatives — merging unreviewed or waiting indefinitely on
+third-party infrastructure — are both worse than a self-review that says so.
 
 ## Check the Default Branch Before Operating
 

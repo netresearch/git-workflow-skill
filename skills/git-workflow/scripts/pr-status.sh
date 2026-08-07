@@ -71,7 +71,7 @@ collect() {
         mergeQueueEntry{ state position estimatedTimeToMerge }
         author{login}
         baseRefName headRefName headRefOid isCrossRepository
-        reviews(last:50){ nodes{ author{login} state commit{oid} } }
+        reviews(last:50){ nodes{ author{login} state commit{oid} body } }
         reviewRequests(first:20){ nodes{ requestedReviewer{
           ... on User{login} ... on Bot{login} ... on Team{slug} } } }
         reviewThreads(first:100){ nodes{ id isResolved isOutdated
@@ -102,6 +102,13 @@ collect() {
 evaluate() {
   local gql="$1" rules="$2" ok="$3"
   jq -n --argjson g "$gql" --argjson r "$rules" --argjson ok "$ok" '
+    # Defined once and used by BOTH the error list and the $head_reviews filter.
+    # Two hand-kept copies would have to stay byte-identical: loosening one to
+    # match a third error body and not the other puts the row back into
+    # $head_reviews, which is exactly the merge-on-an-unread-PR bug again.
+    def is_errored_copilot_review:
+      (.author.login | test("copilot"; "i"))
+      and ((.body // "") | test("^Copilot\\b.*unable to review"; "i"));
     ($g.data.repository) as $repo
     | ($repo.pullRequest) as $p
     | ($p.commits.nodes[0].commit.oid) as $head
@@ -135,7 +142,26 @@ evaluate() {
     # A review by the PR author is not a review. Replying to a thread registers
     # as COMMENTED by the author, which would otherwise satisfy the gate.
     | ([$p.reviews.nodes[]? | select(.commit.oid == $head)
-                           | select(.author.login != $author)]) as $head_reviews
+                           | select(.author.login != $author)]) as $reviews_raw
+    # A Copilot review that FAILED still arrives as an ordinary COMMENTED row.
+    # Counting it as a review reports NEXT=merge for a PR nothing has read —
+    # the exact gate this script exists to close. Two observed bodies:
+    #   "Copilot encountered an error and was unable to review this pull request."
+    #   "Copilot was unable to review this pull request because the user who
+    #    requested the review has reached their quota limit."
+    # Both are matched by "starts with Copilot … unable to review", which a real
+    # review body does not (in jq, ^ anchors the string, not each line). The same
+    # failure is ALSO a failing copilot-pull-request-reviewer check-run — but
+    # that one is absent from GraphQL statusCheckRollup (it is only in the REST
+    # check-runs API), so $checks cannot see it and using it would cost a third
+    # API call.
+    | ([$reviews_raw[] | select(is_errored_copilot_review)]) as $copilot_errored
+    | (($copilot_errored | length) > 0) as $copilot_review_errored
+    # Drop the errored rows from $head_reviews itself, not just from the Copilot
+    # view: has_review_on_head feeds the generic "no review on the current head"
+    # gate, so filtering only the Copilot list would leave every repo WITHOUT
+    # the copilot_code_review ruleset still merging on an error row.
+    | ([$reviews_raw[] | select(is_errored_copilot_review | not)]) as $head_reviews
     | ([$head_reviews[] | select(.author.login | test("copilot"; "i"))]) as $copilot_on_head
     | ([$p.reviewThreads.nodes[]? | select(.isResolved == false)]) as $unresolved
     | ($checks | map(select(.state=="FAIL"))) as $failing
@@ -187,6 +213,11 @@ evaluate() {
         reviews_on_head: ($head_reviews|map({(.author.login): .state})|add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
         has_copilot_review_on_head: (($copilot_on_head|length) > 0),
+        # True when Copilot answered on this head with an error body rather than
+        # a review. Derived from the review body alone — see the comment above
+        # $copilot_errored for why the check-run is not consulted.
+        copilot_review_errored: $copilot_review_errored,
+        copilot_error_count: ($copilot_errored|length),
         author: $author,
         requested_reviewers: [$p.reviewRequests.nodes[]?.requestedReviewer|(.login // .slug)],
         unresolved_threads: ($unresolved|length),
@@ -254,6 +285,37 @@ evaluate() {
                     else "" end)
                  + " — the queue merges it once its own checks pass; enqueueing"
                  + " again only restarts them")}
+         # Two strikes -> stop asking the bot. Deliberately NOT gated on
+         # $needs_copilot: a repo without the ruleset reaches the generic
+         # "no review on head" branch below, whose cmd re-requests the very bot
+         # that just reported a quota ceiling, with no way out of the loop.
+         # `has_review_on_head|not` is what ends the escalation: once ANY valid
+         # review lands — the self-review this branch asks for, or a human one —
+         # the run falls through to merge. Without it the branch is a dead end
+         # that re-fires forever on the error rows, which never age off the head.
+         elif ($s.copilot_error_count >= 2
+               and ($s.has_review_on_head | not)
+               and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
+           {action:"review-yourself",
+            why:("Copilot failed \($s.copilot_error_count)x on \($s.headOid[0:8]) — the COMMENTED"
+                 + " rows carry an error in the body, not a review. Do not re-request again:"
+                 + " an outage may clear, a quota ceiling does not clear by asking. Review the"
+                 + " diff yourself, say in the PR that the bot review was unavailable, and"
+                 + " merge on that.")}
+         # `|` binds looser than `and`, so the negation needs its own parens:
+         # `a and b|not` parses as `(a and b)|not` and inverts the whole test.
+         # has_copilot_review_on_head must be false too: the error row stays on
+         # the head forever, so without it a successful re-review would still
+         # report request-review and loop the operator.
+         elif ($needs_copilot and $s.copilot_review_errored
+               and ($s.has_copilot_review_on_head | not)
+               and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
+           {action:"request-review",
+            why:("Copilot answered on \($s.headOid[0:8]) but the review FAILED — the COMMENTED"
+                 + " row carries an error in its body (an outage, or the requesting account is"
+                 + " out of quota), not a review. Re-request once; if it fails again this"
+                 + " turns into review-yourself rather than another retry."),
+            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)
                and ($s.requested_reviewers|map(test("copilot";"i"))|any)) then
            {action:"await-review", why:"Copilot review already requested for \($s.headOid[0:8]) and not delivered yet — waiting, not re-requesting"}
@@ -412,7 +474,7 @@ while :; do
     emit "$s"; exit 0
   fi
   case "$act" in
-    fix-ci|triage-ci|resolve-threads|request-review|rebase|resolve-conflicts|merge|blocked|none)
+    fix-ci|triage-ci|resolve-threads|request-review|review-yourself|rebase|resolve-conflicts|merge|blocked|none)
       echo "ACTIONABLE: $act"
       emit "$s"; exit 0 ;;
   esac
