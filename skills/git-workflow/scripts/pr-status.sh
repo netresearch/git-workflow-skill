@@ -102,6 +102,13 @@ collect() {
 evaluate() {
   local gql="$1" rules="$2" ok="$3"
   jq -n --argjson g "$gql" --argjson r "$rules" --argjson ok "$ok" '
+    # Defined once and used by BOTH the error list and the $head_reviews filter.
+    # Two hand-kept copies would have to stay byte-identical: loosening one to
+    # match a third error body and not the other puts the row back into
+    # $head_reviews, which is exactly the merge-on-an-unread-PR bug again.
+    def is_errored_copilot_review:
+      (.author.login | test("copilot"; "i"))
+      and ((.body // "") | test("^Copilot\\b.*unable to review"; "i"));
     ($g.data.repository) as $repo
     | ($repo.pullRequest) as $p
     | ($p.commits.nodes[0].commit.oid) as $head
@@ -148,16 +155,13 @@ evaluate() {
     # that one is absent from GraphQL statusCheckRollup (it is only in the REST
     # check-runs API), so $checks cannot see it and using it would cost a third
     # API call.
-    | (def errored: (.author.login | test("copilot"; "i"))
-                    and ((.body // "") | test("^Copilot\\b.*unable to review"; "i"));
-       [$reviews_raw[] | select(errored)]) as $copilot_errored
+    | ([$reviews_raw[] | select(is_errored_copilot_review)]) as $copilot_errored
     | (($copilot_errored | length) > 0) as $copilot_review_errored
     # Drop the errored rows from $head_reviews itself, not just from the Copilot
     # view: has_review_on_head feeds the generic "no review on the current head"
     # gate, so filtering only the Copilot list would leave every repo WITHOUT
     # the copilot_code_review ruleset still merging on an error row.
-    | ([$reviews_raw[] | select(((.author.login | test("copilot"; "i"))
-          and ((.body // "") | test("^Copilot\\b.*unable to review"; "i"))) | not)]) as $head_reviews
+    | ([$reviews_raw[] | select(is_errored_copilot_review | not)]) as $head_reviews
     | ([$head_reviews[] | select(.author.login | test("copilot"; "i"))]) as $copilot_on_head
     | ([$p.reviewThreads.nodes[]? | select(.isResolved == false)]) as $unresolved
     | ($checks | map(select(.state=="FAIL"))) as $failing
@@ -281,6 +285,23 @@ evaluate() {
                     else "" end)
                  + " — the queue merges it once its own checks pass; enqueueing"
                  + " again only restarts them")}
+         # Two strikes -> stop asking the bot. Deliberately NOT gated on
+         # $needs_copilot: a repo without the ruleset reaches the generic
+         # "no review on head" branch below, whose cmd re-requests the very bot
+         # that just reported a quota ceiling, with no way out of the loop.
+         # `has_review_on_head|not` is what ends the escalation: once ANY valid
+         # review lands — the self-review this branch asks for, or a human one —
+         # the run falls through to merge. Without it the branch is a dead end
+         # that re-fires forever on the error rows, which never age off the head.
+         elif ($s.copilot_error_count >= 2
+               and ($s.has_review_on_head | not)
+               and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
+           {action:"review-yourself",
+            why:("Copilot failed \($s.copilot_error_count)x on \($s.headOid[0:8]) — the COMMENTED"
+                 + " rows carry an error in the body, not a review. Do not re-request again:"
+                 + " an outage may clear, a quota ceiling does not clear by asking. Review the"
+                 + " diff yourself, say in the PR that the bot review was unavailable, and"
+                 + " merge on that.")}
          # `|` binds looser than `and`, so the negation needs its own parens:
          # `a and b|not` parses as `(a and b)|not` and inverts the whole test.
          # has_copilot_review_on_head must be false too: the error row stays on
@@ -289,21 +310,12 @@ evaluate() {
          elif ($needs_copilot and $s.copilot_review_errored
                and ($s.has_copilot_review_on_head | not)
                and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
-           (if $s.copilot_error_count >= 2 then
-             {action:"review-yourself",
-              why:("Copilot failed \($s.copilot_error_count)x on \($s.headOid[0:8]) — the COMMENTED"
-                   + " rows carry an error in the body, not a review. Do not re-request again:"
-                   + " an outage may clear, a quota ceiling does not clear by asking. Review the"
-                   + " diff yourself, say in the PR that the bot review was unavailable, and"
-                   + " merge on that.")}
-            else
-             {action:"request-review",
-              why:("Copilot answered on \($s.headOid[0:8]) but the review FAILED — the COMMENTED"
-                   + " row carries an error in its body (an outage, or the requesting account is"
-                   + " out of quota), not a review. Re-request once; if it fails again this"
-                   + " turns into review-yourself rather than another retry."),
-              cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
-            end)
+           {action:"request-review",
+            why:("Copilot answered on \($s.headOid[0:8]) but the review FAILED — the COMMENTED"
+                 + " row carries an error in its body (an outage, or the requesting account is"
+                 + " out of quota), not a review. Re-request once; if it fails again this"
+                 + " turns into review-yourself rather than another retry."),
+            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)
                and ($s.requested_reviewers|map(test("copilot";"i"))|any)) then
            {action:"await-review", why:"Copilot review already requested for \($s.headOid[0:8]) and not delivered yet — waiting, not re-requesting"}

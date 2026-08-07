@@ -23,10 +23,19 @@ jobs:
           # Nothing after checkout talks to the remote; leaving the token in
           # .git/config only exposes it to later steps and artifacts.
           persist-credentials: false
+      # Every loop below asserts it matched something. With nullglob a moved or
+      # renamed tests/ directory makes the glob expand to nothing and the job
+      # goes green having run zero tests — the failure this workflow exists to
+      # prevent, wearing a passing check.
       - name: Shell tests
         run: |
-          shopt -s nullglob
-          for t in tests/*.sh; do
+          shopt -s nullglob globstar
+          files=(tests/**/*.sh)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::no shell tests matched tests/**/*.sh — did the suite move?"
+            exit 1
+          fi
+          for t in "${files[@]}"; do
             echo "::group::$t"
             bash "$t"
             echo "::endgroup::"
@@ -36,8 +45,13 @@ jobs:
       # modules — pytest collects nothing from them and exits 5.
       - name: Python tests
         run: |
-          shopt -s nullglob
-          for t in tests/*.py; do
+          shopt -s nullglob globstar
+          files=(tests/**/*.py)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::no python tests matched tests/**/*.py — did the suite move?"
+            exit 1
+          fi
+          for t in "${files[@]}"; do
             echo "::group::$t"
             python3 "$t"
             echo "::endgroup::"

@@ -19,8 +19,10 @@ head, and the repository's allowed merge methods.
 ```
 
 Two API calls, and the output ends in a computed `NEXT:` — rebase, fix-ci,
-triage-ci, resolve-threads, request-review, wait, or merge (with the method
-this repo actually allows and a warning when a merge queue is active). The
+triage-ci, resolve-threads, request-review, review-yourself, wait, or merge
+(with the method this repo actually allows and a warning when a merge queue is
+active). `review-yourself` means the bot reviewer failed twice and you are the
+fallback — see "A failed Copilot review looks exactly like a delivered one". The
 JSON form carries each unresolved thread's `threadId` *and* `commentId`, which
 is everything needed to reply and resolve without another query.
 
@@ -83,8 +85,9 @@ the review has reached their quota limit.
 
 Nothing in the review's `state` distinguishes that from a real review, so
 "a review exists on the head" is not the same as "this PR was reviewed".
-`pr-status.sh` detects it and reports `copilot_review_errored: true` with
-`NEXT: request-review`; by hand, read the review **body**, not just its state.
+`pr-status.sh` detects it and reports `copilot_review_errored: true`: the first
+failure on a head yields `NEXT: request-review`, the second `NEXT:
+review-yourself`. By hand, read the review **body**, not just its state.
 
 The failure is also a failing `copilot-pull-request-reviewer` check-run — but
 only in the REST `check-runs` API. It is **absent from GraphQL
