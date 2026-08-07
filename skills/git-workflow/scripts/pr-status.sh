@@ -220,8 +220,12 @@ evaluate() {
         # unique sorts alphabetically, so APPROVED would lead even when a later
         # CHANGES_REQUESTED on the same commit superseded it; keep-first has the
         # same flaw once a state recurs (CHANGES_REQUESTED, APPROVED,
-        # CHANGES_REQUESTED would end on the withdrawn APPROVED). The trailing
-        # entry is read as the current state, so it has to be the newest one.
+        # CHANGES_REQUESTED would end on the withdrawn APPROVED).
+        # What this guarantees is exactly: each distinct state once, ordered by
+        # its LAST occurrence. Not "the trailing entry is the current state" —
+        # a CHANGES_REQUESTED followed by a thread reply renders
+        # CHANGES_REQUESTED+COMMENTED, and the blocking state is the first one.
+        # This field is for display; the decision path reads $head_reviews.
         reviews_on_head: ($head_reviews
                           | group_by(.author.login)
                           | map({(.[0].author.login):
