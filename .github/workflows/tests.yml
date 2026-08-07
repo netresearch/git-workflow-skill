@@ -27,10 +27,14 @@ jobs:
             bash "$t"
             echo "::endgroup::"
           done
+      # The Python tests here are standalone scripts with a main() and a
+      # non-zero exit on failure ("Run: python3 tests/<file>"), not pytest
+      # modules — pytest collects nothing from them and exits 5.
       - name: Python tests
         run: |
           shopt -s nullglob
-          files=(tests/*.py)
-          if [ ${#files[@]} -gt 0 ]; then
-            pipx run pytest tests/ -q
-          fi
+          for t in tests/*.py; do
+            echo "::group::$t"
+            python3 "$t"
+            echo "::endgroup::"
+          done
