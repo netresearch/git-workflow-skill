@@ -210,7 +210,29 @@ evaluate() {
                    | .oid[0:8]],
         undispatched: $undispatched,
         rulesets: $ruletypes,
-        reviews_on_head: ($head_reviews|map({(.author.login): .state})|add // {}),
+        # Every distinct state per author, not just the last one. `add` over
+        # map({login: state}) overwrites, so a reviewer who approves and then
+        # replies to a thread displayed as COMMENTED and the approval vanished
+        # from the only surface that shows it — beside decision=APPROVED, which
+        # then reads as an approval on an older commit. Shape is unchanged
+        # (login -> string) so consumers indexing by login still work.
+        # Dedupe keeping the LAST occurrence, not unique and not keep-first.
+        # unique sorts alphabetically, so APPROVED would lead even when a later
+        # CHANGES_REQUESTED on the same commit superseded it; keep-first has the
+        # same flaw once a state recurs (CHANGES_REQUESTED, APPROVED,
+        # CHANGES_REQUESTED would end on the withdrawn APPROVED).
+        # What this guarantees is exactly: each distinct state once, ordered by
+        # its LAST occurrence. Not "the trailing entry is the current state" —
+        # a CHANGES_REQUESTED followed by a thread reply renders
+        # CHANGES_REQUESTED+COMMENTED, and the blocking state is the first one.
+        # This field is for display; the decision path reads $head_reviews.
+        reviews_on_head: ($head_reviews
+                          | group_by(.author.login)
+                          | map({(.[0].author.login):
+                                 (map(.state)
+                                  | reduce .[] as $st ([]; (. - [$st]) + [$st])
+                                  | join("+"))})
+                          | add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
         has_copilot_review_on_head: (($copilot_on_head|length) > 0),
         # True when Copilot answered on this head with an error body rather than
@@ -244,6 +266,35 @@ evaluate() {
       }
     # ---- next valid action, highest-priority first -------------------------
     | . as $s
+    # Bound once: two branches below suppress the retry command on it (the
+    # ruleset one and the generic one). As two hand-kept copies, raising the
+    # threshold in one place only would quietly restore the unbounded
+    # re-request loop in the other — the same trap `is_errored_copilot_review`
+    # is factored out to avoid.
+    | ($s.copilot_error_count >= 2) as $copilot_exhausted
+    # Hoisted so BOTH exhausted variants can append it. The two branches below
+    # serve disjoint repo populations — with the copilot_code_review ruleset
+    # active, has_copilot_review_on_head implies has_review_on_head, so the
+    # generic branch is unreachable there — which is why fixing one of them
+    # left the other silently unwarned.
+    # An APPROVED decision sits on an OLDER commit only when nothing APPROVED
+    # the current head. has_review_on_head is the wrong test: it is true for any
+    # non-author review including a COMMENTED one, and a thread reply registers
+    # as exactly that (see the $reviews_raw comment), so one reply after the
+    # last push would drop this warning while the approval is still stale.
+    # Read the LIST, not reviews_on_head: that field joins the states per author
+    # into one string for display, so testing it would mean substring-matching
+    # "APPROVED" out of e.g. "APPROVED+CHANGES_REQUESTED" and calling a
+    # superseded approval current. The list carries each review as its own row.
+    | ([$head_reviews[] | select(.state == "APPROVED")] | length == 0) as $no_current_approval
+    | (if ($s.reviewDecision == "APPROVED") and $no_current_approval
+       then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
+       else "" end) as $stale_approval
+    # One source for the phrase; the branches differ only in what follows it.
+    # The copilot branch is not gated on has_review_on_head, so it must not
+    # assert this when a review does exist on the head.
+    | "no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed" as $no_review
+    | (if ($s.has_review_on_head | not) then "\($no_review). " else "" end) as $unreviewed
     | .next =
         (if $s.state != "OPEN" then
            {action:"none", why:"PR is \($s.state)"}
@@ -285,37 +336,43 @@ evaluate() {
                     else "" end)
                  + " — the queue merges it once its own checks pass; enqueueing"
                  + " again only restarts them")}
-         # Two strikes -> stop asking the bot. Deliberately NOT gated on
-         # $needs_copilot: a repo without the ruleset reaches the generic
-         # "no review on head" branch below, whose cmd re-requests the very bot
-         # that just reported a quota ceiling, with no way out of the loop.
-         # `has_review_on_head|not` is what ends the escalation: once ANY valid
-         # review lands — the self-review this branch asks for, or a human one —
-         # the run falls through to merge. Without it the branch is a dead end
-         # that re-fires forever on the error rows, which never age off the head.
-         elif ($s.copilot_error_count >= 2
-               and ($s.has_review_on_head | not)
-               and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
-           {action:"review-yourself",
-            why:("Copilot failed \($s.copilot_error_count)x on \($s.headOid[0:8]) — the COMMENTED"
-                 + " rows carry an error in the body, not a review. Do not re-request again:"
-                 + " an outage may clear, a quota ceiling does not clear by asking. Review the"
-                 + " diff yourself, say in the PR that the bot review was unavailable, and"
-                 + " merge on that.")}
          # `|` binds looser than `and`, so the negation needs its own parens:
          # `a and b|not` parses as `(a and b)|not` and inverts the whole test.
          # has_copilot_review_on_head must be false too: the error row stays on
          # the head forever, so without it a successful re-review would still
          # report request-review and loop the operator.
+         #
+         # Repeated failures change the ADVICE, not the action. An earlier
+         # version escalated to a distinct "review-yourself" action; it was
+         # unreachable-to-leave, because a review by the PR author is excluded
+         # from $head_reviews by design (line above) — and the operator driving
+         # this script IS usually the author, so doing what the action asked
+         # produced a row that was then discarded and the action re-fired
+         # forever. The tool cannot observe "a human read the diff", so it no
+         # longer pretends to: it keeps reporting the honest state and only
+         # stops handing over a retry command a quota ceiling will reject.
          elif ($needs_copilot and $s.copilot_review_errored
                and ($s.has_copilot_review_on_head | not)
                and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
-           {action:"request-review",
-            why:("Copilot answered on \($s.headOid[0:8]) but the review FAILED — the COMMENTED"
-                 + " row carries an error in its body (an outage, or the requesting account is"
-                 + " out of quota), not a review. Re-request once; if it fails again this"
-                 + " turns into review-yourself rather than another retry."),
-            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+           (if $copilot_exhausted then
+             {action:"request-review",
+              why:($unreviewed
+                   + "Copilot failed \($s.copilot_error_count)x on \($s.headOid[0:8]), so the COMMENTED rows"
+                   + " carry an error in the body rather than a review. Do not keep"
+                   + " re-requesting: an outage may clear, a quota ceiling does not clear by"
+                   + " asking. Review the diff yourself, say in the PR that the bot review was"
+                   + " unavailable, and decide on that. This stays request-review because the"
+                   + " ruleset still has no bot review — the tool cannot see that you read the"
+                   + " diff\($stale_approval)")}
+            else
+             {action:"request-review",
+              why:($unreviewed
+                   + "Copilot answered on \($s.headOid[0:8]) but the review FAILED — the COMMENTED"
+                   + " row carries an error in its body (an outage, or the requesting account is"
+                   + " out of quota), not a review. Re-request once; if it fails again, review it"
+                   + " yourself rather than retrying\($stale_approval)"),
+              cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+            end)
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)
                and ($s.requested_reviewers|map(test("copilot";"i"))|any)) then
            {action:"await-review", why:"Copilot review already requested for \($s.headOid[0:8]) and not delivered yet — waiting, not re-requesting"}
@@ -323,12 +380,29 @@ evaluate() {
            {action:"request-review", why:"copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — a push invalidates the previous review, it stays on the old commit",
             cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
          elif ($s.has_review_on_head|not) then
-           {action:"request-review",
-            why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed"
-                 + (if $s.reviewDecision == "APPROVED"
-                    then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
-                    else "" end)),
-            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+           # The generic gate is also reached by repos WITHOUT the
+           # copilot_code_review ruleset, and its cmd re-requests Copilot. Once
+           # Copilot has failed twice on this head, handing that command back
+           # is an unbounded loop: the retry errors, no review lands, the same
+           # cmd is offered again. The two-strikes suppression therefore lives
+           # here as well as in the ruleset branch above — it must not be gated
+           # on $needs_copilot.
+           # The stale-APPROVED warning belongs on BOTH exhausted variants: render
+           # prints mergeState=CLEAN and decision=APPROVED directly above this
+           # line, so dropping "do not merge unreviewed" reads as license to
+           # merge on a review that sits on an older commit.
+           (if $copilot_exhausted then
+               {action:"request-review",
+                why:("\($no_review). "
+                     + "Copilot failed \($s.copilot_error_count)x on it, so its rows carry an error"
+                     + " rather than a review. Do not keep re-requesting: an outage may clear, a"
+                     + " quota ceiling does not clear by asking. Review the diff yourself and"
+                     + " decide on that\($stale_approval)")}
+              else
+               {action:"request-review",
+                why:($no_review + $stale_approval),
+                cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+              end)
          # A required check that is QUEUED with nothing running is not "CI is
          # slow" — no runner has picked it up. It is reported separately
          # because the answer differs: waiting is right for a running check,
@@ -474,7 +548,7 @@ while :; do
     emit "$s"; exit 0
   fi
   case "$act" in
-    fix-ci|triage-ci|resolve-threads|request-review|review-yourself|rebase|resolve-conflicts|merge|blocked|none)
+    fix-ci|triage-ci|resolve-threads|request-review|rebase|resolve-conflicts|merge|blocked|none)
       echo "ACTIONABLE: $act"
       emit "$s"; exit 0 ;;
   esac

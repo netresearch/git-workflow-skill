@@ -42,16 +42,18 @@ make_stub() {
         rules='[{"type":"copilot_code_review","parameters":{}}]'
     fi
     printf '%s\n' "$rules" > "$STUB_DIR/rules.json"
-    cat > "$STUB_DIR/gh" <<'STUB'
+    # Unquoted delimiter so $STUB_DIR expands now; \$@ stays literal for the
+    # stub. Avoids `sed -i`, whose no-suffix form is GNU-only and fails the
+    # suite on BSD/macOS with an error pointing at sed, not at the test.
+    cat > "$STUB_DIR/gh" <<STUB
 #!/usr/bin/env bash
-for a in "$@"; do
-  case "$a" in
+for a in "\$@"; do
+  case "\$a" in
     repos/*/rules/branches/*) cat "$STUB_DIR/rules.json"; exit 0 ;;
   esac
 done
 cat "$STUB_DIR/graphql.json"
 STUB
-    sed -i "s|\$STUB_DIR|$STUB_DIR|g" "$STUB_DIR/gh"
     chmod +x "$STUB_DIR/gh"
     python3 - "$STUB_DIR/graphql.json" "$@" <<'PY'
 import sys, json
@@ -61,6 +63,7 @@ reviews = [{"author": {"login": "copilot-pull-request-reviewer"},
             "state": "COMMENTED", "commit": {"oid": head}, "body": b}
            for b in bodies]
 json.dump({"data": {"repository": {
+    "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
         "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
@@ -82,8 +85,12 @@ json.dump({"data": {"repository": {
 PY
 }
 
-# Same stub, but each arg is "author|state|body" so a case can mix a Copilot
-# error row with a human review on the same head.
+# Same stub, but each arg is "author|state|body" — optionally with a fourth
+# field "older" to place that review on a PREVIOUS commit rather than the head.
+# Needed to model a stale approval honestly: GitHub does not let an author
+# approve their own PR, so "APPROVED by the author on the head" is a state that
+# cannot occur in production and would test the author filter instead of the
+# commit-staleness filter the warning is actually about.
 make_stub_reviews() {
     local rules
     if [ -n "${RULES_JSON:-}" ]; then
@@ -92,16 +99,18 @@ make_stub_reviews() {
         rules='[{"type":"copilot_code_review","parameters":{}}]'
     fi
     printf '%s\n' "$rules" > "$STUB_DIR/rules.json"
-    cat > "$STUB_DIR/gh" <<'STUB'
+    # Unquoted delimiter so $STUB_DIR expands now; \$@ stays literal for the
+    # stub. Avoids `sed -i`, whose no-suffix form is GNU-only and fails the
+    # suite on BSD/macOS with an error pointing at sed, not at the test.
+    cat > "$STUB_DIR/gh" <<STUB
 #!/usr/bin/env bash
-for a in "$@"; do
-  case "$a" in
+for a in "\$@"; do
+  case "\$a" in
     repos/*/rules/branches/*) cat "$STUB_DIR/rules.json"; exit 0 ;;
   esac
 done
 cat "$STUB_DIR/graphql.json"
 STUB
-    sed -i "s|\$STUB_DIR|$STUB_DIR|g" "$STUB_DIR/gh"
     chmod +x "$STUB_DIR/gh"
     python3 - "$STUB_DIR/graphql.json" "$@" <<'PY'
 import sys, json
@@ -110,11 +119,18 @@ head = "deadbeefcafe"
 reviews = []
 approved = False
 for s in specs:
+    # Split the optional trailing flag off the RIGHT, so a body containing a
+    # pipe stays intact instead of being silently truncated into the flag slot.
+    if s.endswith("|older"):
+        s, oid = s[: -len("|older")], "0ldc0mm1t"
+    else:
+        oid = head
     who, state, body = s.split("|", 2)
     reviews.append({"author": {"login": who}, "state": state,
-                    "commit": {"oid": head}, "body": body})
+                    "commit": {"oid": oid}, "body": body})
     approved = approved or state == "APPROVED"
 json.dump({"data": {"repository": {
+    "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
         "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
@@ -180,46 +196,215 @@ check "copilot_review_errored"     "true"  "$(run_flag copilot_review_errored)"
 check "has_copilot_review_on_head" "true"  "$(run_flag has_copilot_review_on_head)"
 check "next.action"                "merge" "$(run_next)"
 
-echo "case 7: two errors — stop retrying, say review it yourself"
+# Repeated failures change the advice, not the action: the retry command is
+# dropped so an agent following NEXT stops re-requesting a bot that is out of
+# quota. The action stays request-review because the ruleset genuinely still has
+# no bot review — anything else would claim a state the tool cannot observe.
+echo "case 7: two errors — same action, no retry command, different advice"
 make_stub "$ERR_GENERIC" "$ERR_QUOTA"
-check "copilot_error_count" "2"               "$(run_flag copilot_error_count)"
-check "next.action"         "review-yourself" "$(run_next)"
+check "copilot_error_count" "2"              "$(run_flag copilot_error_count)"
+check "next.action"         "request-review" "$(run_next)"
+check "next.cmd absent"     "null"           "$(run_flag 'next.cmd')"
+if status | jq -e '.next.why | test("Review the diff yourself")' >/dev/null; then
+    echo "  ok   why carries the self-review instruction"
+else
+    echo "  FAIL why does not carry the self-review instruction"
+    fail=1
+fi
 
-# review-yourself has to be an instruction you can carry out, not a state you
-# cannot leave: the error rows never age off the head, so without a
-# has_review_on_head guard the branch re-fires forever and the gate never opens
-# again — including after a human approves.
-echo "case 8a: two errors + human review, ruleset active — escalation must end"
+# One retry IS offered on the first failure — an outage may simply have cleared.
+echo "case 7b: one error — retry command still offered"
+make_stub "$ERR_GENERIC"
+check "copilot_error_count" "1" "$(run_flag copilot_error_count)"
+case "$(run_flag 'next.cmd')" in
+    *"repos/o/r/pulls/1/requested_reviewers"*)
+        echo "  ok   retry command offered on the first failure, with the real repo" ;;
+    *)  echo "  FAIL first failure should offer a re-request cmd naming the repo"
+        fail=1 ;;
+esac
+
+# Regression for a dead end that shipped once: an earlier version escalated to a
+# distinct "review-yourself" action guarded on has_review_on_head. A review by
+# the PR author is excluded from that gate by design, and the operator driving
+# this script IS usually the author — so carrying out the instruction produced a
+# row that was discarded and the action re-fired forever, with pr-merge.sh
+# refusing anything but "merge". Every emitted action must be one --watch and
+# pr-merge.sh recognise.
+echo "case 8: author self-reviews after two errors — action stays a known one"
 make_stub_reviews \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
-  "a-human|APPROVED|LGTM"
-check "copilot_error_count" "2"    "$(run_flag copilot_error_count)"
-check "has_review_on_head"  "true" "$(run_flag has_review_on_head)"
-# Not asserting "merge": with the ruleset active the script asks for a COPILOT
-# review specifically, human approval or not. That predates this PR and is not
-# ours to change here. What must hold is that review-yourself has stopped
-# re-firing — otherwise the action is unreachable-by-design.
-if [ "$(run_next)" = "review-yourself" ]; then
-    echo "  FAIL next.action: still review-yourself after a review landed"
-    fail=1
+  "someone|COMMENTED|Reviewed this myself, the bot was unavailable."
+check "has_review_on_head" "false"          "$(run_flag has_review_on_head)"
+check "next.action"        "request-review" "$(run_next)"
+
+# The action alone cannot detect this regression — it is request-review either
+# way. What distinguishes "stop retrying" from "retry forever" is the cmd, so
+# assert on that. An earlier revision moved the two-strikes suppression inside
+# the $needs_copilot guard, which handed the retry command back to every repo
+# without the ruleset; this case passed regardless until the cmd was checked.
+echo "case 9: NO ruleset + two errors — retry command dropped here too"
+RULES_JSON='[]' make_stub "$ERR_GENERIC" "$ERR_QUOTA"
+check "next.action"     "request-review" "$(run_next)"
+check "next.cmd absent" "null"           "$(run_flag 'next.cmd')"
+if status | jq -e '.next.why | test("Review the diff yourself")' >/dev/null; then
+    echo "  ok   why carries the self-review instruction without the ruleset"
 else
-    echo "  ok   next.action left review-yourself ($(run_next))"
+    echo "  FAIL why lacks the self-review instruction when no ruleset is set"
+    fail=1
 fi
 
-echo "case 8b: same without the ruleset — generic gate satisfied, merge"
+# Keeps the recovery path covered: a real APPROVED review by someone other than
+# the author opens the gate even though the error rows are still on the head.
+# Also the only case that exercises the reviewDecision == APPROVED branch.
+echo "case 10: NO ruleset + two errors + human APPROVED — gate opens"
 RULES_JSON='[]' make_stub_reviews \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
   "a-human|APPROVED|LGTM"
-check "next.action" "merge" "$(run_next)"
+check "has_review_on_head" "true"  "$(run_flag has_review_on_head)"
+check "next.action"        "merge" "$(run_next)"
 
-# Without the ruleset the flow lands on the generic "no review on head" branch,
-# whose cmd re-requests the bot that just reported a quota ceiling. The
-# escalation must not be gated behind the ruleset.
-echo "case 9: NO ruleset + two errors — must escalate, not loop on request-review"
-RULES_JSON='[]' make_stub "$ERR_GENERIC" "$ERR_QUOTA"
-check "next.action" "review-yourself" "$(run_next)"
+# The approval is by ANOTHER user and sits on an OLDER commit — the state the
+# warning is written for, and the only way to reach the reviewDecision ==
+# APPROVED branch through the commit filter rather than the author filter.
+# Run for both repo populations: the ruleset branch and the generic branch serve
+# disjoint sets (with the ruleset active the generic one is unreachable), which
+# is how a fix landed on one of them and left the other unwarned.
+echo "case 11: stale APPROVED on an older commit + two errors — NO ruleset"
+RULES_JSON='[]' make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
+  "a-human|APPROVED|approved before the last push|older"
+check "has_review_on_head" "false"          "$(run_flag has_review_on_head)"
+check "next.action"        "request-review" "$(run_next)"
+check "next.cmd absent"    "null"           "$(run_flag 'next.cmd')"
+for phrase in "do not merge unreviewed" "sits on an older commit"; do
+    if status | jq -e --arg p "$phrase" '.next.why | test($p)' >/dev/null; then
+        echo "  ok   why keeps: $phrase"
+    else
+        echo "  FAIL why lost: $phrase"
+        fail=1
+    fi
+done
+
+echo "case 12: same, WITH the copilot ruleset — the other branch must warn too"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
+  "a-human|APPROVED|approved before the last push|older"
+check "has_review_on_head" "false"          "$(run_flag has_review_on_head)"
+check "next.action"        "request-review" "$(run_next)"
+check "next.cmd absent"    "null"           "$(run_flag 'next.cmd')"
+for phrase in "do not merge unreviewed" "sits on an older commit"; do
+    if status | jq -e --arg p "$phrase" '.next.why | test($p)' >/dev/null; then
+        echo "  ok   why keeps: $phrase"
+    else
+        echo "  FAIL why lost: $phrase"
+        fail=1
+    fi
+done
+
+# The copilot branch is NOT gated on has_review_on_head, so wording written for
+# "nothing reviewed this head" must not be asserted there unconditionally: with a
+# valid approval ON the head, claiming otherwise tells the operator to disregard
+# a current review.
+echo "case 13: two errors + valid APPROVED ON the head — no false claims"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
+  "a-human|APPROVED|LGTM on the current head"
+check "has_review_on_head" "true"           "$(run_flag has_review_on_head)"
+# Pin the branch too: asserting only absences passes vacuously if this stops
+# being the branch that answers.
+check "next.action"        "request-review" "$(run_next)"
+for phrase in "no review on the current head" "sits on an older commit"; do
+    if status | jq -e --arg p "$phrase" '.next.why | test($p)' >/dev/null; then
+        echo "  FAIL why falsely claims: $phrase"
+        fail=1
+    else
+        echo "  ok   why does not claim: $phrase"
+    fi
+done
+
+# The single-error branch had neither warning while the generic one did.
+echo "case 14: ONE error + stale APPROVED — warnings on the first strike too"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|APPROVED|approved before the last push|older"
+check "copilot_error_count" "1" "$(run_flag copilot_error_count)"
+for phrase in "do not merge unreviewed" "sits on an older commit"; do
+    if status | jq -e --arg p "$phrase" '.next.why | test($p)' >/dev/null; then
+        echo "  ok   why keeps: $phrase"
+    else
+        echo "  FAIL why lost: $phrase"
+        fail=1
+    fi
+done
+
+# has_review_on_head is true for ANY non-author review, including a COMMENTED
+# one — and a reply to a review thread registers as exactly that. Using it as
+# the staleness test drops the warning after a single reply, while the approval
+# is still sitting on the pre-push commit.
+echo "case 15: stale APPROVED + a COMMENTED reply on the head — warning survives"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|APPROVED|approved before the last push|older" \
+  "other-human|COMMENTED|replying to a thread"
+check "has_review_on_head" "true"           "$(run_flag has_review_on_head)"
+check "next.action"        "request-review" "$(run_next)"
+if status | jq -e '.next.why | test("sits on an older commit")' >/dev/null; then
+    echo "  ok   staleness warning survives a COMMENTED reply"
+else
+    echo "  FAIL staleness warning dropped by a COMMENTED reply"
+    fail=1
+fi
+
+# Case 15 uses two distinct logins, so no key collides and it cannot catch a
+# lossy per-author projection. The SAME reviewer approving the head and then
+# commenting on it is what collapses the state.
+echo "case 16: same reviewer approves the head then comments — no false staleness"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|APPROVED|LGTM on the current head" \
+  "a-human|COMMENTED|one more thought on the same head"
+check "next.action" "request-review" "$(run_next)"
+if status | jq -e '.next.why | test("sits on an older commit")' >/dev/null; then
+    echo "  FAIL claims staleness for an approval that is on the head"
+    fail=1
+else
+    echo "  ok   no false staleness after the approver comments"
+fi
+
+# render/--json must not hide the approval either: it is the only surface that
+# shows per-reviewer state, and it sits directly above the corrected why.
+echo "case 17: approve-then-comment stays visible in reviews_on_head"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|APPROVED|LGTM on the current head" \
+  "a-human|COMMENTED|one more thought on the same head"
+check "reviews_on_head[a-human]" "APPROVED+COMMENTED" "$(run_flag '"reviews_on_head"."a-human"')"
+
+# Chronology matters, and the fixture has to make alphabetical order DISAGREE
+# with it — otherwise `unique` produces the same string and the case proves
+# nothing. CHANGES_REQUESTED then APPROVED: sorted gives APPROVED first (the
+# superseded state leading), chronological keeps the current one last.
+echo "case 18: CHANGES_REQUESTED then APPROVED — chronology, not alphabet"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|CHANGES_REQUESTED|not yet" \
+  "a-human|APPROVED|fixed, good now"
+check "reviews_on_head[a-human]" "CHANGES_REQUESTED+APPROVED" "$(run_flag '"reviews_on_head"."a-human"')"
+
+# No other fixture repeats a state, so the dedupe branch of the reduce is never
+# reached by the suite. Recurrence is what separates keep-first from keep-last.
+echo "case 19: state recurs — the trailing entry must be the current one"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|CHANGES_REQUESTED|not yet" \
+  "a-human|APPROVED|fixed" \
+  "a-human|CHANGES_REQUESTED|found something else"
+check "reviews_on_head[a-human]" "APPROVED+CHANGES_REQUESTED" "$(run_flag '"reviews_on_head"."a-human"')"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
