@@ -255,17 +255,20 @@ evaluate() {
     # active, has_copilot_review_on_head implies has_review_on_head, so the
     # generic branch is unreachable there — which is why fixing one of them
     # left the other silently unwarned.
-    # Both conditions matter: an APPROVED decision only sits on an OLDER commit
-    # when nothing reviewed the current head. The copilot branch below is not
-    # gated on has_review_on_head, so without the second test this note fires on
-    # a current, valid approval and tells the operator to disregard it.
-    | (if ($s.reviewDecision == "APPROVED") and ($s.has_review_on_head | not)
+    # An APPROVED decision sits on an OLDER commit only when nothing APPROVED
+    # the current head. has_review_on_head is the wrong test: it is true for any
+    # non-author review including a COMMENTED one, and a thread reply registers
+    # as exactly that (see the $reviews_raw comment), so one reply after the
+    # last push would drop this warning while the approval is still stale.
+    | ([$s.reviews_on_head[]? | select(. == "APPROVED")] | length == 0) as $no_current_approval
+    | (if ($s.reviewDecision == "APPROVED") and $no_current_approval
        then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
        else "" end) as $stale_approval
-    # Same reason: only claim "nothing reviewed this head" when that is true.
-    | (if ($s.has_review_on_head | not)
-       then "no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed. "
-       else "" end) as $unreviewed
+    # One source for the phrase; the branches differ only in what follows it.
+    # The copilot branch is not gated on has_review_on_head, so it must not
+    # assert this when a review does exist on the head.
+    | "no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed" as $no_review
+    | (if ($s.has_review_on_head | not) then "\($no_review). " else "" end) as $unreviewed
     | .next =
         (if $s.state != "OPEN" then
            {action:"none", why:"PR is \($s.state)"}
@@ -364,15 +367,14 @@ evaluate() {
            # merge on a review that sits on an older commit.
            (if $copilot_exhausted then
                {action:"request-review",
-                why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed."
-                     + " Copilot failed \($s.copilot_error_count)x on it, so its rows carry an error"
+                why:("\($no_review). "
+                     + "Copilot failed \($s.copilot_error_count)x on it, so its rows carry an error"
                      + " rather than a review. Do not keep re-requesting: an outage may clear, a"
                      + " quota ceiling does not clear by asking. Review the diff yourself and"
                      + " decide on that\($stale_approval)")}
               else
                {action:"request-review",
-                why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed"
-                     + $stale_approval),
+                why:($no_review + $stale_approval),
                 cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
               end)
          # A required check that is QUEUED with nothing running is not "CI is

@@ -314,7 +314,10 @@ make_stub_reviews \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
   "a-human|APPROVED|LGTM on the current head"
-check "has_review_on_head" "true" "$(run_flag has_review_on_head)"
+check "has_review_on_head" "true"           "$(run_flag has_review_on_head)"
+# Pin the branch too: asserting only absences passes vacuously if this stops
+# being the branch that answers.
+check "next.action"        "request-review" "$(run_next)"
 for phrase in "no review on the current head" "sits on an older commit"; do
     if status | jq -e --arg p "$phrase" '.next.why | test($p)' >/dev/null; then
         echo "  FAIL why falsely claims: $phrase"
@@ -338,6 +341,24 @@ for phrase in "do not merge unreviewed" "sits on an older commit"; do
         fail=1
     fi
 done
+
+# has_review_on_head is true for ANY non-author review, including a COMMENTED
+# one — and a reply to a review thread registers as exactly that. Using it as
+# the staleness test drops the warning after a single reply, while the approval
+# is still sitting on the pre-push commit.
+echo "case 15: stale APPROVED + a COMMENTED reply on the head — warning survives"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|APPROVED|approved before the last push|older" \
+  "other-human|COMMENTED|replying to a thread"
+check "has_review_on_head" "true"           "$(run_flag has_review_on_head)"
+check "next.action"        "request-review" "$(run_next)"
+if status | jq -e '.next.why | test("sits on an older commit")' >/dev/null; then
+    echo "  ok   staleness warning survives a COMMENTED reply"
+else
+    echo "  FAIL staleness warning dropped by a COMMENTED reply"
+    fail=1
+fi
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
