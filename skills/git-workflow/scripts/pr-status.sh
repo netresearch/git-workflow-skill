@@ -210,7 +210,16 @@ evaluate() {
                    | .oid[0:8]],
         undispatched: $undispatched,
         rulesets: $ruletypes,
-        reviews_on_head: ($head_reviews|map({(.author.login): .state})|add // {}),
+        # Every distinct state per author, not just the last one. `add` over
+        # map({login: state}) overwrites, so a reviewer who approves and then
+        # replies to a thread displayed as COMMENTED and the approval vanished
+        # from the only surface that shows it — beside decision=APPROVED, which
+        # then reads as an approval on an older commit. Shape is unchanged
+        # (login -> string) so consumers indexing by login still work.
+        reviews_on_head: ($head_reviews
+                          | group_by(.author.login)
+                          | map({(.[0].author.login): (map(.state)|unique|join("+"))})
+                          | add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
         has_copilot_review_on_head: (($copilot_on_head|length) > 0),
         # True when Copilot answered on this head with an error body rather than

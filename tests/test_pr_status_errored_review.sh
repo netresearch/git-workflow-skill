@@ -376,6 +376,15 @@ else
     echo "  ok   no false staleness after the approver comments"
 fi
 
+# render/--json must not hide the approval either: it is the only surface that
+# shows per-reviewer state, and it sits directly above the corrected why.
+echo "case 17: approve-then-comment stays visible in reviews_on_head"
+make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "a-human|APPROVED|LGTM on the current head" \
+  "a-human|COMMENTED|one more thought on the same head"
+check "reviews_on_head[a-human]" "APPROVED+COMMENTED" "$(run_flag '"reviews_on_head"."a-human"')"
+
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
 else
