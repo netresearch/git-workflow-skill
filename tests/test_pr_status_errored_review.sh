@@ -63,6 +63,7 @@ reviews = [{"author": {"login": "copilot-pull-request-reviewer"},
             "state": "COMMENTED", "commit": {"oid": head}, "body": b}
            for b in bodies]
 json.dump({"data": {"repository": {
+    "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
         "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
@@ -119,6 +120,7 @@ for s in specs:
                     "commit": {"oid": head}, "body": body})
     approved = approved or state == "APPROVED"
 json.dump({"data": {"repository": {
+    "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
         "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
@@ -204,12 +206,12 @@ fi
 echo "case 7b: one error — retry command still offered"
 make_stub "$ERR_GENERIC"
 check "copilot_error_count" "1" "$(run_flag copilot_error_count)"
-if [ "$(run_flag 'next.cmd')" = "null" ]; then
-    echo "  FAIL first failure should still offer the re-request command"
-    fail=1
-else
-    echo "  ok   retry command offered on the first failure"
-fi
+case "$(run_flag 'next.cmd')" in
+    *"repos/o/r/pulls/1/requested_reviewers"*)
+        echo "  ok   retry command offered on the first failure, with the real repo" ;;
+    *)  echo "  FAIL first failure should offer a re-request cmd naming the repo"
+        fail=1 ;;
+esac
 
 # Regression for a dead end that shipped once: an earlier version escalated to a
 # distinct "review-yourself" action guarded on has_review_on_head. A review by
@@ -252,6 +254,29 @@ RULES_JSON='[]' make_stub_reviews \
   "a-human|APPROVED|LGTM"
 check "has_review_on_head" "true"  "$(run_flag has_review_on_head)"
 check "next.action"        "merge" "$(run_next)"
+
+# Finding from review: the comment on case 10 claimed it covered the
+# reviewDecision == APPROVED branch. It does not — case 10 lands on merge, while
+# that string lives only on the generic "no review on head" branch. Reaching it
+# needs APPROVED with an EMPTY $head_reviews, i.e. the approval sitting on an
+# older commit. That gap is why the stale-approval warning could go missing from
+# the exhausted variant unnoticed.
+echo "case 11: stale APPROVED on an older commit + two errors — warning survives"
+RULES_JSON='[]' make_stub_reviews \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
+  "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
+  "someone|APPROVED|approved on an older commit"
+check "has_review_on_head" "false"          "$(run_flag has_review_on_head)"
+check "next.action"        "request-review" "$(run_next)"
+check "next.cmd absent"    "null"           "$(run_flag 'next.cmd')"
+for phrase in "do not merge unreviewed" "sits on an older commit"; do
+    if status | jq -e --arg p "$phrase" '.next.why | test($p)' >/dev/null; then
+        echo "  ok   why keeps: $phrase"
+    else
+        echo "  FAIL why lost: $phrase"
+        fail=1
+    fi
+done
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"

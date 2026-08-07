@@ -244,6 +244,12 @@ evaluate() {
       }
     # ---- next valid action, highest-priority first -------------------------
     | . as $s
+    # Bound once: two branches below suppress the retry command on it (the
+    # ruleset one and the generic one). As two hand-kept copies, raising the
+    # threshold in one place only would quietly restore the unbounded
+    # re-request loop in the other — the same trap `is_errored_copilot_review`
+    # is factored out to avoid.
+    | ($s.copilot_error_count >= 2) as $copilot_exhausted
     | .next =
         (if $s.state != "OPEN" then
            {action:"none", why:"PR is \($s.state)"}
@@ -303,7 +309,7 @@ evaluate() {
          elif ($needs_copilot and $s.copilot_review_errored
                and ($s.has_copilot_review_on_head | not)
                and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
-           (if $s.copilot_error_count >= 2 then
+           (if $copilot_exhausted then
              {action:"request-review",
               why:("Copilot failed \($s.copilot_error_count)x on \($s.headOid[0:8]) — the COMMENTED"
                    + " rows carry an error in the body, not a review. Do not keep re-requesting:"
@@ -333,20 +339,27 @@ evaluate() {
            # cmd is offered again. The two-strikes suppression therefore lives
            # here as well as in the ruleset branch above — it must not be gated
            # on $needs_copilot.
-           (if $s.copilot_error_count >= 2 then
-             {action:"request-review",
-              why:("no review on the current head (\($s.headOid[0:8])) — and Copilot failed"
-                   + " \($s.copilot_error_count)x on it, so its rows carry an error rather than"
-                   + " a review. Do not keep re-requesting: an outage may clear, a quota ceiling"
-                   + " does not clear by asking. Review the diff yourself and decide on that.")}
-            else
-             {action:"request-review",
-              why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed"
-                   + (if $s.reviewDecision == "APPROVED"
-                      then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
-                      else "" end)),
-              cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
-            end)
+           # The stale-APPROVED warning belongs on BOTH variants. It matters most
+           # in the exhausted one: render prints mergeState=CLEAN and
+           # decision=APPROVED directly above this line, so dropping "do not
+           # merge unreviewed" there reads as license to merge on a review that
+           # sits on an older commit.
+           ((if $s.reviewDecision == "APPROVED"
+             then "; the existing APPROVED review sits on an older commit and this repo does not dismiss it"
+             else "" end)) as $stale_approval
+           | (if $copilot_exhausted then
+               {action:"request-review",
+                why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed."
+                     + " Copilot failed \($s.copilot_error_count)x on it, so its rows carry an error"
+                     + " rather than a review. Do not keep re-requesting: an outage may clear, a"
+                     + " quota ceiling does not clear by asking. Review the diff yourself and"
+                     + " decide on that\($stale_approval)")}
+              else
+               {action:"request-review",
+                why:("no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed"
+                     + $stale_approval),
+                cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+              end)
          # A required check that is QUEUED with nothing running is not "CI is
          # slow" — no runner has picked it up. It is reported separately
          # because the answer differs: waiting is right for a running check,
