@@ -1,0 +1,37 @@
+name: Hook Tests
+
+# Lives beside lint.yml rather than inside it: lint.yml is governed by the
+# skill template and must stay byte-identical across skill repos, while these
+# tests are specific to the PreToolUse hook this repo ships.
+#
+# The hook decides whether a command runs at all in every session that installs
+# the plugin, so a silent regression there is expensive. Standard library only —
+# nothing to install.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+
+permissions: {}
+
+jobs:
+  hooks:
+    name: Hook Script Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run hook tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
