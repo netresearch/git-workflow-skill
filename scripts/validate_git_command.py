@@ -214,6 +214,47 @@ def handrolled_pr_poll(cmd: str) -> str | None:
     )
 
 
+# Asking GitHub directly whether a pull request can merge is the poll above
+# without the loop: `gh pr view --json mergeStateStatus` and
+# `gh api .../pulls/N --jq .mergeable_state` answer "blocked" and never say
+# why, staying blind to the two states that usually cause it — an unresolved
+# review thread and a failing check. pr-status.sh reports both and ends with a
+# NEXT: line naming the action.
+#
+# Only a segment that actually INVOKES gh counts. Matching the words anywhere
+# would block writing ABOUT the rule: a heredoc carrying test cases, an echo,
+# a grep pattern, this rule's own tests.
+MERGE_READINESS_FIELD = re.compile(
+    r"\bmergeable_state\b|\bmergeStateStatus\b|\bmergeable\b|\breviewDecision\b"
+)
+# A loop body arrives as " do gh api ..." once the command is split on
+# separators, so the shell keywords that can precede the call are skipped.
+QUERIES_FORGE = re.compile(r"\s*(?:(?:do|then|else|\{)\s+)*gh\s+(?:pr\s+view|api)\b")
+
+
+def merge_readiness_without_pr_status(cmd: str) -> str | None:
+    # A command that already runs pr-status.sh is the recommended shape, and
+    # `isRequired` is the GraphQL query naming WHICH required context is unmet
+    # — a deliberate deep dive pr-status.sh does not break down.
+    if "pr-status.sh" in cmd or "isRequired" in cmd:
+        return None
+
+    for segment in re.split(r"(?:\|\||&&|[;|&\n])", cmd):
+        if QUERIES_FORGE.match(segment) and MERGE_READINESS_FIELD.search(segment):
+            return (
+                "Merge readiness asked of gh directly. Use "
+                "`pr-status.sh -R <owner/repo> <pr>` instead: it reports checks, "
+                "reviews, rulesets and unresolved threads together and ends with "
+                "a NEXT: line naming the action. mergeable_state and "
+                "mergeStateStatus answer only 'blocked' and never say why, so an "
+                "unresolved thread or a red check stays invisible and the pull "
+                "request looks like it is merely waiting. To find out which "
+                "required context is unmet, run pr-status.sh first, then the "
+                "GraphQL query with `isRequired` — that one is not gated."
+            )
+    return None
+
+
 def check_conventional_commit(message: str) -> str | None:
     """Validate commit message follows conventional commits."""
     if not re.match(CONVENTIONAL_COMMIT_PATTERN, message):
@@ -327,7 +368,12 @@ def main():
     # Gates that refuse the call outright. Checked before the advisory
     # warnings because a denied command never runs, so warning about its
     # style would be noise.
-    for gate in (forge_body_hard_wrapped, reply_path_without_pr, handrolled_pr_poll):
+    for gate in (
+        forge_body_hard_wrapped,
+        reply_path_without_pr,
+        handrolled_pr_poll,
+        merge_readiness_without_pr_status,
+    ):
         reason = gate(command)
         if reason:
             deny(reason)
