@@ -121,6 +121,15 @@ out=$("$SCRIPT" --repo "$repo" 2>&1); rc=$?
 check "a rejecting hook still yields a signing verdict" 0 "$rc"
 check "the hook interference is reported" 1 "$(grep -c 'hook rejected the probe' <<<"$out")"
 
+# --- 5b. the same for a pre-commit hook ------------------------------------
+repo=$(new_repo prehooked)
+echo seed > "$repo/a"; git -C "$repo" add a
+git -C "$repo" commit -q -S -m "chore: seed"
+printf '#!/bin/sh\nexit 1\n' > "$repo/.git/hooks/pre-commit"
+chmod +x "$repo/.git/hooks/pre-commit"
+check "a rejecting pre-commit hook still yields a signing verdict" 0 \
+    "$("$SCRIPT" --repo "$repo" --quiet; echo $?)"
+
 # --- 6. an unusable signing key is NOT READY, with git's own error ----------
 repo=$(new_repo brokenkey)
 echo seed > "$repo/a"; git -C "$repo" add a
@@ -167,13 +176,21 @@ CHECKPOINTS="$REPO_ROOT/skills/git-workflow/checkpoints.yaml"
 # test that needs a dependency the runner lacks is a test that does not run.
 gw17=$(awk '/^  - id: GW-17$/{f=1} f && /^      test -z/{print; exit}' "$CHECKPOINTS")
 
-# The load-bearing part is the header pattern. If the two implementations ever
-# disagree, the checkpoint silently becomes a second, drifting answer.
+# The load-bearing part is the header pattern. Every place that answers "is this
+# commit signed" must use the same rule, or one of them silently becomes a
+# second, drifting answer — and the weak form `^gpgsig` (no alternation, no
+# trailing space) must appear nowhere at all.
 RULE='\^gpgsig(-sha256)? '
 check "the script uses the shared header rule" 1 \
     "$(grep -c -- "$RULE" "$REPO_ROOT/skills/git-workflow/scripts/signing-preflight.sh")"
-check "the checkpoint uses the shared header rule" 1 \
+check "the checkpoints use the shared header rule" 2 \
     "$(grep -c -- "$RULE" "$CHECKPOINTS")"
+check "the verifier uses the shared header rule" 1 \
+    "$(grep -c -- "$RULE" "$REPO_ROOT/skills/git-workflow/scripts/verify-git-workflow.sh")"
+# Scoped to the shipped surface: this file names the weak form in its own
+# assertion text and would otherwise match itself.
+check "the weak form appears nowhere under skills/" 0 \
+    "$(grep -rl -- "\^gpgsig'" "$REPO_ROOT/skills" 2>/dev/null | wc -l)"
 
 if [ -z "$gw17" ]; then
     echo "  FAIL could not extract the GW-17 command from checkpoints.yaml —"

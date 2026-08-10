@@ -192,8 +192,8 @@ llm_reviews:
       Read the commit object — a signed commit carries a `gpgsig` header:
 
       ```
-      git log -5 --format=%H | while read c; do
-        git cat-file commit "$c" | sed -n '/^$/q;p' | grep -q '^gpgsig' \
+      git log -5 --format=%H | while read -r c; do
+        git cat-file commit "$c" | sed -n '/^$/q;p' | grep -qE '^gpgsig(-sha256)? ' \
           && echo "$c signed" || echo "$c UNSIGNED"
       done
       ```

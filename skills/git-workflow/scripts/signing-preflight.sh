@@ -25,9 +25,9 @@
 #
 # Exit codes:
 #   0  READY / signed
-#   1  NOT READY / unsigned — no signature, or signing aborted the commit
-#   2  INCONCLUSIVE — could not probe (hooks rejected it even with --no-verify,
-#                     or --config-only found the config incomplete)
+#   1  NOT READY / unsigned — no signature, or the commit aborted with hooks
+#                     already ruled out by the --no-verify retry
+#   2  INCONCLUSIVE — --config-only cannot answer from the config alone
 #   3  USAGE        — not a git repository / bad arguments
 
 set -uo pipefail
@@ -143,7 +143,9 @@ if ! probe_commit; then
         HOOK_BLOCKED=1
         say "note: a hook rejected the probe commit; retried with --no-verify to isolate signing"
     else
-        say "NOT READY — git commit -S aborted:"
+        # --no-verify skips pre-commit and commit-msg, so hooks are ruled out
+        # by the retry: what remains is signing, or the repository itself.
+        say "NOT READY — git commit -S aborted with hooks disabled:"
         say "$(sed 's/^/  /' "$STDERR_LOG")"
         exit 1
     fi

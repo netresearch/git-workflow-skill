@@ -165,7 +165,7 @@ git log -1 --format='%h %s'           # now describes YOUR commit
 
 Checking `git commit`'s own exit code works, but only if nothing reads it first — and in practice the next thing in the block is a status line that answers from the *previous* commit and looks right. `git log -1 --format='%G?'` prints the same value it printed before the aborted commit, and the `git push` that follows succeeds while pushing nothing new, because the branch never moved. HEAD is the one value the aborted commit did not leave intact, which is why comparing it answers the question the others only appear to.
 
-**Never skip hooks** unless explicitly told to. `--no-verify` bypasses hook enforcement that exists for good reasons. If a hook fails, diagnose the root cause.
+**Never skip hooks** unless explicitly told to. `--no-verify` bypasses hook enforcement that exists for good reasons. If a hook fails, diagnose the root cause. The one exception is a throwaway *probe* commit that is deleted moments later and never enters history — `signing-preflight.sh` retries with `--no-verify` there, and only to tell a hook rejection apart from a signing failure.
 
 **Never bypass signing** unless explicitly told to. `--no-gpg-sign` and `-c commit.gpgsign=false` disable commit signing; the result will fail branch-protection or policy checks that require signed commits later.
 
