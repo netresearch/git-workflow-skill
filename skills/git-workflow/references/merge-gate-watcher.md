@@ -154,3 +154,57 @@ branch is often auto-deleted). The discipline is cheaper than the recovery:
 ## A queued PR can silently leave the merge queue
 
 A PR queued via `gh pr merge --auto` on a merge-queue repo can drop back out with no visible event: `isInMergeQueue` flips to `false`, `mergeStateStatus` reads `CLEAN`, and nothing merges. Verify the real queue state via GraphQL (`state` / `merged` / `isInMergeQueue` / `mergeStateStatus`) — a status read that only looks at `mergeStateStatus` reports a dropped PR as merge-ready. Re-arm once (`gh pr merge --disable-auto`, then `--auto`, which forces the queue to re-evaluate); if it drops again, diagnose the queue's required contexts instead of re-arming repeatedly.
+
+### The dequeue reason is on the `gh-readonly-queue` branch, never on the PR
+
+The queue runs the required checks on its own branch, `gh-readonly-queue/<base>/pr-<n>-<sha>`, and a failure there dequeues the entry **silently**: no bot comment, no failed check on the PR, `mergeStateStatus` unchanged. Every PR-scoped query therefore answers "ready and waiting" for a PR that was already thrown out. The runs on that branch are the only record:
+
+```bash
+R=owner/repo; PR=123
+# --jq is gh's built-in filter and takes no --arg; pipe to real jq when you need one.
+gh api "repos/$R/actions/runs?per_page=40" \
+  | jq -r --arg p "gh-readonly-queue/main/pr-$PR-" '
+      .workflow_runs[] | select(.head_branch | startswith($p))
+      | "\(.created_at) \(.name) \(.status)/\(.conclusion)"' | sort -r
+```
+
+Then open the failing run's jobs and steps:
+
+```bash
+RID=<id from above>
+gh api "repos/$R/actions/runs/$RID/jobs" --jq '.jobs[] | select(.conclusion=="failure") | .name'
+gh api "repos/$R/actions/jobs/<job-id>/logs"      # the step output, for the actual cause
+```
+
+Two consequences for the diagnosis:
+
+- **Time-box the branch filter.** A re-queued PR produces a *second* run set on a branch whose name shares the `pr-<n>-` prefix. A filter matching only the prefix returns the old failed run alongside the new one and reads as a fresh failure. Add `select(.created_at > $since)` with the re-queue time.
+- **A dequeue is not evidence of a defect in the PR.** Observed 2026-08-09 (netresearch/t3x-nr-llm#686): five of six workflows green, `Checks` red on one job — `composer audit` exited 100 because `https://packagist.org/api/security-advisories/` answered HTTP 502. The identical workflow had passed on the previous queue branch 30 minutes earlier. Read the step log before concluding anything about the branch; a network-dependent step in a required check turns any upstream outage into a dequeue.
+
+## Watcher cost: GraphQL and REST rate limits are separate budgets
+
+`gh pr view --json statusCheckRollup` is a GraphQL query and an expensive one. Two watchers polling it every 60 s exhausted the **GraphQL** budget (29 of 5000 left) while the REST **core** budget still showed 4614 of 5000 — and once that happened, plain REST calls also began returning `403 API rate limit exceeded`. That combination (one resource drained, the other healthy, both refused) is the **secondary** limit reacting to request density, not the quota. Read the resources separately rather than trusting a single number:
+
+```bash
+gh api rate_limit --jq '.resources | to_entries[] | "\(.key): \(.value.remaining)/\(.value.limit)"'
+```
+
+Three rules follow, and they cost nothing:
+
+- **One watcher per subject.** Two loops on the same PR double the spend and tell you the same thing.
+- **Poll REST, not GraphQL, for liveness.** `gh api repos/$R/pulls/$PR` and `gh api repos/$R/commits/$SHA/check-runs` answer state and checks from the cheaper budget.
+- **180 s, not 60 s.** A merge queue does not resolve in a minute; the faster interval buys nothing and is what drains the budget.
+
+Recovery is waiting: `gh api rate_limit --jq '.resources.graphql.reset'` is an epoch timestamp — sleep to it in **one** background command rather than retrying into the limit.
+
+### `gh api` writes its error to stdout — test a field, never emptiness
+
+On a 404 (or any error) `gh api` prints a JSON error object to **stdout** and exits non-zero. A watcher that decides on "did I get output?" reads the error as the answer:
+
+```bash
+rel=$(gh api repos/$R/releases/tags/$TAG --jq '.tag_name' 2>/dev/null)
+[ -n "$rel" ] && echo "release exists"       # WRONG — fires on the 404 body
+case "$rel" in "$TAG") echo "release exists";; esac   # right — tests the value
+```
+
+Observed 2026-08-09: a release watcher announced "release published" while the API was still answering 404 and the workflow was mid-run. Match the value you expect, or add `-q` handling that distinguishes exit status from output.

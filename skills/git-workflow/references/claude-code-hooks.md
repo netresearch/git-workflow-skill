@@ -152,6 +152,34 @@ jq -e '.hooks' .claude/settings.json
 
 The settings watcher only picks up new hook files if `.claude/` existed at session start. If you created `.claude/settings.json` during a session, open `/hooks` once to reload.
 
+## Recipe 6: Block `git commit` While Staged Content Has Conflict Markers
+
+A resolver that exits non-zero does **not** stop a following `git add -A && git commit` in the same Bash call — the `&&` chain starts fresh after the failed command, so the commit lands with `<<<<<<<` in the tree and nothing reports it until a later gate run. `verify-git-workflow.sh` finds markers on demand; this denies the commit that would create them.
+
+```bash
+cp <skill>/scripts/conflict-marker-gate.py ~/.claude/hooks/
+chmod +x ~/.claude/hooks/conflict-marker-gate.py
+```
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 $HOME/.claude/hooks/conflict-marker-gate.py" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+It fires only when the command actually runs `git commit` (`git -C <dir> commit` and `git -c k=v commit` included) and only when staged blobs carry a marker. It matches `<<<<<<<` and `>>>>>>>` (each followed by a space) at line start but deliberately **not** a bare `=======`, which is an ordinary RST section underline and would otherwise deny every docs commit. Any error, non-repo cwd or unreadable diff allows the command — the gate never blocks on its own failure.
+
+Verify it against both directions before relying on it: stage a file containing a real marker (must deny) and a `.rst` file with a `=======` underline (must allow).
+
 ## Anti-Patterns
 
 | Anti-pattern | Why wrong | Fix |

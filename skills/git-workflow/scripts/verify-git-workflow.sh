@@ -236,10 +236,17 @@ fi
 # Check for merge conflicts markers
 echo ""
 echo "=== Conflict Markers ==="
-CONFLICT_FILES=$(grep -rln "<<<<<<< \|======= \|>>>>>>> " --include="*.js" --include="*.ts" --include="*.php" --include="*.py" . 2>/dev/null | grep -v node_modules | grep -v vendor | head -5)
+# Tracked files of ANY type: markers land in .md/.rst/.yaml just as often as in
+# code, and an extension allow-list silently passes those. Anchored at line
+# start, and WITHOUT a bare "=======" branch — that is an ordinary RST section
+# underline and would report every docs tree as conflicted.
+CONFLICT_FILES=$(git grep -lE '^(<<<<<<< |>>>>>>> )' -- . 2>/dev/null | head -5)
+if [[ -z "$CONFLICT_FILES" ]] && ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    CONFLICT_FILES=$(grep -rlE '^(<<<<<<< |>>>>>>> )' . 2>/dev/null | grep -v node_modules | grep -v vendor | head -5)
+fi
 if [[ -n "$CONFLICT_FILES" ]]; then
     echo "❌ Conflict markers found in files:"
-    echo "$CONFLICT_FILES" | sed 's/^/   /'
+    while IFS= read -r conflict_file; do echo "   $conflict_file"; done <<< "$CONFLICT_FILES"
     ((ERRORS++))
 else
     echo "✅ No conflict markers found"

@@ -1380,10 +1380,87 @@ gh pr merge <CHILD_NUMBER> --merge       # NO --delete-branch mid-stack
 Delete all stack branches in one pass **after the last PR merged** (a repo
 with "automatically delete head branches" usually does it for you).
 
+#### GitHub-native stacked PRs: merge the tip, not each PR in turn
+
+The sequence above is for a **hand-built** chain. GitHub's native Stacked PRs
+feature (public preview, `gh stack`) behaves differently and the difference is
+the whole point of using it: **merging the top PR merges every PR beneath it in
+one operation.** Walking the stack bottom-up there is not merely slower — on a
+merge-queue repo it is actively worse, because each PR costs its own queue cycle
+and the queue's merge-correctness validation rejects two chained entries that are
+in flight at the same time ("invalid changes in the merge commit").
+
+```bash
+gh pr merge <TIP_NUMBER> --merge --auto     # the whole stack lands
+```
+
+Verify containment before assuming a lower PR is covered, rather than reading it
+off the UI:
+
+```bash
+git merge-base --is-ancestor "$(gh pr view <LOWER> --json headRefOid --jq .headRefOid)" \
+                             "$(gh pr view <TIP>   --json headRefOid --jq .headRefOid)" \
+  && echo "LOWER is contained in TIP"
+```
+
+Observed 2026-08-09 (netresearch/t3x-nr-llm): merging only #665 landed #663, #664 and #665 together; the preceding attempt to queue all three separately was rejected by the queue three times. The PRs that were merged this way close as
+`MERGED`; PRs whose commits reach `main` through a *different* PR (see batching,
+below) close as `CLOSED` and need their issues closed by hand.
+
+One preview-era caveat worth knowing before relying on it: deleting a lower
+branch can **close** the PR above it rather than retarget it, and a closed PR of
+this kind cannot be reopened. Leave `--delete-branch` off until the stack is
+fully merged.
+
 Related: a workflow **rerun executes the frozen merge commit** — it does not
 re-resolve `refs/pull/N/merge` against the moved base. A check that depends
 on base state (template drift, conflict detection) stays wrong after main
 moved; push a base-merge into the PR branch instead of rerunning.
+
+### Many independent PRs, one queue: batch them into an integration branch
+
+A merge queue serializes by design, so N ready PRs cost N queue cycles — and if
+they all touch one accumulating file (`CHANGELOG.md`, a docs index), each merge
+also invalidates the next one's merge commit, so every PR needs a forward-merge
+before its turn. Thirteen PRs took several hours this way and merged one per
+hour at best.
+
+When the PRs are genuinely independent, merge them locally into one integration
+branch and send that through the queue instead. Two cycles replaced thirteen
+(netresearch/t3x-nr-llm#685 with ten PRs, #686 with three chain tips, both
+2026-08-09).
+
+```bash
+git -C .bare worktree add ../integration -b integration/batch-$(date +%F) origin/main
+cd ../integration
+for pr in 648 653 676 677; do
+  git merge --no-edit "$(gh pr view $pr --json headRefOid --jq .headRefOid)"
+done
+```
+
+Four things decide whether this pays off, and skipping any of them costs more
+than the batching saved:
+
+- **Resolve the accumulator files once, deliberately.** The conflicts are almost
+  always confined to append-only files. Auto-resolving them by keeping *both*
+  sides works for the content but **duplicates entries and flattens section
+  assignment** when the same entry was reworded on both sides — verify the
+  merged file afterwards (count entries, check for duplicates) instead of
+  trusting the resolver. Anything outside that known set is a real conflict:
+  stop and resolve it by hand.
+- **Run the full gate on the integration branch, not on the individual PRs.**
+  Combination breaks exist that no single PR can show: a constructor argument
+  another PR makes mandatory, two PRs extending the same factory differently.
+  Three such breaks appeared across two batches here — all invisible per-PR,
+  all caught by the batch gate.
+- **Prove containment before closing anything.** `git merge-base --is-ancestor
+  <pr-head> origin/main` per PR, after the batch merges. This is the only
+  evidence that a PR's work actually landed.
+- **The batched PRs close as `CLOSED`, not `MERGED`,** so GitHub does not run
+  their `Closes #N` keywords. Close those issues explicitly and say which PR
+  carried them, or the backlog silently keeps them open.
+
+Do not batch PRs that are chained (a stack) — merge the tip instead, see above.
 
 ### Follow-up pushes to an armed PR branch: confirm the PR is still OPEN
 
@@ -1787,6 +1864,36 @@ gh api repos/{owner}/{repo}/pulls/NUMBER/requested_reviewers \
 
 (`gh pr edit --add-reviewer` rejects the bot login with "Could not resolve
 user"; the REST `requested_reviewers` endpoint is the working path.)
+
+#### Is that red check actually blocking? `isRequired` is the only answer
+
+A failing check is not automatically a blocker, and neither `gh pr checks` nor
+`statusCheckRollup` says which ones the base branch requires — so a red
+non-required check gets chased for nothing while the real blocker stays
+invisible. `isRequired(pullRequestNumber:)` on the rollup contexts answers it
+directly, and unlike `repos/{owner}/{repo}/rules/branches/BASE` it does not need
+permissions that a token may lack:
+
+```bash
+gh api graphql -f query='
+{ repository(owner:"OWNER", name:"REPO") {
+    pullRequest(number:NUMBER) {
+      mergeable mergeStateStatus
+      commits(last:1){nodes{commit{statusCheckRollup{contexts(last:100){nodes{
+        ...on CheckRun{name conclusion isRequired(pullRequestNumber:NUMBER)}
+        ...on StatusContext{context state isRequired(pullRequestNumber:NUMBER)}}}}}}}
+    } } }' --jq '
+  [.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]
+   | select(.isRequired==true) | "\(.name // .context) = \(.conclusion // .state)"] | .[]'
+```
+
+A `null` in that output is a required check still running — that, not the red
+one, is what `BLOCKED` is waiting on. Observed 2026-08-09
+(netresearch/t3x-nr-llm#687): `copilot-pull-request-reviewer` was red for the
+whole run and never appeared in the required list; the PR merged on it. Note the
+number is passed twice — once to `pullRequest(number:)` and once to each
+`isRequired(pullRequestNumber:)`; omitting the second yields a schema error, not
+a default.
 
 **Always check for an ongoing review before merging — don't merge on a
 transient `CLEAN`.** A bot review can be *in progress* (after a re-request, and
