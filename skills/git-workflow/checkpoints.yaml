@@ -145,6 +145,27 @@ mechanical:
       decisions to an ADR and remove the raw files. See
       references/spec-cleanup.md and spec-cleanup-guard.sh.
 
+  # Signature *presence*, read from the commit object. Deliberately not `%G?`
+  # or `--show-signature`: under gpg.format=ssh with no
+  # gpg.ssh.allowedSignersFile both report a correctly signed commit as
+  # unsigned, which fails a fully signed repository. Whether a signature
+  # verifies is the host's answer (GW-11 / the commits API), not this one's.
+  # Kept in step with signing-preflight.sh by tests/test_signing_preflight.sh.
+  #
+  # HEAD only, single line, and no `$(`/`;`/`&&`: the checkpoint runner's
+  # allowlist (is_safe_eval_command in automated-assessment's
+  # run-checkpoints.sh) rejects command-chaining metacharacters outright, and a
+  # multi-line YAML scalar reaches it as an EMPTY pattern. A loop over the last
+  # five commits satisfies neither, so this mirrors the rule rather than
+  # reproducing it — the same arrangement as SR-37 in skill-repo. The full
+  # sweep lives in verify-git-workflow.sh (last 10) and signing-preflight.sh.
+  # `sed -n -e '/^$/q' -e p` is the semicolon-free spelling of the header cut.
+  - id: GW-17
+    type: command
+    pattern: "git cat-file commit HEAD | sed -n -e '/^$/q' -e p | grep -qE '^gpgsig(-sha256)? '"
+    severity: info
+    desc: "HEAD should carry a GPG/SSH signature"
+
 llm_reviews:
   # === CONVENTIONAL COMMITS ===
   - id: GW-20
@@ -172,16 +193,29 @@ llm_reviews:
   - id: GW-21
     domain: git-workflow
     prompt: |
-      Check if the repository has signed commits.
+      Check whether the repository's commits carry signatures. This checkpoint
+      asks about signature *presence*, not about whether the signatures verify —
+      that is the host's answer, not the local keyring's.
 
-      Use `git log --show-signature -5` to check recent commits for GPG/SSH signatures.
+      Read the commit object — a signed commit carries a `gpgsig` header:
+
+      ```
+      git log -5 --format=%H | while read -r c; do
+        git cat-file commit "$c" | sed -n '/^$/q;p' | grep -qE '^gpgsig(-sha256)? ' \
+          && echo "$c signed" || echo "$c UNSIGNED"
+      done
+      ```
+
+      Do NOT use `git log --show-signature` or `%G?` here: under `gpg.format=ssh`
+      with no `gpg.ssh.allowedSignersFile` they report `No signature` / `N` on
+      correctly signed commits, which fails a fully signed repository.
 
       Report:
       - How many of the last 5 commits are signed?
       - Are all commits from the same author signed?
       - Pass if all commits are signed, warn if some, fail if none
     severity: info
-    desc: "Commits should be GPG/SSH signed for authenticity"
+    desc: "Commits should carry a GPG/SSH signature"
 
   - id: GW-22
     domain: git-workflow

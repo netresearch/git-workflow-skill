@@ -489,5 +489,49 @@
         "pattern": "(?i)(required approvals|COMMENT review|comment.only)"
       }
     ]
+  },
+  {
+    "name": "signing_readiness_probe_ssh",
+    "prompt": "Before a commit-heavy run I want to confirm git commit -S will actually sign. I use gpg.format=ssh and have not set gpg.ssh.allowedSignersFile. What probe should I use, and why does git log --show-signature say 'No signature'?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(?i)cat-file commit[^\\n]{0,120}gpgsig"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)allowed.?signers"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(is signed|was signed|correctly signed|local verification|verification config)"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(throwaway|--allow-empty|reset --soft)"
+      }
+    ]
+  },
+  {
+    "name": "script_check_commit_is_signed",
+    "prompt": "In a script I need to decide whether HEAD is signed. Can I test `git log -1 --format='%G?'` = G and treat every other result as unsigned?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(?i)(unreliable|not reliable|not (a )?(reliable|sufficient|safe)|false negative|does ?n.?t (prove|mean)|no proof|(don.t|do not) (reach for|rely on|use)[^\\n]{0,60}(%G\\?|show-signature))"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)allowed.?signers"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)cat-file commit[^\\n]{0,120}gpgsig"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(blank line|first blank|sed -n)"
+      }
+    ]
   }
 ]

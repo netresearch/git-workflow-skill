@@ -1741,18 +1741,38 @@ merge.
 
 ### Signing Readiness (Preflight — Before Committing)
 
-A signing failure surfaces only at the *merge gate* (BLOCKED on DCO / "verified signatures") — i.e. **after** all the work is staged, forcing a full re-sign cycle. Catch it up front: before a commit-heavy run (e.g. `/pr-finish`), confirm a signing key is actually available and that `git commit -S` will sign, rather than assuming it.
+Two failures hide behind "signing is broken", and they surface at opposite ends of the run. A **local** signing failure surfaces immediately: `git commit -S` aborts and the branch does not move. A **host** verification failure — the key signs fine but GitHub does not recognise it — surfaces only at the *merge gate* (BLOCKED on DCO / "verified signatures"), i.e. **after** all the work is committed and pushed, forcing a full re-sign cycle. Preflight both before a commit-heavy run (e.g. `/pr-finish`): confirm a signing key is actually available and that `git commit -S` will sign, rather than assuming it.
+
+```bash
+scripts/signing-preflight.sh     # exit 0 READY · 1 NOT READY · 2 could not probe
+```
+
+`signing-preflight.sh` is the mechanical form of everything below: it probes on a throwaway branch through a temporary index (so a staged change is never swept into the probe commit), asserts on the commit object, retries once with `--no-verify` to tell a hook rejection apart from a signing failure, and removes the branch either way. `--check-commit <rev>` answers the same question for an existing commit, `--config-only` reports the config without committing. Its regression suite is `tests/test_signing_preflight.sh`; checkpoint GW-17 applies the same rule to a repository being assessed.
+
+By hand, where the script is not available:
 
 ```bash
 # SSH-signing setups: is a key the agent can sign with actually loaded?
 ssh-add -l        # "no identities" → signing (and any SSH git auth) will fail until re-added
-# Definitive probe: a throwaway signed commit verifies, then drop it
-git commit -S --allow-empty -m probe \
-  && (git log --show-signature -1 | grep -q Good && echo "SIGNING READY" || echo "SIGNING NOT READY"; git reset --soft HEAD~1) \
+# Definitive probe: a throwaway signed commit carries a signature, then drop it —
+# on a throwaway branch, not on `main` (see commit-conventions.md, "Verify signing capability without committing on `main`")
+git switch -c tmp/sign-probe
+# conventional msg — a commit-msg hook rejecting `probe` aborts the commit and reads as a signing failure
+git commit -S --allow-empty -m "chore: signing probe" \
+  && (git cat-file commit HEAD | sed -n '/^$/q;p' | grep -qE '^gpgsig(-sha256)? ' && echo "SIGNING READY" || echo "SIGNING NOT READY") \
   || echo "SIGNING NOT READY — commit failed"
+git switch - && git branch -D tmp/sign-probe
 ```
 
-If the probe fails (no askpass, a locked/dropped key, or a key not registered as a *signing* key), resolve it **before** doing the work — the mid-run remedy is the same `rebase --exec` re-sign as a reactive failure, but you avoid discovering it at the gate. See *Signing and DCO Failures* below for that remedy.
+**Assert on the commit object, not on local verification.** `git log --show-signature` / `%G?` answer the narrower question "can *this machine* verify the signature", and report failure on setups that sign perfectly well. With `gpg.format=ssh` and no `gpg.ssh.allowedSignersFile`, `git log --show-signature -1` prints `error: gpg.ssh.allowedSignersFile needs to be configured and exist for SSH signature verification` and then `No signature`, and `%G?` returns `N` — on a commit that carries a valid signature and that the host reports as `verified: true` once the key is registered as a signing key. The command still **exits 0** while printing that error, so a driver reading `$?` sees success too.
+
+`N` is indistinguishable from genuinely unsigned, which makes it more dangerous than the `E` case in *Signature verification: the GitHub API is the source of truth, not your keyring* above — `E` at least reads as "could not check here". Setting `gpg.ssh.allowedSignersFile` flips that same unchanged commit to `Good "git" signature` / `%G? = G` (measured on git 2.54.0), which is the fix if you also want local verification to work.
+
+The `gpgsig` header depends on no verification config and is written by both backends (`-----BEGIN SSH SIGNATURE-----` under `gpg.format=ssh`, `-----BEGIN PGP SIGNATURE-----` under GPG), so it answers exactly what the preflight asks: did `git commit -S` produce a signature. Cut the header at the first blank line (`sed -n '/^$/q;p'`) — matching `^gpgsig` against the whole object also matches a message *body* line starting with `gpgsig`, and reports an unsigned commit as signed.
+
+**Do not assert on `Good` either.** Unanchored, it matches the `Author:` line, so an unsigned commit by an author named e.g. "Goodwin" reports `SIGNING READY`. And a local `Good` only proves your own allowed-signers file accepts your key, never that GitHub does — that is the `unknown_key` API check under *Signing and DCO Failures* below. **Keep the commit chained to the check with `&&`.** `git commit -S` cannot silently produce an unsigned commit: with a key it cannot load it aborts (`fatal: failed to write commit object`, exit 128, HEAD unmoved). But an unchained check then reads the *parent* commit, which in signed history carries its own `gpgsig` header — so it prints `SIGNING READY` for a probe that never happened.
+
+If the probe fails (no askpass, a locked/dropped key, or an unloadable `user.signingkey`), resolve it **before** doing the work — the mid-run remedy is the same `rebase --exec` re-sign as a reactive failure, but you avoid discovering it at the gate. `commit failed` is not by itself a signing verdict: a `commit-msg` hook rejecting the probe message aborts the commit exactly the same way, so read the commit output before chasing keys. See *Signing and DCO Failures* below for that remedy.
 
 ### Signing and DCO Failures
 
