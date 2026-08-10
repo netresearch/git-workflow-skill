@@ -1114,3 +1114,93 @@ A tree can hold untracked files the user explicitly keeps untracked; `-A`/`.` sw
 ## Bulk sed/rename across a worktree must not touch its `.git` FILE
 
 A linked worktree's `.git` is a file holding a `gitdir:` pointer, not a directory — `--exclude-dir=.git` does NOT protect it, and a blind `sed -i` over `grep -rl` output rewrites the pointer and breaks the worktree (`fatal: not a git repository`). Exclude the path explicitly (`grep -rl --exclude=.git` or filter the file list) before any bulk edit.
+
+## A long rebase needs a reference merge to resolve against
+
+Replaying dozens of commits onto a moved base means meeting the same conflict
+several times, each time in a different intermediate state, with nothing at the
+end that says the result is right. Build the answer once, then resolve against
+it:
+
+```bash
+# 1. Target state, in a throwaway worktree: merge the base into the branch tip
+#    and resolve the (few) genuine conflicts by hand.
+git -C .bare worktree add --detach /tmp/ref <branch>
+git -C /tmp/ref merge --no-commit --no-ff origin/<base>   # resolve by hand, then
+git -C /tmp/ref commit -m REF                             # REF = the tree to land on
+
+# 2. Rebase for real; resolve each conflict from REF instead of re-deciding it.
+git checkout <REF-sha> -- <conflicted-path>
+
+# 3. The assertion that makes the detour worth it.
+git diff --stat <REF-sha> HEAD    # must print nothing
+```
+
+Step 3 is the point. It catches what conflict markers cannot: in one 35-commit
+rebase it surfaced a duplicated `autoload-dev` block in `composer.json` that Git
+had merged cleanly from two sides. Commits that come out empty are branch
+fixups already contained in REF — `git rebase --skip` them, or fold them with
+`--autosquash` afterwards.
+
+Two caveats. Resolving from REF puts final content into intermediate commits, so
+individual commits are no longer independently green — acceptable when the
+branch is reviewed as a whole or about to be fixup-folded, not when it must stay
+bisectable. And this is the one safe use of `git checkout <ref> -- <path>`
+against a dirty tree (see the rule above): a conflicted file's content lives in
+committed objects on both sides, so nothing unrecoverable is overwritten.
+
+## A merge resolved in favour of the branch silently reverts upstream work
+
+When `Merge branch 'develop'` keeps the branch's version of a file, the upstream
+changes it dropped disappear without a trace: from the *next* merge base that
+revert looks like an intentional branch edit, so no later diff, rebase, or
+review flags it. Observed cost — a merge discarded four files' worth of an
+upstream "raise phpstan to level 1" commit, reinstating an
+`(string)isset(...) !== ''` expression and an `empty()` test against an
+`ObjectStorage` that is never true. Both survived a rebase, because the rebase
+faithfully replayed the bad resolution.
+
+Cheap check first — which files upstream touched since the merge still differ:
+
+```bash
+for f in $(git diff --name-only <upstream-parent-of-merge> origin/<base>); do
+  git diff --quiet origin/<base> HEAD -- "$f" || echo "DIFFERS: $f"
+done
+```
+
+Then redo the resolution properly per suspect file, with the *true* ancestor of
+that merge — not today's merge base, which already contains the bad resolution:
+
+```bash
+BASE=$(git merge-base <branch-parent-of-merge> <upstream-parent-of-merge>)
+git show "$BASE:$f" > /tmp/base && git show <branch>:"$f" > /tmp/ours \
+  && git show origin/<base>:"$f" > /tmp/theirs
+git merge-file -p --diff3 /tmp/ours /tmp/base /tmp/theirs > /tmp/merged
+diff -u "$f" /tmp/merged      # differences here are upstream work the merge dropped
+```
+
+Worth running on any branch that carries a `Merge branch '<base>'` commit and is
+about to be merged back.
+
+## Verify a branch split by blob identity, not by reading the diffs
+
+Splitting one branch into several — per topic, per reviewer, to unblock the
+easy parts — invites silently leaving something behind. Reading the diffs cannot
+prove coverage; comparing object ids can:
+
+```bash
+for f in $(git diff --name-only origin/<base> <umbrella>); do
+  u=$(git rev-parse "<umbrella>:$f")
+  carried=""
+  for b in <branch-1> <branch-2> …; do
+    [ "$(git rev-parse "$b:$f" 2>/dev/null)" = "$u" ] && carried=$b && break
+  done
+  [ -n "$carried" ] || echo "NOT CARRIED: $f"
+done
+```
+
+Everything the loop prints is either a deliberate drop — name each one — or an
+oversight. Files that several branches change by hunk (`composer.json`, a CI
+config) never match a single branch and need the complementary check: parse both
+sides and compare key by key, e.g. `yaml.safe_load` per job for a CI file, so
+"no job lost" is a computed result rather than an impression.
