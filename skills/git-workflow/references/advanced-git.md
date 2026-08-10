@@ -972,6 +972,10 @@ for the merge-base–relative diff).
 
 ### Never `git checkout <ref> -- <path>` while the change is uncommitted
 
+One exemption, stated where it applies: resolving a *still-unedited* conflicted
+path from a reference merge — see "A long rebase needs a reference merge to
+resolve against" below.
+
 `git checkout <ref> -- <path>` overwrites the working-tree file **without
 warning and without a reflog entry**. Uncommitted content is never written to
 the object store, so there is usually nothing in Git to recover from — only an
@@ -1122,32 +1126,62 @@ several times, each time in a different intermediate state, with nothing at the
 end that says the result is right. Build the answer once, then resolve against
 it:
 
+Steps 1 and 4 run from the project root of a bare layout (drop the `-C .bare` in
+a normal clone); steps 2 and 3 run in the branch worktree. `tests/test_advanced_git_recipes.sh`
+executes all of it against a fixture, so the commands below are the ones that
+are known to run.
+
 ```bash
-# 1. Target state, in a throwaway worktree: merge the base into the branch tip
-#    and resolve the (few) genuine conflicts by hand.
+# 1. Target state, in a throwaway worktree.
 git -C .bare worktree add --detach /tmp/ref <branch>
 git -C /tmp/ref merge --no-commit --no-ff origin/<base>   # resolve by hand, then
-git -C /tmp/ref commit -m REF                             # REF = the tree to land on
+git -C /tmp/ref add -- <each path you resolved>           # unmerged paths block the commit
+git -C /tmp/ref status --porcelain                        # nothing unexpected left?
+git -C /tmp/ref commit -m REF
+git -C /tmp/ref branch ref-target                         # pin it: /tmp is no home for the only ref
 
-# 2. Rebase for real; resolve each conflict from REF instead of re-deciding it.
-git checkout <REF-sha> -- <conflicted-path>
+# 2. In the branch worktree: rebase, resolving each conflict from REF instead
+#    of re-deciding it.
+git checkout ref-target -- <conflicted-path>
 
 # 3. The assertion that makes the detour worth it.
-git diff --stat <REF-sha> HEAD    # must print nothing
+git diff --stat ref-target HEAD    # must print nothing
+
+# 4. Afterwards, from the project root.
+git -C <branch-worktree> worktree remove --force /tmp/ref
+git -C <branch-worktree> branch -D ref-target
 ```
+
+Stage by name, as the rule above says. `add -A` sweeps untracked files into REF
+and step 3 then fails spuriously; `add -u` skips paths the resolution *creates*
+(splitting a file, extracting a helper) and drops them silently — the commit
+still succeeds because unmerged paths were staged, and REF is quietly wrong. The
+`status --porcelain` line is what catches both.
+
+`--force` on the removal because a resolution leaves `.orig` files behind and
+`worktree remove` refuses an untracked-dirty worktree; everything worth keeping
+is already in `ref-target`. Two statements, not `&&`, so the pin is deleted even
+if the removal complains. A branch rather than a tag, because a *lightweight* tag
+dies under a global `tag.gpgsign=true` with the unhelpful `fatal: no tag
+message?`, and `git checkout ref-target -- <path>` accepts a branch name.
 
 Step 3 is the point. It catches what conflict markers cannot: in one 35-commit
 rebase it surfaced a duplicated `autoload-dev` block in `composer.json` that Git
-had merged cleanly from two sides. Commits that come out empty are branch
-fixups already contained in REF — `git rebase --skip` them, or fold them with
-`--autosquash` afterwards.
+had merged cleanly from two sides. Commits that come out empty are branch fixups
+already contained in REF — `git rebase --skip` them. (`--autosquash` does not
+help here: it only acts on commits whose messages start with `fixup!`/`squash!`.)
 
 Two caveats. Resolving from REF puts final content into intermediate commits, so
 individual commits are no longer independently green — acceptable when the
 branch is reviewed as a whole or about to be fixup-folded, not when it must stay
-bisectable. And this is the one safe use of `git checkout <ref> -- <path>`
-against a dirty tree (see the rule above): a conflicted file's content lives in
-committed objects on both sides, so nothing unrecoverable is overwritten.
+bisectable.
+
+And step 2 is the one sanctioned use of `git checkout <ref> -- <path>` against a
+dirty tree (see the rule above), but only on a path **still carrying conflict
+markers, before you edit it**: both sides then live in committed objects, so
+nothing unrecoverable is overwritten. Once you have hand-written a resolution
+into that file, the rule applies again in full — the checkout discards your edit
+with no reflog entry and no way back.
 
 ## A merge resolved in favour of the branch silently reverts upstream work
 
@@ -1160,27 +1194,58 @@ upstream "raise phpstan to level 1" commit, reinstating an
 `ObjectStorage` that is never true. Both survived a rebase, because the rebase
 faithfully replayed the bad resolution.
 
-Cheap check first — which files upstream touched since the merge still differ:
+The candidate set is what upstream changed **before** each merge — that is the
+work that merge's resolution could have dropped. Two traps: deriving it from
+what upstream changed *since* the merge (different files, so the check prints
+unrelated names, or nothing at all and reads as an all-clear), and running it
+once on a branch that merged the base more than once. `merge-base` of the *later*
+merge's parents resolves to the earlier merge's upstream parent, so a single run
+only covers the window between them and a drop from the first merge stays
+invisible. Run it **per merge commit**:
 
 ```bash
-for f in $(git diff --name-only <upstream-parent-of-merge> origin/<base>); do
-  git diff --quiet origin/<base> HEAD -- "$f" || echo "DIFFERS: $f"
+# bash. Run before merging the branch back: once origin/<base> contains it the
+# range is empty and the loop prints nothing, which reads as an all-clear.
+merges=$(git rev-list --merges origin/<base>..<branch>)
+[ -n "$merges" ] || echo "no merges in range — did the branch already land?"
+
+for m in $merges; do
+  [ "$(git rev-list --parents -n1 "$m" | wc -w)" -gt 3 ] \
+    && echo "$m OCTOPUS: parents 3+ not checked"
+
+  # Which parent is upstream? ^2 for a merge made ON the branch, ^1 for one
+  # made the other way round. A sibling-branch merge has neither and is skipped
+  # rather than reported as one false positive per file the sibling touched.
+  if git merge-base --is-ancestor "$m^2" origin/<base>; then up=$m^2; base_side=$m^1
+  elif git merge-base --is-ancestor "$m^1" origin/<base>; then up=$m^1; base_side=$m^2
+  else echo "$m SKIP: neither parent is upstream (sibling merge)"; continue; fi
+
+  BASE=$(git merge-base "$base_side" "$up")
+  git diff -z --name-only "$BASE" "$up" | while IFS= read -r -d '' f; do
+    git diff --quiet origin/<base> <branch> -- "$f" || echo "$m DIFFERS: $f"
+  done
 done
 ```
 
-Then redo the resolution properly per suspect file, with the *true* ancestor of
-that merge — not today's merge base, which already contains the bad resolution:
+Then redo the resolution for each file the check named, with **that merge's own
+sides** — not today's tips, which is a second way to manufacture false
+positives: anything upstream changed after the merge then shows up as dropped
+work.
 
 ```bash
-BASE=$(git merge-base <branch-parent-of-merge> <upstream-parent-of-merge>)
-git show "$BASE:$f" > /tmp/base && git show <branch>:"$f" > /tmp/ours \
-  && git show origin/<base>:"$f" > /tmp/theirs
+m=<the merge the check named>; f=<the path it named>
+BASE=$(git merge-base "$m^1" "$m^2")
+git show "$BASE:$f" > /tmp/base
+git show "$m^1:$f"  > /tmp/ours
+git show "$m^2:$f"  > /tmp/theirs
+git show "$m:$f"    > /tmp/result
 git merge-file -p --diff3 /tmp/ours /tmp/base /tmp/theirs > /tmp/merged
-diff -u "$f" /tmp/merged      # differences here are upstream work the merge dropped
+diff -u /tmp/result /tmp/merged
 ```
 
-Worth running on any branch that carries a `Merge branch '<base>'` commit and is
-about to be merged back.
+Read that diff rather than trusting it wholesale: it also contains conflict
+markers where both sides moved. What you are looking for is upstream hunks
+present in `/tmp/merged` and absent from the merge result.
 
 ## Verify a branch split by blob identity, not by reading the diffs
 
@@ -1189,15 +1254,38 @@ easy parts — invites silently leaving something behind. Reading the diffs cann
 prove coverage; comparing object ids can:
 
 ```bash
-for f in $(git diff --name-only origin/<base> <umbrella>); do
-  u=$(git rev-parse "<umbrella>:$f")
+# bash (read -d is not POSIX). -z survives paths with spaces or newlines.
+branches="<branch-1> <branch-2>"    # every split branch
+
+# Run the whole check in a subshell so the guard's exit does not close your
+# shell when this is pasted in.
+(
+# Not optional: an unresolvable name makes every lookup ABSENT, which equals the
+# umbrella's ABSENT on a deleted path and reports a genuine miss as carried.
+for b in $branches; do
+  git rev-parse --verify -q "$b^{commit}" >/dev/null || { echo "no such branch: $b" >&2; exit 1; }
+done
+
+# The `|| ABSENT` is what makes deletions work: git rev-parse ECHOES its
+# argument on failure, and two different echoes never compare equal, so without
+# the sentinel a path deleted by the umbrella is always reported NOT CARRIED.
+# --verify -q keeps the accompanying `fatal:` lines off stderr.
+git diff -z --name-only origin/<base> <umbrella> | while IFS= read -r -d '' f; do
+  u=$(git rev-parse --verify -q "<umbrella>:$f") || u=ABSENT
   carried=""
-  for b in <branch-1> <branch-2> …; do
-    [ "$(git rev-parse "$b:$f" 2>/dev/null)" = "$u" ] && carried=$b && break
+  for b in $branches; do
+    v=$(git rev-parse --verify -q "$b:$f") || v=ABSENT
+    [ "$v" = "$u" ] && carried=$b && break
   done
   [ -n "$carried" ] || echo "NOT CARRIED: $f"
 done
+)
 ```
+
+The guard is what keeps a typo from masking a miss. One wrong name is enough:
+its lookups all return `ABSENT`, which matches the umbrella's `ABSENT` on a
+deleted path, so that path is credited as carried and disappears from the
+output.
 
 Everything the loop prints is either a deliberate drop — name each one — or an
 oversight. Files that several branches change by hunk (`composer.json`, a CI

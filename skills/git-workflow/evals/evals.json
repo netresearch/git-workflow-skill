@@ -384,11 +384,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(merge-base|merge-file|--diff3)"
+        "pattern": "(merge-file|--diff3)"
       },
       {
         "type": "content",
-        "pattern": "(revert|dropped|discard|silently)"
+        "pattern": "(rev-list --merges|\\^1|\\^2|parents of (that|the) merge|per merge commit)"
+      },
+      {
+        "type": "content",
+        "pattern": "(dropped|discarded|reverted|silently)"
       }
     ]
   },
@@ -398,11 +402,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(reference merge|REF|merge the base into)"
+        "pattern": "(worktree|scratch|throwaway|up front|end state|target (tree|state)|reference (merge|commit))"
       },
       {
         "type": "content",
-        "pattern": "git diff.*(REF|HEAD)"
+        "pattern": "git diff[^|]*(ref-target|reference|target-state|REF )"
+      },
+      {
+        "type": "content",
+        "pattern": "((must|should|has to).{0,25}(print|be).{0,12}(nothing|empty)|no output|is empty)"
       }
     ]
   },
@@ -412,11 +420,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(git diff|re-derive|verify).*(target|HEAD|base)"
+        "pattern": "git diff .*\\.\\.\\.?(head)"
       },
       {
         "type": "content",
-        "pattern": "(stale|no longer|delete the section|remove)"
+        "pattern": "(re-?derive|verify each|against the (current )?diff|no longer (true|matches))"
+      },
+      {
+        "type": "content",
+        "pattern": "((delete|drop|remove)[a-z]*[^.]{0,60}sections?|sections?[^.]{0,60}(delete|drop|remove))"
       }
     ]
   },
@@ -426,11 +438,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(jobs_enabled|builds_access_level|CI.*(disabled|switched off))"
+        "pattern": "(jobs_enabled|builds_access_level)"
       },
       {
         "type": "content",
-        "pattern": "(403|projects/)"
+        "pattern": "ci( ?/ ?cd)? (is |was |be )?(switched off|disabled|turned off)"
+      },
+      {
+        "type": "content",
+        "pattern": "(nothing will run|no pipeline,? (will )?ever|never .{0,30}(created|occur|arrive)|cannot .{0,30}(be created|occur))"
       }
     ]
   },
@@ -440,11 +456,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(rev-parse|blob|object id)"
+        "pattern": "rev-parse[^|]*:[^ |]"
       },
       {
         "type": "content",
-        "pattern": "(each file|every changed file|not carried)"
+        "pattern": "(blob|object id)"
+      },
+      {
+        "type": "content",
+        "pattern": "(not carried|carried by (no|none)|missing from (every|all|any)|nobody has)"
       }
     ]
   }
