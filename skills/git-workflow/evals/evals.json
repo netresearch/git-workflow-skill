@@ -377,5 +377,75 @@
         "pattern": "(?i)(stage|git add|commit).{0,60}(then|before).{0,20}(git rm|remove|delete)|recoverable.{0,30}(removal|history)|enters? .{0,10}history"
       }
     ]
+  },
+  {
+    "name": "detect_upstream_work_dropped_by_merge",
+    "prompt": "This branch carries a 'Merge branch develop' commit. Before I merge it back, how do I check that the merge did not silently drop changes develop had made?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(merge-base|merge-file|--diff3)"
+      },
+      {
+        "type": "content",
+        "pattern": "(revert|dropped|discard|silently)"
+      }
+    ]
+  },
+  {
+    "name": "rebase_long_branch_with_reference_merge",
+    "prompt": "I need to rebase a 35-commit branch onto a base that moved a lot. How do I make sure the result is correct?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(reference merge|REF|merge the base into)"
+      },
+      {
+        "type": "content",
+        "pattern": "git diff.*(REF|HEAD)"
+      }
+    ]
+  },
+  {
+    "name": "pr_body_must_match_current_diff",
+    "prompt": "This MR has been open for eight months and I just rebased it. Update the description.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(git diff|re-derive|verify).*(target|HEAD|base)"
+      },
+      {
+        "type": "content",
+        "pattern": "(stale|no longer|delete the section|remove)"
+      }
+    ]
+  },
+  {
+    "name": "check_ci_enabled_before_watching_pipeline",
+    "prompt": "I pushed 20 minutes ago and no pipeline has appeared for the merge request. Keep waiting?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(jobs_enabled|builds_access_level|CI.*(disabled|switched off))"
+      },
+      {
+        "type": "content",
+        "pattern": "(403|projects/)"
+      }
+    ]
+  },
+  {
+    "name": "verify_branch_split_by_blob_identity",
+    "prompt": "I split one big branch into six smaller branches. How do I prove nothing was left behind?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(rev-parse|blob|object id)"
+      },
+      {
+        "type": "content",
+        "pattern": "(each file|every changed file|not carried)"
+      }
+    ]
   }
 ]
