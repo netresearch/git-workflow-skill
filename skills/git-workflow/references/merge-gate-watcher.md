@@ -47,7 +47,26 @@ curl -s -H "$AUTH" "https://sonarcloud.io/api/qualitygates/project_status?projec
 curl -s -H "$AUTH" "https://sonarcloud.io/api/issues/search?componentKeys=$KEY&pullRequest=$PR&resolved=false&ps=1" | jq .total
 ```
 
-Merge-despite is defensible only when the sole failing condition is a touched-line re-attribution metric (`new_duplicated_lines_density`, patch coverage on refactor-moved lines), open PR issues are 0, and the PR body documents the rationale. Real findings: fix them.
+Merge-despite is defensible only when the sole failing condition is a touched-line **re-attribution** metric, open PR issues are 0, and the PR body documents the rationale. Real findings: fix them.
+
+**`new_duplicated_lines_density` is only sometimes that metric — check which case you are in before invoking the exemption.** It is re-attribution when the PR *moved or touched* existing lines and Sonar consequently charged the surrounding, already-duplicated block to the diff. It is a real finding when the PR *added* files: three new sibling classes written in one sitting are copy-paste, and the metric is measuring exactly that. `api/issues/search` cannot tell them apart — duplication is a measure, not an issue, so it returns 0 in both cases and the "open issues are 0" half of the exemption is satisfied either way.
+
+Ask which files carry the new duplicated lines, then read the blocks:
+
+```bash
+curl -s -H "$AUTH" "https://sonarcloud.io/api/measures/component_tree?component=$KEY&pullRequest=$PR&metricKeys=new_duplicated_lines&ps=200" \
+  | jq -r '.components[] | (.measures[0] | (.value // .periods[0].value // "0")) as $v
+           | select($v != "0") | select(.qualifier=="FIL") | "\($v)\t\(.path)"'
+curl -s -H "$AUTH" "https://sonarcloud.io/api/duplications/show?key=$KEY%3A<path>&pullRequest=$PR" \
+  | jq '.duplications[].blocks | map("\(.from)-\(.from + .size - 1)")'
+```
+
+Two shapes to get right or the first command prints nothing: a **`new_*`** metric
+carries its value under `periods[0].value`, not `.value`, and the response lists
+directories as well as files, so filter on `qualifier=="FIL"` to get paths you
+can pass to `duplications/show`.
+
+If the files listed are ones the PR *added*, dedupe them — the exemption does not apply. `typo3-testing-skill/references/sonarcloud.md` ("Gotchas: new-code duplication") carries the same rule from the analyzer side and the recovery patterns for it.
 
 ## Watcher skeleton
 
@@ -97,6 +116,37 @@ gh pr view $PR --repo $R --json reviews \
 Treat `unable to review` as **no review** and re-request; if the re-request returns the same notice the quota is still exhausted, and merging means merging unreviewed. Check the repo's recent merged PRs the same way before concluding that a bot review is the local norm — a quota outage can span every PR in a window, so "the last three merged PRs also show COMMENTED" is not evidence they were reviewed.
 
 **On a docs/prose PR the loop does not decay — it must be actively terminated.** The bot re-reads the whole changed file each round and keeps surfacing a *new cosmetic* nit (wording, an illustrative example value, a spelling), so pushing a fix just triggers another round almost indefinitely. To converge: once a finding is purely cosmetic and defensible, **reply on the thread and resolve it *without* a new commit** — no push means no re-review means no new nit. Reserve fresh pushes for substantive findings; batch several real fixes into one push rather than one-per-thread.
+
+## A polling watcher must emit on the transition, not on the state
+
+The skeleton above `exit`s when it is done, so it reports each outcome once. A
+watcher that instead *streams* events — a `Monitor`-style loop whose stdout lines
+become notifications — has no such protection: an emit condition written as a
+**state** (`pending == 0 && failures == 0`) is true on every subsequent poll and
+republishes the same line every cycle until something stops it. Three identical
+"checks complete" notifications for one PR is the usual first symptom, and the
+noise buries the event that actually changed.
+
+Latch the last emitted message and print only on change:
+
+```bash
+last=""
+while true; do
+  s=$(gh pr view "$PR" --repo "$R" --json state,statusCheckRollup) || { sleep 60; continue; }
+  [ "$(jq -r .state <<<"$s")" != "OPEN" ] && { echo "PR#$PR $(jq -r .state <<<"$s")"; break; }
+  fail=$(jq -r '[.statusCheckRollup[]?|select(.conclusion=="FAILURE" or .conclusion=="TIMED_OUT")]|length' <<<"$s")
+  pend=$(jq -r '[.statusCheckRollup[]?|select(.status!="COMPLETED")]|length' <<<"$s")
+  if   [ "$fail" != 0 ]; then msg="PR#$PR RED"
+  elif [ "$pend" = 0 ];  then msg="PR#$PR checks complete, 0 failures"
+  else msg=""; fi
+  [ -n "$msg" ] && [ "$msg" != "$last" ] && { echo "$msg"; last="$msg"; }
+  sleep 60
+done
+```
+
+Watching several PRs in one loop needs one latch **per PR** (`declare -A seen`),
+not one shared variable — otherwise two PRs reaching the same state alternate and
+each re-emits.
 
 ## Check the producer is switched on before arming the watcher
 

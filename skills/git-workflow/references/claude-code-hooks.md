@@ -180,6 +180,53 @@ It fires only when the command actually runs `git commit` (`git -C <dir> commit`
 
 Verify it against both directions before relying on it: stage a file containing a real marker (must deny) and a `.rst` file with a `=======` underline (must allow).
 
+## Recipe 7: Block a git write inside the reference `main/` worktree
+
+`references/advanced-git.md` states that `main/` is reference only. The rule
+gets broken anyway because breaking it needs no intent: one Bash call omits its
+`cd`, inherits the working directory of an earlier call, and the commit lands on
+the shared branch locally — where a later push or a `jj git export` moves it
+under every sibling worktree. Prose cannot catch an inherited working directory;
+a gate reads it out of the payload.
+
+```bash
+cp <skill>/scripts/reference-worktree-gate.py ~/.claude/hooks/
+chmod +x ~/.claude/hooks/reference-worktree-gate.py
+```
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 $HOME/.claude/hooks/reference-worktree-gate.py" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+It denies `commit`, `add`, `merge`, `rebase`, `cherry-pick`, `revert`, `am`,
+`stash` and `reset --hard` when the effective directory is a `main/` (or
+`master/`) that sits beside a `.bare`. It deliberately does **not** deny
+`git -C <path> …` or a call that starts with `cd <path> &&` — both name where the
+write lands, which is the shape it is steering toward — nor reads, `git fetch`,
+or `git worktree add`, which are what the directory is for. Roots default to
+`~/projects` and `~/p`; set `GIT_WORKTREE_ROOTS` to a colon-separated list for
+others.
+
+Already have a Bash gate? Extend it instead of adding a second hook — the
+directory test is three lines (`basename in {main,master}`, parent under a known
+root, `.bare` sibling exists) and reusing one hook keeps the denial messages in
+one place.
+
+Verify both directions before relying on it: `python3 scripts/test_reference_worktree_gate.py`
+builds a throwaway layout and checks that a commit in `main/` denies while
+`git -C <branch> commit` and a commit in a branch worktree pass.
+
 ## Anti-Patterns
 
 | Anti-pattern | Why wrong | Fix |

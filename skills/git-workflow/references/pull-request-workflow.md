@@ -989,6 +989,43 @@ git commit
 git push
 ```
 
+### A series of sibling branches: rebuild append-only sections, don't merge them
+
+When several of your own branches wait on one another, each needs `main` merged
+in again after the previous one lands. For an **append-only** section — a
+CHANGELOG's `[Unreleased]`, a toctree, an index — the second and later merges of
+that series behave differently from the first, and a resolver that works on the
+first silently corrupts the rest.
+
+The trap is any resolver whose premise is *"ours holds only my additions"* —
+fold-ours-into-theirs, `git checkout --ours` on a hunk, a script that appends one
+side to the other. That premise holds for the first merge only. Afterwards
+"ours" already contains everything the previous merge brought in, so each round
+appends `main`'s entries **again**. There are no conflict markers, the diff looks
+plausible, and the damage is visible only by counting: five branches merged in
+sequence produced ten `[Unreleased]` bullets standing three and four times over,
+and two of the PRs carried it to `main` before anyone noticed.
+
+Rebuild instead of merging. Take *theirs* (current `main`) verbatim, lift your
+own block out of *ours* by a distinctive first line, and insert it under the
+existing heading:
+
+```bash
+git show :3:CHANGELOG.md > /tmp/theirs.md   # current main
+git show :2:CHANGELOG.md > /tmp/ours.md     # your branch
+# extract your block from ours, insert into theirs under the matching heading
+```
+
+Then assert before committing — the three checks that catch every variant of
+this failure:
+
+- the heading count is unchanged (no second `### Added`),
+- your block appears exactly once, above the newest released section,
+- no top-level bullet's first line occurs twice in the section.
+
+The same three assertions find it after the fact, which is how the duplication
+above was eventually caught.
+
 ### Updating a PR branch without a local clone — `gh pr update-branch --rebase`
 
 To bring a **conflict-free** PR up to date with its base without checking it out, rebase its head branch remotely:
