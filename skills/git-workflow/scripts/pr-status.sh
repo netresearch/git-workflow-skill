@@ -377,7 +377,7 @@ evaluate() {
                and ($s.requested_reviewers|map(test("copilot";"i"))|any)) then
            {action:"await-review", why:"Copilot review already requested for \($s.headOid[0:8]) and not delivered yet — waiting, not re-requesting"}
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)) then
-           {action:"request-review", why:"copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — a push invalidates the previous review, it stays on the old commit",
+           {action:"request-review", why:"copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate",
             cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
          elif ($s.has_review_on_head|not) then
            # The generic gate is also reached by repos WITHOUT the
