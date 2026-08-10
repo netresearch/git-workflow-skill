@@ -81,6 +81,21 @@ def main() -> int:
                 os.path.join(plain, "main"),
             ),
             ("not a git write", False, "git status", ref),
+            # Refreshing the reference checkout is the directory's purpose: it
+            # must be current to serve as the base for new worktrees. Caught by
+            # the gate itself minutes after it was installed.
+            (
+                "ff-only merge refreshes the reference",
+                False,
+                "git merge --ff-only origin/main",
+                ref,
+            ),
+            ("ff-only pull refreshes the reference", False, "git pull --ff-only", ref),
+            # A plain merge still lands a merge commit there.
+            ("plain merge is still refused", True, "git merge origin/main", ref),
+            # `reset --hard` reaches the same state by discarding, which is the
+            # case worth stopping.
+            ("hard reset is still refused", True, "git reset --hard origin/main", ref),
         ]
 
         fails = 0

@@ -214,7 +214,14 @@ It denies `commit`, `add`, `merge`, `rebase`, `cherry-pick`, `revert`, `am`,
 `master/`) that sits beside a `.bare`. It deliberately does **not** deny
 `git -C <path> …` or a call that starts with `cd <path> &&` — both name where the
 write lands, which is the shape it is steering toward — nor reads, `git fetch`,
-or `git worktree add`, which are what the directory is for. Roots default to
+or `git worktree add`, which are what the directory is for.
+
+Nor `git merge --ff-only` / `git pull --ff-only`: the reference checkout has to
+be *current* to serve as a base, so refreshing it is the directory's purpose and
+a fast-forward can neither create a commit nor discard work. `reset --hard`
+reaches the same state by discarding and stays refused. (That exemption is not
+theory — the gate blocked its own author's `reset --hard` in `main/` minutes
+after installation, which is how the over-block was found.) Roots default to
 `~/projects` and `~/p`; set `GIT_WORKTREE_ROOTS` to a colon-separated list for
 others.
 
