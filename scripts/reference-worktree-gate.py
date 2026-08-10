@@ -38,6 +38,12 @@ GIT_WRITE = re.compile(
 # working directory no longer decides where the write lands. That is the
 # explicit form this gate asks for, so it is never blocked.
 GIT_DASH_C = re.compile(r"\bgit\s+-C\s+\S+")
+# Bringing the reference checkout up to date is what the directory is FOR — it
+# has to be current to serve as the base for new worktrees. A fast-forward
+# cannot create a commit or discard work, so `merge --ff-only` / `pull --ff-only`
+# are the sanctioned refresh and stay allowed. `reset --hard` is not: it reaches
+# the same state by discarding, which is the case worth stopping.
+FAST_FORWARD_ONLY = re.compile(r"\bgit\s+(?:merge|pull)\b[^|&;]*--ff-only\b")
 
 
 def roots() -> list[str]:
@@ -74,7 +80,7 @@ def denies(cmd: str, cwd: str) -> bool:
     c = (cmd or "").strip()
     if "git worktree" in c or not GIT_WRITE.search(c):
         return False
-    if GIT_DASH_C.search(c):
+    if GIT_DASH_C.search(c) or FAST_FORWARD_ONLY.search(c):
         return False
     return is_reference_worktree(effective_dir(c, cwd))
 
@@ -87,8 +93,9 @@ REASON = (
     "previous call left the shell somewhere else. Name the target:\n\n"
     "  cd <project>/<branch> && git commit …\n"
     "  git -C <project>/<branch> commit …\n\n"
-    "`git -C <path>` is never blocked. Reads, `git fetch` and `git worktree add` "
-    "are unaffected."
+    "`git -C <path>` is never blocked, and neither is the reference checkout's own "
+    "refresh — `git merge --ff-only origin/main` / `git pull --ff-only`. Reads, "
+    "`git fetch` and `git worktree add` are unaffected."
 )
 
 
