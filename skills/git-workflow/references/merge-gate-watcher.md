@@ -105,21 +105,21 @@ event has not arrived yet: both are silence. Before waiting on a pipeline,
 confirm the host will create one at all — a project can have CI switched off
 entirely, and then no push, force-push or retarget produces anything to watch.
 
-A `403` confined to the CI endpoints while everything else answers `200` with
-the same token is *consistent with* a disabled project feature — but it is also
-what an insufficient token scope, a SAML or IP-allowlist rule, and (on GitHub)
-the secondary rate limit produce. The symptom narrows the field; only the flags
-settle it. On GitLab, read them:
+A `403` confined to one endpoint family while everything else answers `200` with
+the same token is *consistent with* that feature being switched off — and with
+the token simply lacking the scope for it. Those two are the candidates an
+endpoint-scoped 403 leaves; org-wide rejections (SAML, IP allowlist) and the
+rate limits refuse everything, not one family. The flags separate the two:
 
 ```bash
-glab api "projects/:id" | jq '{jobs_enabled, builds_access_level}'
+glab api "projects/:id" | jq '{jobs_enabled, builds_access_level}' \
+  || echo "probe failed — that is the access case, not the feature case"
 # {"jobs_enabled": false, "builds_access_level": "disabled"} -> nothing will run
 ```
 
-(`projects/:id` resolves from the current clone's remote, so run it inside one.)
-The netresearch-gitlab skill's `references/troubleshooting.md` carries the same
-check with the token-vs-feature probe next to it and the traps in reading the
-state back afterwards.
+`projects/:id` resolves from the current clone's remote, so run it inside one.
+Note the fallback: with a token that cannot read the project at all the pipeline
+prints nothing rather than `null`, which is easy to misread as "flags not set".
 
 Observed cost: two watchers armed across ~40 minutes for a merge request whose
 project had `builds_access_level: disabled`, reported to the user as "no

@@ -1126,34 +1126,44 @@ several times, each time in a different intermediate state, with nothing at the
 end that says the result is right. Build the answer once, then resolve against
 it:
 
-```bash
-# 1. Target state, in a throwaway worktree. Run from the project root of a bare
-#    layout (or drop the -C .bare in a normal clone).
-git -C .bare worktree add --detach /tmp/ref <branch>
+Steps 1 and 4 run from the project root of a bare layout (drop the `-C .bare` in
+a normal clone); steps 2 and 3 run in the branch worktree. `tests/test_advanced_git_recipes.sh`
+executes all of it against a fixture, so the commands below are the ones that
+are known to run.
 
-# Everything else is -C /tmp/ref, so it works from any cwd.
+```bash
+# 1. Target state, in a throwaway worktree.
+git -C .bare worktree add --detach /tmp/ref <branch>
 git -C /tmp/ref merge --no-commit --no-ff origin/<base>   # resolve by hand, then
-git -C /tmp/ref add -u                                    # required: unmerged paths block the commit
+git -C /tmp/ref add -- <each path you resolved>           # unmerged paths block the commit
+git -C /tmp/ref status --porcelain                        # nothing unexpected left?
 git -C /tmp/ref commit -m REF
 git -C /tmp/ref branch ref-target                         # pin it: /tmp is no home for the only ref
 
-# 2. Back in the branch worktree: rebase, resolving each conflict from REF
-#    instead of re-deciding it.
+# 2. In the branch worktree: rebase, resolving each conflict from REF instead
+#    of re-deciding it.
 git checkout ref-target -- <conflicted-path>
 
 # 3. The assertion that makes the detour worth it.
 git diff --stat ref-target HEAD    # must print nothing
 
-# 4. Afterwards.
-git worktree remove /tmp/ref && git branch -D ref-target
+# 4. Afterwards, from the project root.
+git -C <branch-worktree> worktree remove --force /tmp/ref
+git -C <branch-worktree> branch -D ref-target
 ```
 
-`add -u` rather than `add -A`: it stages the resolution without sweeping
-untracked files into REF (see the staging rule above — an untracked file pulled
-in here makes step 3 fail spuriously). A branch rather than a tag, because a
-*lightweight* tag dies under a global `tag.gpgsign=true` with the unhelpful
-`fatal: no tag message?`, and `git checkout ref-target -- <path>` accepts a
-branch name just as well.
+Stage by name, as the rule above says. `add -A` sweeps untracked files into REF
+and step 3 then fails spuriously; `add -u` skips paths the resolution *creates*
+(splitting a file, extracting a helper) and drops them silently — the commit
+still succeeds because unmerged paths were staged, and REF is quietly wrong. The
+`status --porcelain` line is what catches both.
+
+`--force` on the removal because a resolution leaves `.orig` files behind and
+`worktree remove` refuses an untracked-dirty worktree; everything worth keeping
+is already in `ref-target`. Two statements, not `&&`, so the pin is deleted even
+if the removal complains. A branch rather than a tag, because a *lightweight* tag
+dies under a global `tag.gpgsign=true` with the unhelpful `fatal: no tag
+message?`, and `git checkout ref-target -- <path>` accepts a branch name.
 
 Step 3 is the point. It catches what conflict markers cannot: in one 35-commit
 rebase it surfaced a duplicated `autoload-dev` block in `composer.json` that Git
@@ -1194,23 +1204,31 @@ only covers the window between them and a drop from the first merge stays
 invisible. Run it **per merge commit**:
 
 ```bash
-# Every merge on the branch, each checked against its own two parents.
-for m in $(git rev-list --merges origin/<base>..<branch>); do
+# bash. Run before merging the branch back: once origin/<base> contains it the
+# range is empty and the loop prints nothing, which reads as an all-clear.
+merges=$(git rev-list --merges origin/<base>..<branch>)
+[ -n "$merges" ] || echo "no merges in range — did the branch already land?"
+
+for m in $merges; do
+  # ^2 is the merged-in side of a merge made ON the branch. A merge made the
+  # other way round, or a merge of a sibling branch, fails this and is skipped
+  # rather than reported as six false positives.
+  git merge-base --is-ancestor "$m^2" origin/<base> \
+    || { echo "$m SKIP: ^2 is not upstream (sibling merge, or parents swapped)"; continue; }
+  [ "$(git rev-list --parents -n1 "$m" | wc -w)" -gt 3 ] \
+    && echo "$m OCTOPUS: parents 3+ not checked"
+
   BASE=$(git merge-base "$m^1" "$m^2")
   git diff -z --name-only "$BASE" "$m^2" | while IFS= read -r -d '' f; do
-    git diff --quiet origin/<base> HEAD -- "$f" || echo "$m DIFFERS: $f"
+    git diff --quiet origin/<base> <branch> -- "$f" || echo "$m DIFFERS: $f"
   done
 done
 ```
 
-`$m^2` is the merged-in side for a `git merge` run on the branch; on a merge made
-the other way round the parents are swapped, so check `git log -1 --format=%p $m`
-if the output looks inverted.
-
 Then redo the resolution for each file the check named, with **that merge's own
 sides** — not today's tips, which is a second way to manufacture false
 positives: anything upstream changed after the merge then shows up as dropped
-work:
+work.
 
 ```bash
 m=<the merge the check named>; f=<the path it named>
@@ -1218,8 +1236,9 @@ BASE=$(git merge-base "$m^1" "$m^2")
 git show "$BASE:$f" > /tmp/base
 git show "$m^1:$f"  > /tmp/ours
 git show "$m^2:$f"  > /tmp/theirs
+git show "$m:$f"    > /tmp/result
 git merge-file -p --diff3 /tmp/ours /tmp/base /tmp/theirs > /tmp/merged
-diff -u <(git show "$m:$f") /tmp/merged
+diff -u /tmp/result /tmp/merged
 ```
 
 Read that diff rather than trusting it wholesale: it also contains conflict
@@ -1234,13 +1253,21 @@ prove coverage; comparing object ids can:
 
 ```bash
 # bash (read -d is not POSIX). -z survives paths with spaces or newlines.
-# --verify -q so a path missing on one side yields empty + rc=1 instead of
-# git echoing the argument back — two different echoes never compare equal, so
+branches="<branch-1> <branch-2>"    # every split branch
+
+# Not optional: an unresolvable name makes every lookup ABSENT, which equals the
+# umbrella's ABSENT on a deleted path and reports a genuine miss as carried.
+for b in $branches; do
+  git rev-parse --verify -q "$b^{commit}" >/dev/null || { echo "no such branch: $b" >&2; exit 1; }
+done
+
+# --verify -q so a path missing on one side yields empty + rc=1 instead of git
+# echoing the argument back — two different echoes never compare equal, so
 # without this a path DELETED by the umbrella is always reported NOT CARRIED.
 git diff -z --name-only origin/<base> <umbrella> | while IFS= read -r -d '' f; do
   u=$(git rev-parse --verify -q "<umbrella>:$f") || u=ABSENT
   carried=""
-  for b in <branch-1> <branch-2>; do    # list every split branch here
+  for b in $branches; do
     v=$(git rev-parse --verify -q "$b:$f") || v=ABSENT
     [ "$v" = "$u" ] && carried=$b && break
   done
@@ -1248,8 +1275,10 @@ git diff -z --name-only origin/<base> <umbrella> | while IFS= read -r -d '' f; d
 done
 ```
 
-Verify the branch names first: a typo makes every lookup `ABSENT`, which equals
-the umbrella's `ABSENT` on deleted paths and reads as carried.
+The guard is what keeps a typo from masking a miss. One wrong name is enough:
+its lookups all return `ABSENT`, which matches the umbrella's `ABSENT` on a
+deleted path, so that path is credited as carried and disappears from the
+output.
 
 Everything the loop prints is either a deliberate drop — name each one — or an
 oversight. Files that several branches change by hunk (`composer.json`, a CI
