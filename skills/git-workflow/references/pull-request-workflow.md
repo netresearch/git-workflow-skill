@@ -203,6 +203,25 @@ Build the before/after table *before* writing the summary sentence. Filling in
 the rows is what catches the case you assumed was untouched; writing the
 sentence first only records the assumption.
 
+### A long-lived PR body describes the branch it had, not the branch it has
+
+A body written months ago documents a state the branch has since left. Every
+rebase, revert and upstream merge invalidates part of it, and nothing in the
+tooling notices. Before publishing an update, re-derive each factual claim from
+`git diff <target>...HEAD` — image tags, memory limits, thresholds, and above
+all the New/Changed column: a job listed as **New** that the target already has
+hides whatever your version alters about it.
+
+Observed in one MR: a "switched coverage to PCOV" section after PCOV had been
+reverted, `php:8.3` images that were `8.4`, `MSI 70/80` against an actual
+`19/77`, and a job marked **New** that existed upstream — which concealed that
+the change also dropped its memory limit from 2G to 512M.
+
+When a change is gone, **delete its section**. Rewording it to "X stays the
+coverage driver" replaces a false statement with a true but empty one: the body
+is the delta against the target, and something that does not change has no row
+in it.
+
 ### When you already have the fix, lead with it
 
 Issue templates order evidence before solution — they are written for reports
