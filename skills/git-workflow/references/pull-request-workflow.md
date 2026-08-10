@@ -38,6 +38,11 @@ were PR-status probing**, the rulesets endpoint was queried exactly once, and
 It reads `pr-status.sh --json` and refuses unless `NEXT` is `merge`, printing
 the gate that is shut instead. When it does merge it uses the method the
 repository allows and drops `--delete-branch` where a merge queue is active.
+Afterwards it reads the PR back and reports only what it observed — `merged`
+when the state says so, `queued` when the PR really holds a queue entry, and a
+failure with exit 2 otherwise. `gh pr merge` exiting 0 proves nothing on a
+merge-queue repo; see *A pending auto-merge request silently swallows the
+enqueue* below.
 
 Both of those are silent traps for a hand-written `gh pr merge --merge
 --delete-branch`. A repository with `allow_merge_commit: false` answers
@@ -1704,6 +1709,35 @@ feature. Reading that `null` as "arming failed" and re-running `--auto` is a
 wasted round-trip (and can error "already queued"). Confirm the PR is enqueued
 via the GraphQL `mergeQueueEntry { state position }` or the timeline
 `added_to_merge_queue` event — never via `autoMergeRequest`.
+
+**A pending auto-merge request silently swallows the enqueue.** The converse of
+the note above, and the more expensive one: when an auto-merge request *is*
+attached to the PR, `gh pr merge <n> --repo <r> --merge` on a merge-queue
+repository prints its usual success line and **exits 0 while adding nothing to
+the queue**. Measured on one PR: immediately after the call `isInMergeQueue` was
+`false` and the queue was empty; after `gh pr merge <n> --repo <r>
+--disable-auto` the identical call put it at position 1. Nothing shows the
+failure — `gh pr checks` is green, `mergeStateStatus` stays `CLEAN`, no timeline
+event is written, and the shell sees a zero exit — so a driver that trusts the
+exit status reports "queued" for a PR that will never merge. This cost several
+hours of misdiagnosis before the queue was read back. Two habits follow: never
+report an enqueue you have not read back, and check `autoMergeRequest` first
+when a queue entry fails to appear.
+
+```bash
+gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){
+  pullRequest(number:NNN){ state isInMergeQueue
+                           autoMergeRequest{ enabledBy{ login } } }}}'
+# state MERGED                        -> it landed.
+# isInMergeQueue true                 -> really queued.
+# neither, autoMergeRequest non-null  -> the request swallowed it: --disable-auto, then retry.
+```
+
+`pr-merge.sh` does exactly this after every merge call, polls a few seconds for
+the entry to register, and exits 2 with the `--disable-auto` remedy rather than
+claiming an enqueue that did not happen. It reports only — clearing someone
+else's auto-merge request is a caller decision, not a side effect of asking to
+merge.
 
 ### Signing Readiness (Preflight — Before Committing)
 
