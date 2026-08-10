@@ -467,5 +467,27 @@
         "pattern": "(not carried|carried by (no|none)|missing from (every|all|any)|nobody has)"
       }
     ]
+  },
+  {
+    "name": "copilot_code_review_rule_is_not_a_merge_gate",
+    "prompt": "My repo's ruleset has a copilot_code_review rule and I just pushed a new commit to my PR. Does that rule block merging until Copilot re-reviews the new head, and how do I confirm a re-request actually registered?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(?i)(does not block|will not block|not a (merge )?gate|doesn.t block|no.{0,12}block)"
+      },
+      {
+        "type": "content",
+        "pattern": "review_on_push"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)timeline"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(required approvals|COMMENT review|comment.only)"
+      }
+    ]
   }
 ]
