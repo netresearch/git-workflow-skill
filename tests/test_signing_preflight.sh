@@ -174,7 +174,15 @@ CHECKPOINTS="$REPO_ROOT/skills/git-workflow/checkpoints.yaml"
 
 # Extracted with awk rather than a YAML parser: CI installs no PyYAML, and a
 # test that needs a dependency the runner lacks is a test that does not run.
-gw17=$(awk '/^  - id: GW-17$/{f=1} f && /^      test -z/{print; exit}' "$CHECKPOINTS")
+gw17=$(awk '/^  - id: GW-17$/{f=1} f && /^    pattern: /{sub(/^    pattern: "/, ""); sub(/"$/, ""); print; exit}' "$CHECKPOINTS")
+
+# The checkpoint runner's allowlist (is_safe_eval_command) rejects `$(`, `;`,
+# `&&`, `||` and backticks outright, and a multi-line YAML scalar reaches it as
+# an empty pattern. A checkpoint that trips either never runs — the exact
+# failure this whole branch is about, one layer up.
+check "GW-17's pattern is a single line" 1 "$(wc -l <<<"$gw17")"
+check "GW-17's pattern has no chaining metacharacters" 0 \
+    "$(grep -cE '[;`]|&&|\|\||\$\(' <<<"$gw17")"
 
 # The load-bearing part is the header pattern. Every place that answers "is this
 # commit signed" must use the same rule, or one of them silently becomes a

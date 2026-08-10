@@ -151,12 +151,20 @@ mechanical:
   # unsigned, which fails a fully signed repository. Whether a signature
   # verifies is the host's answer (GW-11 / the commits API), not this one's.
   # Kept in step with signing-preflight.sh by tests/test_signing_preflight.sh.
+  #
+  # HEAD only, single line, and no `$(`/`;`/`&&`: the checkpoint runner's
+  # allowlist (is_safe_eval_command in automated-assessment's
+  # run-checkpoints.sh) rejects command-chaining metacharacters outright, and a
+  # multi-line YAML scalar reaches it as an EMPTY pattern. A loop over the last
+  # five commits satisfies neither, so this mirrors the rule rather than
+  # reproducing it — the same arrangement as SR-37 in skill-repo. The full
+  # sweep lives in verify-git-workflow.sh (last 10) and signing-preflight.sh.
+  # `sed -n -e '/^$/q' -e p` is the semicolon-free spelling of the header cut.
   - id: GW-17
     type: command
-    pattern: |-
-      test -z "$(git log -5 --format=%H | while read -r c; do git cat-file commit "$c" | sed -n '/^$/q;p' | grep -qE '^gpgsig(-sha256)? ' || echo "$c"; done)"
+    pattern: "git cat-file commit HEAD | sed -n -e '/^$/q' -e p | grep -qE '^gpgsig(-sha256)? '"
     severity: info
-    desc: "Recent commits should carry a GPG/SSH signature"
+    desc: "HEAD should carry a GPG/SSH signature"
 
 llm_reviews:
   # === CONVENTIONAL COMMITS ===
