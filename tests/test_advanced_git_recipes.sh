@@ -67,9 +67,11 @@ printf 'l1\nRESOLVED\nl3\n' > "$TMP/ref"/f.txt
 printf 'extracted\n'       > "$TMP/ref"/helper.txt
 printf 'leftover\n'        > "$TMP/ref"/f.txt.orig   # what mergetool leaves behind
 
-# A lightweight tag is the alternative the recipe rejects; prove why.
-git -C "$TMP/ref" tag lightweight-probe HEAD >/dev/null 2>&1
-check "lightweight tag refused under tag.gpgsign=true" "128" "$?"
+# A lightweight tag is the alternative the recipe rejects; prove why. The exit
+# code varies by git version (1 and 128 both observed) — assert the refusal.
+git -C "$TMP/ref" tag lightweight-probe HEAD >/dev/null 2>&1; tagrc=$?
+if [ "$tagrc" -ne 0 ]; then pass "lightweight tag refused under tag.gpgsign=true (rc=$tagrc)"
+else fail "lightweight tag was accepted under tag.gpgsign=true"; fi
 
 out=$(git -C "$TMP/ref" commit -m REF 2>&1); rc=$?
 if [ "$rc" -ne 0 ]; then pass "commit before staging refuses (rc=$rc)"; else fail "commit before staging succeeded"; fi
