@@ -174,7 +174,18 @@ llm_reviews:
     prompt: |
       Check if the repository has signed commits.
 
-      Use `git log --show-signature -5` to check recent commits for GPG/SSH signatures.
+      Read the commit object — a signed commit carries a `gpgsig` header:
+
+      ```
+      git log -5 --format=%H | while read c; do
+        git cat-file commit "$c" | sed -n '/^$/q;p' | grep -q '^gpgsig' \
+          && echo "$c signed" || echo "$c UNSIGNED"
+      done
+      ```
+
+      Do NOT use `git log --show-signature` or `%G?` here: under `gpg.format=ssh`
+      with no `gpg.ssh.allowedSignersFile` they report `No signature` / `N` on
+      correctly signed commits, which fails a fully signed repository.
 
       Report:
       - How many of the last 5 commits are signed?

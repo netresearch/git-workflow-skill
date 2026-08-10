@@ -160,10 +160,10 @@ BEFORE=$(git rev-parse HEAD)
 git add -- path/to/file path/to/other
 git commit -s -F msg.txt
 [ "$(git rev-parse HEAD)" != "$BEFORE" ] || { echo "commit aborted — re-stage and retry" >&2; exit 1; }
-git log -1 --format='%h %G?'          # now describes YOUR commit
+git log -1 --format='%h %s'           # now describes YOUR commit
 ```
 
-Checking `git commit`'s own exit code works, but only if nothing reads it first — and in practice the next thing in the block is a status line that answers from the *previous* commit and looks right. `git log -1 --format='%G?'` prints `G`, and the `git push` that follows succeeds while pushing nothing new, because the branch never moved. HEAD is the one value the aborted commit did not leave intact, which is why comparing it answers the question the others only appear to.
+Checking `git commit`'s own exit code works, but only if nothing reads it first — and in practice the next thing in the block is a status line that answers from the *previous* commit and looks right. `git log -1 --format='%G?'` prints the same value it printed before the aborted commit, and the `git push` that follows succeeds while pushing nothing new, because the branch never moved. HEAD is the one value the aborted commit did not leave intact, which is why comparing it answers the question the others only appear to.
 
 **Never skip hooks** unless explicitly told to. `--no-verify` bypasses hook enforcement that exists for good reasons. If a hook fails, diagnose the root cause.
 
@@ -185,7 +185,10 @@ If you must actually exercise the signing path, do it on a throwaway branch and 
 
 ```bash
 git switch -c tmp/sign-probe
-git commit --allow-empty -S -m "chore: signing probe" && git log -1 --format='%G?'   # conventional msg so a commit-msg hook won't reject it; expect: G
+# conventional msg so a commit-msg hook won't reject it; header, not %G? — see "Verifying a Signed Commit" below
+git commit --allow-empty -S -m "chore: signing probe" \
+  && (git cat-file commit HEAD | sed -n '/^$/q;p' | grep -q '^gpgsig' && echo signed || echo "NOT signed") \
+  || echo "NOT signed — commit failed"   # keep the chain: unchained, the check reads the parent commit
 git switch - && git branch -D tmp/sign-probe
 ```
 
@@ -219,8 +222,30 @@ Match on both, or on the object type plus a looser pattern:
 git tag -v v1.2.3 2>&1 | grep -qE 'Good ("git" )?signature' && echo signed
 ```
 
-The same applies to commits: `git log --format='%G?'` returning `G` is the
-backend-independent check, and is what to use in scripts.
+`git tag -v` needs `gpg.ssh.allowedSignersFile` as well. Without it, it prints
+`error: gpg.ssh.allowedSignersFile needs to be configured and exist for SSH
+signature verification`, exits 1, and the pattern above matches nothing (git
+2.54.0) — so a failed match means "not verifiable *here*", not "unsigned".
+
+### Verifying a Signed Commit
+
+For commits, do not reach for `git log --format='%G?'`: it is backend-independent
+but *not* verification-config-independent. Under `gpg.format=ssh` with no
+`gpg.ssh.allowedSignersFile`, `%G?` returns `N` and `--show-signature` prints
+`No signature` on a correctly signed commit (git 2.54.0) — `N` is
+indistinguishable from unsigned, and setting that config flips the identical
+commit to `G`. Read the commit header instead, which both backends write
+(`-----BEGIN SSH SIGNATURE-----` / `-----BEGIN PGP SIGNATURE-----`) and no local
+config gates:
+
+```bash
+git cat-file commit HEAD | sed -n '/^$/q;p' | grep -q '^gpgsig' && echo signed
+```
+
+Cut the header at the first blank line — over the whole object, `^gpgsig` also
+matches a message body line starting with `gpgsig` and reports an unsigned commit
+as signed. Whether the *host* accepts the key is a separate question, answered
+only by the commits API check above.
 
 ## Atomic Commits
 
