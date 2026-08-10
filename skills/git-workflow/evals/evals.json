@@ -389,6 +389,10 @@
       {
         "type": "content",
         "pattern": "(revert|dropped|discard|silently)"
+      },
+      {
+        "type": "content",
+        "pattern": "(merge-base|true ancestor|parents of (that|the) merge)"
       }
     ]
   },
@@ -398,11 +402,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(reference merge|REF|merge the base into)"
+        "pattern": "(reference merge|merge the base into the branch|resolve (each |every )?conflict from)"
       },
       {
         "type": "content",
-        "pattern": "git diff.*(REF|HEAD)"
+        "pattern": "git diff.*--stat.*(must (print|be) (nothing|empty)|no output|is empty)"
+      },
+      {
+        "type": "content",
+        "pattern": "(worktree add|--detach|throwaway worktree)"
       }
     ]
   },
@@ -412,11 +420,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(git diff|re-derive|verify).*(target|HEAD|base)"
+        "pattern": "git diff.*(target|base|origin/)\\.\\.\\.?(HEAD|head)"
       },
       {
         "type": "content",
-        "pattern": "(stale|no longer|delete the section|remove)"
+        "pattern": "(re-?derive|re-?check|verify each|against the (current )?diff)"
+      },
+      {
+        "type": "content",
+        "pattern": "(delete|drop|remove) the (section|row|entry).{0,60}(no longer|reverted|gone|does not)"
       }
     ]
   },
@@ -426,11 +438,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(jobs_enabled|builds_access_level|CI.*(disabled|switched off))"
+        "pattern": "(jobs_enabled|builds_access_level)"
       },
       {
         "type": "content",
-        "pattern": "(403|projects/)"
+        "pattern": "(CI/CD is|CI is) (disabled|switched off|turned off)"
+      },
+      {
+        "type": "content",
+        "pattern": "(cannot|never|will not|won't).{0,30}(be created|occur|arrive|run)"
       }
     ]
   },
@@ -445,6 +461,10 @@
       {
         "type": "content",
         "pattern": "(each file|every changed file|not carried)"
+      },
+      {
+        "type": "content",
+        "pattern": "(NOT CARRIED|deliberate drop|left behind)"
       }
     ]
   }
