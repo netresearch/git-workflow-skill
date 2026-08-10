@@ -514,11 +514,11 @@
   },
   {
     "name": "script_check_commit_is_signed",
-    "prompt": "In a script, is `git log -1 --format='%G?'` returning G a reliable check that HEAD is signed?",
+    "prompt": "In a script I need to decide whether HEAD is signed. Can I test `git log -1 --format='%G?'` = G and treat every other result as unsigned?",
     "assertions": [
       {
         "type": "content",
-        "pattern": "(?i)(unreliable|not reliable|not (a )?(reliable|sufficient|safe)|(don.t|do not) (reach for|rely on|use)[^\\n]{0,60}(%G\\?|show-signature))"
+        "pattern": "(?i)(unreliable|not reliable|not (a )?(reliable|sufficient|safe)|false negative|does ?n.?t (prove|mean)|no proof|(don.t|do not) (reach for|rely on|use)[^\\n]{0,60}(%G\\?|show-signature))"
       },
       {
         "type": "content",

@@ -172,7 +172,9 @@ llm_reviews:
   - id: GW-21
     domain: git-workflow
     prompt: |
-      Check if the repository has signed commits.
+      Check whether the repository's commits carry signatures. This checkpoint
+      asks about signature *presence*, not about whether the signatures verify —
+      that is the host's answer, not the local keyring's.
 
       Read the commit object — a signed commit carries a `gpgsig` header:
 
@@ -192,7 +194,7 @@ llm_reviews:
       - Are all commits from the same author signed?
       - Pass if all commits are signed, warn if some, fail if none
     severity: info
-    desc: "Commits should be GPG/SSH signed for authenticity"
+    desc: "Commits should carry a GPG/SSH signature"
 
   - id: GW-22
     domain: git-workflow

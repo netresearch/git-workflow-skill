@@ -185,7 +185,7 @@ If you must actually exercise the signing path, do it on a throwaway branch and 
 
 ```bash
 git switch -c tmp/sign-probe
-# conventional msg so a commit-msg hook won't reject it; header, not %G? — see "Verifying a Signed Commit" below
+# conventional msg so a commit-msg hook won't reject it; header, not %G? — see "Detecting a Signed Commit" below
 git commit --allow-empty -S -m "chore: signing probe" \
   && (git cat-file commit HEAD | sed -n '/^$/q;p' | grep -q '^gpgsig' && echo signed || echo "NOT signed") \
   || echo "NOT signed — commit failed"   # keep the chain: unchained, the check reads the parent commit
@@ -227,16 +227,21 @@ git tag -v v1.2.3 2>&1 | grep -qE 'Good ("git" )?signature' && echo signed
 signature verification`, exits 1, and the pattern above matches nothing (git
 2.54.0) — so a failed match means "not verifiable *here*", not "unsigned".
 
-### Verifying a Signed Commit
+### Detecting a Signed Commit
 
-For commits, do not reach for `git log --format='%G?'`: it is backend-independent
-but *not* verification-config-independent. Under `gpg.format=ssh` with no
-`gpg.ssh.allowedSignersFile`, `%G?` returns `N` and `--show-signature` prints
-`No signature` on a correctly signed commit (git 2.54.0) — `N` is
-indistinguishable from unsigned, and setting that config flips the identical
-commit to `G`. Read the commit header instead, which both backends write
-(`-----BEGIN SSH SIGNATURE-----` / `-----BEGIN PGP SIGNATURE-----`) and no local
-config gates:
+Signedness and verification are different questions, and only the first has a
+stable local answer: whether a commit *carries* a signature is a property of the
+object, whether *this machine* trusts that signature depends on local config.
+The check below answers the first one only.
+
+For that question, do not reach for `git log --format='%G?'`: it is
+backend-independent but *not* verification-config-independent. Under
+`gpg.format=ssh` with no `gpg.ssh.allowedSignersFile`, `%G?` returns `N` and
+`--show-signature` prints `No signature` on a correctly signed commit (git
+2.54.0) — `N` is indistinguishable from unsigned, and setting that config flips
+the identical commit to `G`. Read the commit header instead, which both backends
+write (`-----BEGIN SSH SIGNATURE-----` / `-----BEGIN PGP SIGNATURE-----`) and no
+local config gates:
 
 ```bash
 git cat-file commit HEAD | sed -n '/^$/q;p' | grep -q '^gpgsig' && echo signed

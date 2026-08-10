@@ -1741,16 +1741,19 @@ merge.
 
 ### Signing Readiness (Preflight — Before Committing)
 
-A signing failure surfaces only at the *merge gate* (BLOCKED on DCO / "verified signatures") — i.e. **after** all the work is staged, forcing a full re-sign cycle. Catch it up front: before a commit-heavy run (e.g. `/pr-finish`), confirm a signing key is actually available and that `git commit -S` will sign, rather than assuming it.
+Two failures hide behind "signing is broken", and they surface at opposite ends of the run. A **local** signing failure surfaces immediately: `git commit -S` aborts and the branch does not move. A **host** verification failure — the key signs fine but GitHub does not recognise it — surfaces only at the *merge gate* (BLOCKED on DCO / "verified signatures"), i.e. **after** all the work is committed and pushed, forcing a full re-sign cycle. Preflight both before a commit-heavy run (e.g. `/pr-finish`): confirm a signing key is actually available and that `git commit -S` will sign, rather than assuming it.
 
 ```bash
 # SSH-signing setups: is a key the agent can sign with actually loaded?
 ssh-add -l        # "no identities" → signing (and any SSH git auth) will fail until re-added
-# Definitive probe: a throwaway signed commit carries a signature, then drop it
-# (do this on a throwaway branch, not on `main` — see commit-conventions.md, "Verify signing capability without committing on `main`")
-git commit -S --allow-empty -m probe \
-  && (git cat-file commit HEAD | sed -n '/^$/q;p' | grep -q '^gpgsig' && echo "SIGNING READY" || echo "SIGNING NOT READY"; git reset --soft HEAD~1) \
+# Definitive probe: a throwaway signed commit carries a signature, then drop it —
+# on a throwaway branch, not on `main` (see commit-conventions.md, "Verify signing capability without committing on `main`")
+git switch -c tmp/sign-probe
+# conventional msg — a commit-msg hook rejecting `probe` aborts the commit and reads as a signing failure
+git commit -S --allow-empty -m "chore: signing probe" \
+  && (git cat-file commit HEAD | sed -n '/^$/q;p' | grep -q '^gpgsig' && echo "SIGNING READY" || echo "SIGNING NOT READY") \
   || echo "SIGNING NOT READY — commit failed"
+git switch - && git branch -D tmp/sign-probe
 ```
 
 **Assert on the commit object, not on local verification.** `git log --show-signature` / `%G?` answer the narrower question "can *this machine* verify the signature", and report failure on setups that sign perfectly well. With `gpg.format=ssh` and no `gpg.ssh.allowedSignersFile`, `git log --show-signature -1` prints `error: gpg.ssh.allowedSignersFile needs to be configured and exist for SSH signature verification` and then `No signature`, and `%G?` returns `N` — on a commit that carries a valid signature and that the host reports as `verified: true` once the key is registered as a signing key. The command still **exits 0** while printing that error, so a driver reading `$?` sees success too.
@@ -1761,7 +1764,7 @@ The `gpgsig` header depends on no verification config and is written by both bac
 
 **Do not assert on `Good` either.** Unanchored, it matches the `Author:` line, so an unsigned commit by an author named e.g. "Goodwin" reports `SIGNING READY`. And a local `Good` only proves your own allowed-signers file accepts your key, never that GitHub does — that is the `unknown_key` API check under *Signing and DCO Failures* below. **Keep the commit chained to the check with `&&`.** `git commit -S` cannot silently produce an unsigned commit: with a key it cannot load it aborts (`fatal: failed to write commit object`, exit 128, HEAD unmoved). But an unchained check then reads the *parent* commit, which in signed history carries its own `gpgsig` header — so it prints `SIGNING READY` for a probe that never happened.
 
-If the probe fails (no askpass, a locked/dropped key, or an unloadable `user.signingkey`), resolve it **before** doing the work — the mid-run remedy is the same `rebase --exec` re-sign as a reactive failure, but you avoid discovering it at the gate. See *Signing and DCO Failures* below for that remedy.
+If the probe fails (no askpass, a locked/dropped key, or an unloadable `user.signingkey`), resolve it **before** doing the work — the mid-run remedy is the same `rebase --exec` re-sign as a reactive failure, but you avoid discovering it at the gate. `commit failed` is not by itself a signing verdict: a `commit-msg` hook rejecting the probe message aborts the commit exactly the same way, so read the commit output before chasing keys. See *Signing and DCO Failures* below for that remedy.
 
 ### Signing and DCO Failures
 
