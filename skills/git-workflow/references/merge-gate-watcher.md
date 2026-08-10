@@ -98,6 +98,30 @@ Treat `unable to review` as **no review** and re-request; if the re-request retu
 
 **On a docs/prose PR the loop does not decay — it must be actively terminated.** The bot re-reads the whole changed file each round and keeps surfacing a *new cosmetic* nit (wording, an illustrative example value, a spelling), so pushing a fix just triggers another round almost indefinitely. To converge: once a finding is purely cosmetic and defensible, **reply on the thread and resolve it *without* a new commit** — no push means no re-review means no new nit. Reserve fresh pushes for substantive findings; batch several real fixes into one push rather than one-per-thread.
 
+## Check the producer is switched on before arming the watcher
+
+A watch whose event can never be produced is indistinguishable from one whose
+event has not arrived yet: both are silence. Before waiting on a pipeline,
+confirm the host will create one at all — a project can have CI switched off
+entirely, and then no push, force-push or retarget produces anything to watch.
+
+On GitLab the give-away is that pipeline endpoints alone refuse a token that
+works everywhere else — `GET /projects/:id/pipelines` and `/jobs` return `403`
+while `/projects/:id` and the merge-request endpoints return `200`. That is not a
+scope problem:
+
+```bash
+glab api "projects/:id" | jq '{jobs_enabled, builds_access_level}'
+# {"jobs_enabled": false, "builds_access_level": "disabled"} -> nothing will run
+```
+
+Observed cost: two watchers armed across ~40 minutes for a merge request whose
+project had `builds_access_level: disabled`, reported to the user as "no
+pipeline yet" when the correct answer was "no pipeline, ever, until someone
+re-enables CI". Give a wait a stop condition it can actually reach, and when a
+watch stays silent past the expected window, re-check the producer rather than
+extending the timeout.
+
 ## Auto-merge armed + CLEAN but never enqueued: disable/re-enable to nudge
 
 On a merge-queue repo a PR can sit `CLEAN` with auto-merge **armed** and every required check green, yet never gets a `mergeQueueEntry` — it silently fails to enter the queue, so the watcher just times out. Confirm the symptom, then re-arm to force GitHub to re-evaluate enqueue-readiness:
