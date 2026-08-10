@@ -107,6 +107,7 @@ def main() -> int:
             ),
             capture_output=True,
             text=True,
+            check=False,
             env={**os.environ, "GIT_WORKTREE_ROOTS": root},
         )
         e2e = '"deny"' in p.stdout
