@@ -128,16 +128,19 @@ mechanical:
       see references/git-hooks-setup.md 'CaptainHook + git worktrees'
 
   # === UNRELEASED COMMITS ===
-  - id: GW-15
-    type: command
-    pattern: 'tag=$(git describe --tags --abbrev=0 2>/dev/null); [ -z "$tag" ] || test "$(git rev-list ${tag}..HEAD --count)" -le 20'
-    severity: warning
-    desc: "Main branch should not accumulate >20 unreleased commits since last tag"
+  # GW-15 was removed rather than fixed: counting commits since the last tag
+  # needs a rev-range (`<tag>..HEAD`) and command substitution, and the runner's
+  # allowlist rejects both — `..` as path traversal, `$(` as command chaining.
+  # It never ran. The rule itself is intact and now lives where a full shell is
+  # available, in scripts/verify-git-workflow.sh ("Unreleased Commits").
 
   # === INTERMEDIATE PLANNING ARTIFACTS ===
+  # `! … | grep -q .` rather than `test -z "$(…)"`: same verdict, no command
+  # substitution. The runner strips a leading `!` before checking the base
+  # command, so the negated pipeline is allowlist-conform.
   - id: GW-16
     type: command
-    pattern: 'test -z "$(git ls-files -- docs/superpowers/ claudedocs/ docs/working/ 2>/dev/null)"'
+    pattern: '! git ls-files -- docs/superpowers/ claudedocs/ docs/working/ | grep -q .'
     severity: warning
     desc: >-
       Intermediate planning artifacts (superpowers specs/plans, claudedocs,
@@ -190,6 +193,7 @@ llm_reviews:
     severity: warning
     desc: "Recent commits should follow conventional commit format"
 
+  # mechanical-counterpart: GW-17
   - id: GW-21
     domain: git-workflow
     prompt: |
@@ -353,6 +357,8 @@ llm_reviews:
       directory, no `.bare/` sibling) — the convention does not apply.
 
   # === STAGING BRANCH COMPOSER.LOCK MERGE STRATEGY ===
+  # mechanical-counterpart: none (the commands gather the staging lockfile; the
+  # judgement — which merge strategy applies — is the checkpoint)
   - id: GW-30
     domain: git-workflow
     severity: warning

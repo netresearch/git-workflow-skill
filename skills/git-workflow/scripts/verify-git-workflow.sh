@@ -205,6 +205,23 @@ if [[ -f "package.json" ]]; then
     fi
 fi
 
+# Unreleased commits since the last tag. This was checkpoint GW-15, which the
+# runner's allowlist rejected outright — a rev-range needs `<tag>..HEAD` and the
+# count needs command substitution, and `..` and `$(` are both refused. It never
+# ran once. Here a full shell is available, so the rule survives intact.
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+if [[ -n "$LAST_TAG" ]]; then
+    UNRELEASED=$(git rev-list "${LAST_TAG}..HEAD" --count 2>/dev/null || echo 0)
+    if [[ "$UNRELEASED" -le 20 ]]; then
+        echo "✅ $UNRELEASED commit(s) since $LAST_TAG"
+    else
+        echo "⚠️  $UNRELEASED commits since $LAST_TAG — cut a release"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+else
+    echo "ℹ️  No tags yet"
+fi
+
 # Check current branch
 echo ""
 echo "=== Current State ==="
@@ -222,17 +239,23 @@ fi
 # Check if up to date with remote
 if git remote | grep -q "origin" 2>/dev/null; then
     git fetch origin --quiet 2>/dev/null || true
-    LOCAL=$(git rev-parse "$CURRENT_BRANCH" 2>/dev/null)
-    REMOTE=$(git rev-parse "origin/$CURRENT_BRANCH" 2>/dev/null) || true
+    # --verify --quiet, because plain `git rev-parse origin/<branch>` echoes the
+    # ref NAME back on stdout when it does not resolve. The literal string then
+    # passed the -n test, the rev-list below failed on it, and `set -e` killed
+    # the script three sections early — silently, on every unpushed branch.
+    LOCAL=$(git rev-parse --verify --quiet "$CURRENT_BRANCH" || true)
+    REMOTE=$(git rev-parse --verify --quiet "origin/$CURRENT_BRANCH" || true)
 
-    if [[ -n "$REMOTE" ]]; then
+    if [[ -n "$LOCAL" && -n "$REMOTE" ]]; then
         if [[ "$LOCAL" == "$REMOTE" ]]; then
             echo "✅ Up to date with origin/$CURRENT_BRANCH"
         else
-            BEHIND=$(git rev-list --count "$LOCAL..$REMOTE" 2>/dev/null)
-            AHEAD=$(git rev-list --count "$REMOTE..$LOCAL" 2>/dev/null)
+            BEHIND=$(git rev-list --count "$LOCAL..$REMOTE" 2>/dev/null || echo "?")
+            AHEAD=$(git rev-list --count "$REMOTE..$LOCAL" 2>/dev/null || echo "?")
             echo "ℹ️  Branch is $AHEAD ahead, $BEHIND behind origin/$CURRENT_BRANCH"
         fi
+    elif [[ -z "$REMOTE" ]]; then
+        echo "ℹ️  Branch not pushed to origin yet"
     fi
 fi
 
