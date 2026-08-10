@@ -181,13 +181,15 @@ git config gpg.format         # ssh (SSH signing) or empty (GPG)
 git config user.signingkey    # the key/path that will be used
 ```
 
-If you must actually exercise the signing path, do it on a throwaway branch and discard it:
+If you must actually exercise the signing path, run `scripts/signing-preflight.sh`
+— it does the whole dance below and cleans up after itself. By hand, do it on a
+throwaway branch and discard it:
 
 ```bash
 git switch -c tmp/sign-probe
 # conventional msg so a commit-msg hook won't reject it; header, not %G? — see "Detecting a Signed Commit" below
 git commit --allow-empty -S -m "chore: signing probe" \
-  && (git cat-file commit HEAD | sed -n '/^$/q;p' | grep -q '^gpgsig' && echo signed || echo "NOT signed") \
+  && (git cat-file commit HEAD | sed -n '/^$/q;p' | grep -qE '^gpgsig(-sha256)? ' && echo signed || echo "NOT signed") \
   || echo "NOT signed — commit failed"   # keep the chain: unchained, the check reads the parent commit
 git switch - && git branch -D tmp/sign-probe
 ```
@@ -244,8 +246,14 @@ write (`-----BEGIN SSH SIGNATURE-----` / `-----BEGIN PGP SIGNATURE-----`) and no
 local config gates:
 
 ```bash
-git cat-file commit HEAD | sed -n '/^$/q;p' | grep -q '^gpgsig' && echo signed
+scripts/signing-preflight.sh --check-commit HEAD      # exit 0 signed, 1 unsigned
+# by hand:
+git cat-file commit HEAD | sed -n '/^$/q;p' | grep -qE '^gpgsig(-sha256)? ' && echo signed
 ```
+
+`gpgsig-sha256` is the header name in SHA-256 repositories; the alternation
+covers both. Match the header name and the space, so nothing else in the header
+block can pass.
 
 Cut the header at the first blank line — over the whole object, `^gpgsig` also
 matches a message body line starting with `gpgsig` and reports an unsigned commit

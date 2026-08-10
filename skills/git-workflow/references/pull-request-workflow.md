@@ -1744,6 +1744,14 @@ merge.
 Two failures hide behind "signing is broken", and they surface at opposite ends of the run. A **local** signing failure surfaces immediately: `git commit -S` aborts and the branch does not move. A **host** verification failure — the key signs fine but GitHub does not recognise it — surfaces only at the *merge gate* (BLOCKED on DCO / "verified signatures"), i.e. **after** all the work is committed and pushed, forcing a full re-sign cycle. Preflight both before a commit-heavy run (e.g. `/pr-finish`): confirm a signing key is actually available and that `git commit -S` will sign, rather than assuming it.
 
 ```bash
+scripts/signing-preflight.sh     # exit 0 READY · 1 NOT READY · 2 could not probe
+```
+
+`signing-preflight.sh` is the mechanical form of everything below: it probes on a throwaway branch through a temporary index (so a staged change is never swept into the probe commit), asserts on the commit object, retries once with `--no-verify` to tell a hook rejection apart from a signing failure, and removes the branch either way. `--check-commit <rev>` answers the same question for an existing commit, `--config-only` reports the config without committing. Its regression suite is `tests/test_signing_preflight.sh`; checkpoint GW-17 applies the same rule to a repository being assessed.
+
+By hand, where the script is not available:
+
+```bash
 # SSH-signing setups: is a key the agent can sign with actually loaded?
 ssh-add -l        # "no identities" → signing (and any SSH git auth) will fail until re-added
 # Definitive probe: a throwaway signed commit carries a signature, then drop it —
@@ -1751,7 +1759,7 @@ ssh-add -l        # "no identities" → signing (and any SSH git auth) will fail
 git switch -c tmp/sign-probe
 # conventional msg — a commit-msg hook rejecting `probe` aborts the commit and reads as a signing failure
 git commit -S --allow-empty -m "chore: signing probe" \
-  && (git cat-file commit HEAD | sed -n '/^$/q;p' | grep -q '^gpgsig' && echo "SIGNING READY" || echo "SIGNING NOT READY") \
+  && (git cat-file commit HEAD | sed -n '/^$/q;p' | grep -qE '^gpgsig(-sha256)? ' && echo "SIGNING READY" || echo "SIGNING NOT READY") \
   || echo "SIGNING NOT READY — commit failed"
 git switch - && git branch -D tmp/sign-probe
 ```

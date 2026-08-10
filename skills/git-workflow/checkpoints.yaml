@@ -145,6 +145,19 @@ mechanical:
       decisions to an ADR and remove the raw files. See
       references/spec-cleanup.md and spec-cleanup-guard.sh.
 
+  # Signature *presence*, read from the commit object. Deliberately not `%G?`
+  # or `--show-signature`: under gpg.format=ssh with no
+  # gpg.ssh.allowedSignersFile both report a correctly signed commit as
+  # unsigned, which fails a fully signed repository. Whether a signature
+  # verifies is the host's answer (GW-11 / the commits API), not this one's.
+  # Kept in step with signing-preflight.sh by tests/test_signing_preflight.sh.
+  - id: GW-17
+    type: command
+    pattern: |-
+      test -z "$(git log -5 --format=%H | while read -r c; do git cat-file commit "$c" | sed -n '/^$/q;p' | grep -qE '^gpgsig(-sha256)? ' || echo "$c"; done)"
+    severity: info
+    desc: "Recent commits should carry a GPG/SSH signature"
+
 llm_reviews:
   # === CONVENTIONAL COMMITS ===
   - id: GW-20

@@ -15,8 +15,11 @@ echo ""
 # Change to repo directory
 cd "$REPO_DIR"
 
-# Check if it's a git repository
-if [[ ! -d ".git" ]]; then
+# Check if it's a git repository. Asking git, not testing for a `.git`
+# directory: in a worktree `.git` is a *file* pointing at the real gitdir, so
+# the directory test refused to run in every worktree — including the layout
+# this skill's own references recommend.
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "❌ Not a git repository"
     exit 1
 fi
@@ -38,7 +41,7 @@ if [[ -n "$INVALID_BRANCHES" ]]; then
     echo "⚠️  Non-standard branch names found:"
     echo "  $INVALID_BRANCHES"
     echo "   Expected: main, develop, feature/*, fix/*, release/*, hotfix/*"
-    ((WARNINGS++))
+    WARNINGS=$((WARNINGS + 1))
 else
     echo "✅ All branch names follow conventions"
 fi
@@ -54,11 +57,11 @@ VALID_COMMITS=0
 
 while IFS= read -r commit; do
     if echo "$commit" | grep -qE "$CONV_PATTERN"; then
-        ((VALID_COMMITS++))
+        VALID_COMMITS=$((VALID_COMMITS + 1))
     else
         # Allow merge commits
         if ! echo "$commit" | grep -qE "^[a-f0-9]+ Merge"; then
-            ((INVALID_COMMITS++))
+            INVALID_COMMITS=$((INVALID_COMMITS + 1))
         fi
     fi
 done <<< "$RECENT_COMMITS"
@@ -70,10 +73,10 @@ if [[ $TOTAL_COMMITS -gt 0 ]]; then
         echo "✅ $PERCENT% of commits follow Conventional Commits format"
     elif [[ $PERCENT -ge 50 ]]; then
         echo "⚠️  $PERCENT% of commits follow Conventional Commits format"
-        ((WARNINGS++))
+        WARNINGS=$((WARNINGS + 1))
     else
         echo "⚠️  Only $PERCENT% of commits follow Conventional Commits format"
-        ((WARNINGS++))
+        WARNINGS=$((WARNINGS + 1))
     fi
 fi
 
@@ -98,7 +101,7 @@ if [[ -f ".gitignore" ]]; then
     fi
 else
     echo "⚠️  No .gitignore file found"
-    ((WARNINGS++))
+    WARNINGS=$((WARNINGS + 1))
 fi
 
 # Check for hooks
@@ -177,7 +180,7 @@ fi
 
 if [[ "$CI_FOUND" == "false" ]]; then
     echo "⚠️  No CI/CD configuration found"
-    ((WARNINGS++))
+    WARNINGS=$((WARNINGS + 1))
 fi
 
 # Check for semantic release
@@ -247,9 +250,37 @@ fi
 if [[ -n "$CONFLICT_FILES" ]]; then
     echo "❌ Conflict markers found in files:"
     while IFS= read -r conflict_file; do echo "   $conflict_file"; done <<< "$CONFLICT_FILES"
-    ((ERRORS++))
+    ERRORS=$((ERRORS + 1))
 else
     echo "✅ No conflict markers found"
+fi
+
+echo ""
+echo "=== Commit Signing ==="
+
+# Read the signature from the commit object, not from `git log --show-signature`
+# or `%G?`: those answer "can this machine verify it", and report a correctly
+# signed commit as unsigned whenever gpg.format=ssh is set without
+# gpg.ssh.allowedSignersFile. Same rule as checkpoint GW-17 and
+# signing-preflight.sh. Cut at the first blank line so a `gpgsig` line in the
+# message body cannot pass as a signature.
+UNSIGNED=""
+while read -r sha; do
+    [[ -z "$sha" ]] && continue
+    if ! git cat-file commit "$sha" 2>/dev/null | sed -n '/^$/q;p' | grep -qE '^gpgsig(-sha256)? '; then
+        UNSIGNED="$UNSIGNED $sha"
+    fi
+done < <(git log -10 --format=%H 2>/dev/null)
+
+if [[ -z "$UNSIGNED" ]]; then
+    echo "✅ Last 10 commits all carry a signature"
+else
+    UNSIGNED_COUNT=$(wc -w <<< "$UNSIGNED")
+    echo "⚠️  $UNSIGNED_COUNT of the last 10 commits carry no signature:"
+    for sha in $UNSIGNED; do echo "   ${sha:0:8}"; done
+    echo "   Signature presence only — whether a signature verifies is the host's"
+    echo "   answer, not this check's. Probe your own setup with signing-preflight.sh."
+    WARNINGS=$((WARNINGS + 1))
 fi
 
 # Summary
