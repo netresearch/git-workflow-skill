@@ -67,6 +67,7 @@ def staged_conflict_files():
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         if names.returncode != 0:
             return []
@@ -80,6 +81,7 @@ def staged_conflict_files():
                 capture_output=True,
                 text=True,
                 timeout=10,
+                check=False,
             )
             if blob.returncode == 0 and MARKER.search(blob.stdout):
                 hits.append(name)
