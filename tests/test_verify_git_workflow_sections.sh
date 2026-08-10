@@ -59,6 +59,21 @@ done
 check "unsigned commits are reported" 1 \
     "$(grep -c 'carry no signature' <<<"$out")"
 
+# A branch that exists locally but not on origin. `git rev-parse origin/<branch>`
+# echoes the ref NAME on stdout when it does not resolve, so the guard saw a
+# non-empty "remote" and the rev-list below failed on it — `set -e` then killed
+# the script three sections early, on every unpushed branch. The fixture above
+# has no remote at all, which is why this case needs its own.
+bare="$WORK/origin.git"
+git init -q --bare "$bare"
+git -C "$repo" remote add origin "$bare"
+git -C "$repo" push -q origin HEAD:refs/heads/some-other-branch
+out_unpushed=$(bash "$SCRIPT" "$repo" 2>&1)
+for section in "Conflict Markers" "Commit Signing" "Summary"; do
+    check "an unpushed branch still reaches: $section" 1 \
+        "$(grep -c "^=== $section ===$" <<<"$out_unpushed")"
+done
+
 # A worktree is a git repository. `.git` is a file there.
 git -C "$repo" worktree add -q "$WORK/wt" -b side 2>/dev/null
 check "a worktree is recognised as a repository" 0 \
