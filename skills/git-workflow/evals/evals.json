@@ -384,15 +384,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(merge-base|merge-file|--diff3)"
+        "pattern": "(merge-file|--diff3)"
       },
       {
         "type": "content",
-        "pattern": "(revert|dropped|discard|silently)"
+        "pattern": "(rev-list --merges|\\^1|\\^2|parents of (that|the) merge|per merge commit)"
       },
       {
         "type": "content",
-        "pattern": "(merge-base|true ancestor|parents of (that|the) merge)"
+        "pattern": "(dropped|discarded|reverted|silently)"
       }
     ]
   },
@@ -402,15 +402,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(reference merge|merge the base into the branch|resolve (each |every )?conflict from)"
+        "pattern": "(reference merge|resolve .{0,20}from (the )?(REF|reference)|against (the )?(REF|reference))"
       },
       {
         "type": "content",
-        "pattern": "git diff.*--stat.*(must (print|be) (nothing|empty)|no output|is empty)"
+        "pattern": "git diff.*--stat.*(ref|head)"
       },
       {
         "type": "content",
-        "pattern": "(worktree add|--detach|throwaway worktree)"
+        "pattern": "((must|should|has to).{0,25}(print|be).{0,12}(nothing|empty)|no output|is empty)"
       }
     ]
   },
@@ -420,15 +420,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "git diff.*(target|base|origin/)\\.\\.\\.?(HEAD|head)"
+        "pattern": "git diff [^ ]*\\.\\.\\.?(head)"
       },
       {
         "type": "content",
-        "pattern": "(re-?derive|re-?check|verify each|against the (current )?diff)"
+        "pattern": "(re-?derive|verify each|against the (current )?diff|no longer (true|matches))"
       },
       {
         "type": "content",
-        "pattern": "(delete|drop|remove) the (section|row|entry).{0,60}(no longer|reverted|gone|does not)"
+        "pattern": "(delete|drop|remove)s? (the|its|any|that|these) sections?"
       }
     ]
   },
@@ -442,11 +442,11 @@
       },
       {
         "type": "content",
-        "pattern": "(CI/CD is|CI is) (disabled|switched off|turned off)"
+        "pattern": "ci( ?/ ?cd)? (is |was |be )?(switched off|disabled|turned off)"
       },
       {
         "type": "content",
-        "pattern": "(cannot|never|will not|won't).{0,30}(be created|occur|arrive|run)"
+        "pattern": "(nothing will run|no pipeline,? (will )?ever|never .{0,30}(created|occur|arrive)|cannot .{0,30}(be created|occur))"
       }
     ]
   },
@@ -456,15 +456,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(rev-parse|blob|object id)"
+        "pattern": "rev-parse( --verify)?[^|]*:\\$?f"
       },
       {
         "type": "content",
-        "pattern": "(each file|every changed file|not carried)"
+        "pattern": "(blob|object id)"
       },
       {
         "type": "content",
-        "pattern": "(NOT CARRIED|deliberate drop|left behind)"
+        "pattern": "not carried"
       }
     ]
   }

@@ -105,14 +105,21 @@ event has not arrived yet: both are silence. Before waiting on a pipeline,
 confirm the host will create one at all — a project can have CI switched off
 entirely, and then no push, force-push or retarget produces anything to watch.
 
-The tell is a `403` scoped to the CI endpoints while everything else answers
-`200` with the same token — a disabled project feature, not a missing scope.
-Distinguish it from the rate-limit `403` below: that one carries
-`API rate limit exceeded` and hits every endpoint; this one is a bare
-`403 Forbidden` on the CI family only. On GitLab the flags are
-`jobs_enabled` / `builds_access_level` on `projects/:id`; the netresearch-gitlab
-skill's `references/troubleshooting.md` has the full recipe and the traps in
-reading the state back.
+A `403` confined to the CI endpoints while everything else answers `200` with
+the same token is *consistent with* a disabled project feature — but it is also
+what an insufficient token scope, a SAML or IP-allowlist rule, and (on GitHub)
+the secondary rate limit produce. The symptom narrows the field; only the flags
+settle it. On GitLab, read them:
+
+```bash
+glab api "projects/:id" | jq '{jobs_enabled, builds_access_level}'
+# {"jobs_enabled": false, "builds_access_level": "disabled"} -> nothing will run
+```
+
+(`projects/:id` resolves from the current clone's remote, so run it inside one.)
+The netresearch-gitlab skill's `references/troubleshooting.md` carries the same
+check with the token-vs-feature probe next to it and the traps in reading the
+state back afterwards.
 
 Observed cost: two watchers armed across ~40 minutes for a merge request whose
 project had `builds_access_level: disabled`, reported to the user as "no
@@ -206,7 +213,7 @@ Two consequences for the diagnosis:
 
 ## Watcher cost: GraphQL and REST rate limits are separate budgets
 
-`gh pr view --json statusCheckRollup` is a GraphQL query and an expensive one. Two watchers polling it every 60 s exhausted the **GraphQL** budget (29 of 5000 left) while the REST **core** budget still showed 4614 of 5000 — and once that happened, plain REST calls also began returning `403 API rate limit exceeded`. That combination (one resource drained, the other healthy, both refused) is the **secondary** limit reacting to request density, not the quota. This 403 says `API rate limit exceeded` and refuses every endpoint — a bare `403 Forbidden` confined to the CI endpoints is the disabled-feature case instead (see "Check the producer is switched on" above). Read the resources separately rather than trusting a single number:
+`gh pr view --json statusCheckRollup` is a GraphQL query and an expensive one. Two watchers polling it every 60 s exhausted the **GraphQL** budget (29 of 5000 left) while the REST **core** budget still showed 4614 of 5000 — and once that happened, plain REST calls also began returning `403 API rate limit exceeded`. That combination (one resource drained, the other healthy, both refused) is the **secondary** limit reacting to request density, not the quota. Its 403 body says `API rate limit exceeded` or `You have exceeded a secondary rate limit`, which is what tells it apart from an authorization 403 — read the body, not just the status. Read the resources separately rather than trusting a single number:
 
 ```bash
 gh api rate_limit --jq '.resources | to_entries[] | "\(.key): \(.value.remaining)/\(.value.limit)"'
