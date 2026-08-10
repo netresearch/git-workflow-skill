@@ -1210,16 +1210,18 @@ merges=$(git rev-list --merges origin/<base>..<branch>)
 [ -n "$merges" ] || echo "no merges in range — did the branch already land?"
 
 for m in $merges; do
-  # ^2 is the merged-in side of a merge made ON the branch. A merge made the
-  # other way round, or a merge of a sibling branch, fails this and is skipped
-  # rather than reported as six false positives.
-  git merge-base --is-ancestor "$m^2" origin/<base> \
-    || { echo "$m SKIP: ^2 is not upstream (sibling merge, or parents swapped)"; continue; }
   [ "$(git rev-list --parents -n1 "$m" | wc -w)" -gt 3 ] \
     && echo "$m OCTOPUS: parents 3+ not checked"
 
-  BASE=$(git merge-base "$m^1" "$m^2")
-  git diff -z --name-only "$BASE" "$m^2" | while IFS= read -r -d '' f; do
+  # Which parent is upstream? ^2 for a merge made ON the branch, ^1 for one
+  # made the other way round. A sibling-branch merge has neither and is skipped
+  # rather than reported as one false positive per file the sibling touched.
+  if git merge-base --is-ancestor "$m^2" origin/<base>; then up=$m^2; base_side=$m^1
+  elif git merge-base --is-ancestor "$m^1" origin/<base>; then up=$m^1; base_side=$m^2
+  else echo "$m SKIP: neither parent is upstream (sibling merge)"; continue; fi
+
+  BASE=$(git merge-base "$base_side" "$up")
+  git diff -z --name-only "$BASE" "$up" | while IFS= read -r -d '' f; do
     git diff --quiet origin/<base> <branch> -- "$f" || echo "$m DIFFERS: $f"
   done
 done
@@ -1255,15 +1257,19 @@ prove coverage; comparing object ids can:
 # bash (read -d is not POSIX). -z survives paths with spaces or newlines.
 branches="<branch-1> <branch-2>"    # every split branch
 
+# Run the whole check in a subshell so the guard's exit does not close your
+# shell when this is pasted in.
+(
 # Not optional: an unresolvable name makes every lookup ABSENT, which equals the
 # umbrella's ABSENT on a deleted path and reports a genuine miss as carried.
 for b in $branches; do
   git rev-parse --verify -q "$b^{commit}" >/dev/null || { echo "no such branch: $b" >&2; exit 1; }
 done
 
-# --verify -q so a path missing on one side yields empty + rc=1 instead of git
-# echoing the argument back — two different echoes never compare equal, so
-# without this a path DELETED by the umbrella is always reported NOT CARRIED.
+# The `|| ABSENT` is what makes deletions work: git rev-parse ECHOES its
+# argument on failure, and two different echoes never compare equal, so without
+# the sentinel a path deleted by the umbrella is always reported NOT CARRIED.
+# --verify -q keeps the accompanying `fatal:` lines off stderr.
 git diff -z --name-only origin/<base> <umbrella> | while IFS= read -r -d '' f; do
   u=$(git rev-parse --verify -q "<umbrella>:$f") || u=ABSENT
   carried=""
@@ -1273,6 +1279,7 @@ git diff -z --name-only origin/<base> <umbrella> | while IFS= read -r -d '' f; d
   done
   [ -n "$carried" ] || echo "NOT CARRIED: $f"
 done
+)
 ```
 
 The guard is what keeps a typo from masking a miss. One wrong name is enough:

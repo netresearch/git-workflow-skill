@@ -402,11 +402,11 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(reference (merge|commit)|from (that|the) reference|against (the )?(ref-target|reference))"
+        "pattern": "(worktree|scratch|throwaway|up front|end state|target (tree|state)|reference (merge|commit))"
       },
       {
         "type": "content",
-        "pattern": "git diff[^|]*ref"
+        "pattern": "git diff[^|]*(ref-target|reference|target-state|REF )"
       },
       {
         "type": "content",
@@ -428,7 +428,7 @@
       },
       {
         "type": "content",
-        "pattern": "((delete|drop|remove)s?d? (the|its|any|that|these) sections?|sections? [^.]{0,25}(deleted|dropped|removed))"
+        "pattern": "((delete|drop|remove)[a-z]*[^.]{0,60}sections?|sections?[^.]{0,60}(delete|drop|remove))"
       }
     ]
   },
@@ -456,7 +456,7 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "rev-parse[^|]*:"
+        "pattern": "rev-parse[^|]*:[^ |]"
       },
       {
         "type": "content",
@@ -464,7 +464,7 @@
       },
       {
         "type": "content",
-        "pattern": "(not carried|left behind|missing from (every|all|any))"
+        "pattern": "(not carried|carried by (no|none)|missing from (every|all|any)|nobody has)"
       }
     ]
   }

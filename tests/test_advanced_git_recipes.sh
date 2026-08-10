@@ -16,12 +16,18 @@
 set -uo pipefail
 
 failures=0
-pass() { printf '  OK   %s\n' "$1"; }
-fail() { printf '  FAIL %s\n' "$1"; failures=$((failures + 1)); }
+ran=0
+pass() { ran=$((ran + 1)); printf '  OK   %s\n' "$1"; }
+fail() { ran=$((ran + 1)); printf '  FAIL %s\n' "$1"; failures=$((failures + 1)); }
 check() { # check <label> <expected> <actual>
   if [ "$2" = "$3" ]; then pass "$1"; else
     fail "$1"; printf '       expected: %s\n       actual:   %s\n' "$2" "$3"
   fi
+}
+# `cmd && pass X` silently runs neither pass nor fail when cmd fails, so a
+# broken step disappears instead of failing. Always go through this.
+try() { # try <label> <cmd...>
+  if "${@:2}" >/dev/null 2>&1; then pass "$1"; else fail "$1 (command failed)"; fi
 }
 
 TMP=$(mktemp -d)
@@ -54,8 +60,16 @@ git -C .bare worktree add -q ../wt feature          # the branch worktree
 git -C .bare worktree add -q --detach "$TMP/ref" feature
 
 git -C "$TMP/ref" merge --no-commit --no-ff origin/main >/dev/null 2>&1
+# A resolution that both edits a tracked file AND creates one. The created path
+# is what separates the three staging forms: -A sweeps the .orig too, -u skips
+# helper.txt silently, staging by name gets exactly both.
 printf 'l1\nRESOLVED\nl3\n' > "$TMP/ref"/f.txt
-printf 'leftover\n' > "$TMP/ref"/f.txt.orig        # what mergetool leaves behind
+printf 'extracted\n'       > "$TMP/ref"/helper.txt
+printf 'leftover\n'        > "$TMP/ref"/f.txt.orig   # what mergetool leaves behind
+
+# A lightweight tag is the alternative the recipe rejects; prove why.
+git -C "$TMP/ref" tag lightweight-probe HEAD >/dev/null 2>&1
+check "lightweight tag refused under tag.gpgsign=true" "128" "$?"
 
 out=$(git -C "$TMP/ref" commit -m REF 2>&1); rc=$?
 if [ "$rc" -ne 0 ]; then pass "commit before staging refuses (rc=$rc)"; else fail "commit before staging succeeded"; fi
@@ -68,26 +82,42 @@ case "$out" in
   *) fail "unexpected message: $out" ;;
 esac
 
-git -C "$TMP/ref" add -- f.txt
+git -C "$TMP/ref" add -- f.txt helper.txt
 dirty=$(git -C "$TMP/ref" status --porcelain | grep -c '^??')
 check "status --porcelain still shows the untracked leftover" "1" "$dirty"
 
-git -C "$TMP/ref" commit -qm REF && pass "commit after staging by name"
-git -C "$TMP/ref" branch ref-target && pass "branch pins REF under tag.gpgsign=true"
+try "commit after staging by name" git -C "$TMP/ref" commit -qm REF
+try "branch pins REF" git -C "$TMP/ref" branch ref-target
 
-# The untracked leftover must NOT be in REF — that is why we stage by name.
-in_ref=$(git -C "$TMP/ref" ls-tree --name-only ref-target | grep -c 'f.txt.orig' || true)
-check "leftover kept out of REF" "0" "$in_ref"
+tree=$(git -C "$TMP/ref" ls-tree -r --name-only ref-target | sort | tr '\n' ' ')
+# helper.txt catches `add -u` (which skips paths the resolution creates);
+# f.txt.orig catches `add -A` (which sweeps untracked files in).
+check "REF holds exactly the resolution" "f.txt helper.txt " "$tree"
 
 # Step 2/3 from the branch worktree.
-( cd "$proj/wt" && git checkout ref-target -- f.txt ) && pass "checkout from a branch ref"
+try "checkout from a branch ref" git -C "$proj/wt" checkout ref-target -- f.txt helper.txt
 got=$(tr '\n' ' ' < "$proj/wt/f.txt")
 check "resolution landed in the branch worktree" "l1 RESOLVED l3 " "$got"
 
+# Step 3 itself: with the branch worktree now holding REF's content for the
+# conflicted paths, the assertion the recipe calls "the point" must be empty.
+git -C "$proj/wt" add -- f.txt helper.txt >/dev/null 2>&1
+git -C "$proj/wt" commit -qm "take REF" >/dev/null 2>&1
+step3=$(git -C "$proj/wt" diff --stat ref-target HEAD)
+check "step 3 prints nothing when the trees match" "" "$step3"
+
+# And it must NOT be empty when they diverge — otherwise the assertion is not
+# an assertion.
+printf 'drift\n' >> "$proj/wt/f.txt"
+git -C "$proj/wt" add -- f.txt >/dev/null 2>&1
+git -C "$proj/wt" commit -qm drift >/dev/null 2>&1
+drift=$(git -C "$proj/wt" diff --stat ref-target HEAD | wc -l)
+if [ "$drift" -gt 0 ]; then pass "step 3 reports divergence"; else fail "step 3 stayed empty on a divergent tree"; fi
+
 # Step 4, from the project root: needs -C and --force, and two statements.
 cd "$proj" || exit 1
-git -C wt worktree remove --force "$TMP/ref" 2>/dev/null && pass "worktree remove --force"
-git -C wt branch -D ref-target >/dev/null 2>&1 && pass "pin deleted"
+try "worktree remove --force" git -C wt worktree remove --force "$TMP/ref"
+try "pin deleted" git -C wt branch -D ref-target
 if [ -d "$TMP/ref" ]; then fail "ref worktree still present"; else pass "ref worktree gone"; fi
 
 # --------------------------------------------------------------------------
@@ -107,20 +137,84 @@ git merge -q --no-ff sibling -m "Merge branch 'sibling' into feature" # not upst
 git checkout -q main; echo more >> a.txt; git commit -qam later-churn  # post-merge churn
 git checkout -q feature
 
+# This block is the recipe from advanced-git.md, verbatim apart from the
+# placeholders. If the document changes, change it here and see what breaks.
 report=$(
   merges=$(git rev-list --merges main..feature)
   for m in $merges; do
-    git merge-base --is-ancestor "$m^2" main || { echo "SKIP"; continue; }
-    BASE=$(git merge-base "$m^1" "$m^2")
-    git diff -z --name-only "$BASE" "$m^2" | while IFS= read -r -d '' f; do
+    [ "$(git rev-list --parents -n1 "$m" | wc -w)" -gt 3 ] && echo "OCTOPUS"
+    if git merge-base --is-ancestor "$m^2" main; then up=$m^2; base_side=$m^1
+    elif git merge-base --is-ancestor "$m^1" main; then up=$m^1; base_side=$m^2
+    else echo "SKIP"; continue; fi
+    BASE=$(git merge-base "$base_side" "$up")
+    git diff -z --name-only "$BASE" "$up" | while IFS= read -r -d '' f; do
       git diff --quiet main feature -- "$f" || echo "DIFFERS: $f"
     done
-  done | sort | tr '\n' ' '
+  done | sort -u | tr '\n' ' '
 )
-check "both drops found, sibling merge skipped" "DIFFERS: a.txt DIFFERS: b.txt SKIP " "$report"
+case "$report" in
+  *"DIFFERS: a.txt"*) pass "drop from the first merge found" ;;
+  *) fail "first merge's drop missed: $report" ;;
+esac
+case "$report" in
+  *"DIFFERS: b.txt"*) pass "drop from the second merge found" ;;
+  *) fail "second merge's drop missed: $report" ;;
+esac
+case "$report" in
+  *SKIP*) pass "sibling merge skipped, not reported as drops" ;;
+  *) fail "sibling merge was not skipped: $report" ;;
+esac
 
-empty_range=$(git rev-list --merges feature..feature | wc -l)
-check "range is empty once the branch has landed (the all-clear trap)" "0" "$empty_range"
+# Parents-swapped case, in its own fixture: the merge was made FROM the upstream
+# side, so ^1 is upstream and ^2 is the branch. The recipe must still find the
+# drop rather than skipping the merge.
+swaprepo="$TMP/p2c"; mkdir -p "$swaprepo"
+swapped=$(
+  cd "$swaprepo" || exit 1; git init -q .
+  echo base > a.txt; git add -A; git commit -qm base; git branch -q topic
+  echo up > a.txt; git commit -qam upstream-change; upstream=$(git rev-parse HEAD)
+  git checkout -q topic; echo branchver > a.txt; git commit -qam topic-change
+  # Merge made FROM the upstream side (^1 = upstream, ^2 = the branch), resolved
+  # in favour of the branch — so upstream's change to a.txt is dropped.
+  git checkout -q main
+  git merge --no-commit --no-ff topic >/dev/null 2>&1
+  git checkout topic -- a.txt
+  git commit -qm "Merge branch 'topic' into main"
+  git branch -f topic HEAD
+  git reset -q --hard "$upstream"     # main back to plain upstream
+  git checkout -q topic
+
+  for m in $(git rev-list --merges main..topic); do
+    if git merge-base --is-ancestor "$m^2" main; then up=$m^2; base_side=$m^1
+    elif git merge-base --is-ancestor "$m^1" main; then up=$m^1; base_side=$m^2
+    else echo "SKIP"; continue; fi
+    BASE=$(git merge-base "$base_side" "$up")
+    git diff -z --name-only "$BASE" "$up" | while IFS= read -r -d '' f; do
+      git diff --quiet main topic -- "$f" || echo "DIFFERS: $f"
+    done
+  done | sort -u | tr '\n' ' '
+)
+check "parents-swapped merge is examined, not skipped" "DIFFERS: a.txt " "$swapped"
+
+# The all-clear trap, in its own fixture so it cannot disturb the one above:
+# once the base contains the branch, the range is empty and the loop would
+# print nothing at all, which reads as "no drops found".
+landedrepo="$TMP/p2b"; mkdir -p "$landedrepo"
+(
+  cd "$landedrepo" || exit 1; git init -q .
+  echo a > a.txt; git add -A; git commit -qm base; git branch -q topic
+  echo up > a.txt; git commit -qam upstream
+  git checkout -q topic; echo t > t.txt; git add t.txt; git commit -qm topic-work
+  git merge -q -s ours main -m "Merge branch 'main' into topic"
+  git checkout -q main; git merge -q --no-ff topic -m "Merge topic"   # branch has landed
+)
+landed=$(
+  cd "$landedrepo" || exit 1
+  merges=$(git rev-list --merges main..topic)
+  [ -n "$merges" ] || echo "no merges in range — did the branch already land?"
+)
+check "warns instead of printing an empty all-clear" \
+      "no merges in range — did the branch already land?" "$landed"
 
 # Reconstruction uses the merge's own sides, so post-merge churn is not reported.
 m=$(git rev-list --merges main..feature | tail -1)
@@ -143,8 +237,11 @@ git checkout -q -b umbrella
 git rm -q doomed.txt gone.txt; echo k2 > keep.txt; echo x2 > "sp ace.txt"
 git commit -qam "umbrella: delete two, change two"
 git checkout -q split1
-git rm -q doomed.txt; echo k2 > keep.txt; echo x2 > "sp ace.txt"
-git commit -qam "split1: carries all but the gone.txt deletion"
+# Carries the doomed.txt deletion and keep.txt, but NOT gone.txt's deletion and
+# NOT the spaced path — so both must be reported, which is what makes the -z
+# handling and the ABSENT sentinel observable.
+git rm -q doomed.txt; echo k2 > keep.txt
+git commit -qam "split1: carries the deletion and keep.txt only"
 git checkout -q umbrella
 
 run_split() { # run_split <branches…>
@@ -163,12 +260,16 @@ run_split() { # run_split <branches…>
   done | sort | tr '\n' ' '
 }
 
-check "reports only the uncarried deletion; spaces intact" \
-      "NOT CARRIED: gone.txt " "$(run_split split1)"
+check "uncarried deletion and spaced path both reported" \
+      "NOT CARRIED: gone.txt NOT CARRIED: sp ace.txt " "$(run_split split1)"
 
 out=$(run_split split1 typo-branch 2>&1); rc=$?
 check "an unresolvable branch name aborts instead of masking a miss" "1" "$rc"
 check "and says which name" "no such branch: typo-branch" "$out"
 
-printf '\n---- failures: %s\n' "$failures"
+# The suite must notice when an assertion stops running at all — the failure
+# mode that `cmd && pass` used to produce silently.
+check "every assertion ran" "24" "$ran"
+
+printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]

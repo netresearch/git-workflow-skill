@@ -106,20 +106,22 @@ confirm the host will create one at all — a project can have CI switched off
 entirely, and then no push, force-push or retarget produces anything to watch.
 
 A `403` confined to one endpoint family while everything else answers `200` with
-the same token is *consistent with* that feature being switched off — and with
-the token simply lacking the scope for it. Those two are the candidates an
-endpoint-scoped 403 leaves; org-wide rejections (SAML, IP allowlist) and the
-rate limits refuse everything, not one family. The flags separate the two:
+the same token is *consistent with* that feature being switched off, and equally
+with the token lacking the scope for it. Rule the rate limits out by their body
+first — `API rate limit exceeded` or `You have exceeded a secondary rate limit`,
+per "Watcher cost" below, which is also a 403 and is *not* always global. Then
+read the flags, which separate the remaining two:
 
 ```bash
-glab api "projects/:id" | jq '{jobs_enabled, builds_access_level}' \
-  || echo "probe failed — that is the access case, not the feature case"
+# Capture, then parse: `glab … | jq …` exits with jq's status, and jq on empty
+# input exits 0, so a || fallback on the pipeline can never fire.
+out=$(glab api "projects/:id") \
+  || { echo "probe refused — that is the access case, not the feature case"; }
+printf '%s' "$out" | jq '{jobs_enabled, builds_access_level}'
 # {"jobs_enabled": false, "builds_access_level": "disabled"} -> nothing will run
 ```
 
 `projects/:id` resolves from the current clone's remote, so run it inside one.
-Note the fallback: with a token that cannot read the project at all the pipeline
-prints nothing rather than `null`, which is easy to misread as "flags not set".
 
 Observed cost: two watchers armed across ~40 minutes for a merge request whose
 project had `builds_access_level: disabled`, reported to the user as "no
