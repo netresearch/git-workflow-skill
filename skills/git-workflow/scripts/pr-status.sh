@@ -548,7 +548,22 @@ while :; do
     emit "$s"; exit 0
   fi
   case "$act" in
-    fix-ci|triage-ci|resolve-threads|request-review|rebase|resolve-conflicts|merge|blocked|none)
+    request-review)
+      # A request-review whose cause is an exhausted review bot is a standing
+      # condition, not an event: waiting cannot clear a quota ceiling, so every
+      # re-arm of --watch returns instantly with the same line. Saying so is
+      # what stops an operator re-arming it three times before switching to
+      # `gh pr checks --watch`, which watches something that does move.
+      if [ "$(jq -r '.copilot_error_count // 0' <<<"$s")" -ge 2 ]; then
+        echo "ACTIONABLE: request-review (UNSATISFIABLE — the review bot has failed" \
+             "$(jq -r '.copilot_error_count' <<<"$s")x on this head; re-arming this watch" \
+             "returns immediately. Review the diff yourself, or watch the checks instead:" \
+             "gh pr checks $(jq -r '.number' <<<"$s") --repo $(jq -r '.repo' <<<"$s") --watch)"
+      else
+        echo "ACTIONABLE: request-review"
+      fi
+      emit "$s"; exit 0 ;;
+    fix-ci|triage-ci|resolve-threads|rebase|resolve-conflicts|merge|blocked|none)
       echo "ACTIONABLE: $act"
       emit "$s"; exit 0 ;;
   esac
