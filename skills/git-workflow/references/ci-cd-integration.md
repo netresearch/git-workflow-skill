@@ -29,6 +29,59 @@ If you must hand-roll (e.g. watching something with no native watcher), gate on
 a **named required check reaching a terminal `pass`/`fail` state**, never on a
 zero-pending count, and confirm the run belongs to the current head SHA first.
 
+## Before you add or edit a workflow file: read the repo's Actions policy
+
+A workflow that violates the repository's Actions policy fails at **`Set up job`**
+— before a single step runs — so the log shows no step output and the failure
+looks unrelated to the change. One API call answers it:
+
+```bash
+gh api repos/$R/actions/permissions --jq '{allowed_actions, sha_pinning_required}'
+gh api orgs/${R%/*}/actions/permissions --jq '{allowed_actions, sha_pinning_required}'
+```
+
+Check the **org** as well: it can require pinning that the repo's own setting
+does not mention. With `sha_pinning_required: true`, every `uses:` needs a full
+commit SHA — a tag ref (`actions/checkout@v6`) is refused:
+
+```bash
+gh api repos/actions/checkout/git/ref/tags/v6 --jq '.object.sha'   # then: @<sha> # v6
+```
+
+The same policy is what the workflow-security linters enforce, so the cost of
+skipping this check is not one red check but several: adding a job with two
+unpinned `uses:` turned **six** checks red at once — `Set up job`, zizmor,
+Opengrep, CodeQL, SonarCloud and the aggregate security gate — all reporting the
+same two lines. Prefer dropping an action over pinning it where the runner
+already provides the tool (`setup-php` for a script that needs no extensions,
+`setup-node` for a plain `npx`).
+
+## A CI linter's finding is not refuted by a differently-scoped local run
+
+Running the same linter locally and getting the same *number* of findings is not
+evidence that they are the same findings. Two axes differ routinely:
+
+- **Scope.** A CI integration usually reports only what the pull request
+  *changed*; a local invocation lints the whole file or the whole tree.
+- **Policy source.** The CI action may load a config, a baseline, or an
+  organisation policy the local binary does not see — and vice versa.
+
+Observed: a local `zizmor` run flagged three unpinned `uses:` and the same three
+appeared on the base branch, which read as "pre-existing, not mine". CI's zizmor
+reports changed code only, and its three findings were the author's own two new
+lines plus a note on them. Same count, disjoint findings, and the wrong
+conclusion was stated publicly before the alerts were read.
+
+Compare **locations**, not counters:
+
+```bash
+gh api "repos/$R/code-scanning/alerts?tool_name=<tool>&pr=$PR&state=open" \
+  --jq '.[] | "\(.rule.id)\t\(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)"'
+```
+
+If the paths and lines are yours, the finding is yours — whatever the local run
+says.
+
 ## Git Mirror Repositories
 
 Use `git clone --mirror` + `git push --mirror` to keep a target repository in sync with an
