@@ -17,6 +17,33 @@ Gate on the **exit code**, not on parsed output. `gh pr checks` and
 `gh run watch` already handle pending-state representation, the appearance of
 newly-triggered runs, and refresh.
 
+### `gh run watch` takes the RUN id — a check-run's `details_url` ends in the JOB id
+
+Reaching for `gh run watch` from a check-run means extracting an id from its
+`details_url`, which looks like `…/actions/runs/<RUN>/job/<JOB>`. Taking the
+trailing number hands over the **job** id, and that failure is silent in the
+worst way: the API answers `404`, `gh run watch` prints `failed to get run` and
+**still exits 0**. Under `--exit-status`, in a background waiter, that reads as
+"the run finished, and it passed" — the waiter never waited at all.
+
+```bash
+# Wrong: trailing number is the job id
+rid=$(gh api "repos/$R/check-runs/$ID" --jq '.details_url' | grep -oE '[0-9]+$')
+
+# Right: name the segment
+rid=$(gh api "repos/$R/check-runs/$ID" --jq '.details_url' \
+      | grep -oE 'runs/[0-9]+' | cut -d/ -f2)
+
+# Or take the run id straight from the commit's check-runs
+gh api "repos/$R/commits/$SHA/check-runs?per_page=100" --paginate \
+  --jq '.check_runs[] | select(.status != "completed")
+        | "\(.name)\trun=\(.details_url | capture("runs/(?<r>[0-9]+)").r)"'
+```
+
+Because the exit code cannot distinguish "watched and passed" from "never
+found the run", assert the run exists before watching it, or re-read the
+check's state afterwards rather than trusting the watcher's return.
+
 Hand-rolled `gh pr checks | jq` poll loops re-derive those semantics from
 undocumented field shapes (a running check's `conclusion` may be `""`, `null`,
 or absent) and are a recurring source of bugs. The sharpest one: a poll run
