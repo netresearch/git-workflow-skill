@@ -1615,6 +1615,18 @@ gh run list --repo "$R" --limit 40 --json databaseId,status,headBranch \
 Bot reviews (Copilot, Gemini) land 2–5 minutes after each push — wait that
 window out before concluding "no threads".
 
+**A cancelled run leaves rows behind, and they are not failures.** When a push
+supersedes a run, its jobs conclude `CANCELLED` and those check-runs stay on the
+*earlier* commit forever. Where a workflow's `name:` is an unevaluated
+expression they are doubly confusing, showing up as rows literally called
+`e2e / matrix.typo3 != '' && …`. `pr-status.sh` splits them: a cancelled context
+that later reported under the same name is counted as **stale** and dropped from
+the numbers, while one that never reported again still shuts the gate and is
+listed under `cancelled — re-run, do not debug`. Before this split, two stale
+e2e rows read as `2 fail` with `NEXT: fix-ci` on a pull request GitHub itself
+called `CLEAN`, which cost an hour of log archaeology on a run that had been
+cancelled on purpose.
+
 **Review on an earlier head + `CLEAN`: decide via the timeline, not the
 review list.** After a follow-up push (docs-only changes often do not
 re-trigger Copilot), the only review on record may sit on a previous commit

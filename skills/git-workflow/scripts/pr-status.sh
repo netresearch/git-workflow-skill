@@ -119,10 +119,17 @@ evaluate() {
           # started — and that is a different situation with a different
           # answer: a merge queue drops an entry whose required check never
           # starts, so "wait" is the wrong advice.
+          # CANCELLED is kept apart from FAIL for the same reason: a run
+          # superseded by the next push is cancelled, not failed, and its rows
+          # stay on the commit forever. Counting them as failures reports a
+          # CLEAN pull request as red and answers fix-ci for a run nobody can
+          # fix. Which of the two it is depends on whether the context reported
+          # again, so it is decided below and not here.
           then {name, state: (if .status == "QUEUED" then "QUEUED"
                               elif .status != "COMPLETED" then "PENDING"
                               elif .conclusion == "SUCCESS" then "PASS"
                               elif .conclusion == "SKIPPED" or .conclusion == "NEUTRAL" then "SKIP"
+                              elif .conclusion == "CANCELLED" then "CANCEL"
                               else "FAIL" end), url: .detailsUrl, started: .startedAt}
           else {name: .context, state: (if .state == "SUCCESS" then "PASS"
                                         elif .state == "PENDING" then "PENDING"
@@ -164,7 +171,14 @@ evaluate() {
     | ([$reviews_raw[] | select(is_errored_copilot_review | not)]) as $head_reviews
     | ([$head_reviews[] | select(.author.login | test("copilot"; "i"))]) as $copilot_on_head
     | ([$p.reviewThreads.nodes[]? | select(.isResolved == false)]) as $unresolved
-    | ($checks | map(select(.state=="FAIL"))) as $failing
+    # A cancelled context that reported again under the same name is STALE:
+    # the later row is the answer and the cancelled one is a leftover. One that
+    # never reported again is genuinely unmet and still shuts the gate — but it
+    # needs a re-run, not a fix, so it is named separately either way.
+    | ([$checks[] | select(.state=="PASS" or .state=="SKIP" or .state=="FAIL") | .name]) as $reported
+    | ($checks | map(select(.state=="CANCEL" and (.name as $n | $reported | index($n)))))     as $stale
+    | ($checks | map(select(.state=="CANCEL" and (.name as $n | $reported | index($n)) == null))) as $cancelled
+    | (($checks | map(select(.state=="FAIL"))) + $cancelled) as $failing
     | ($checks | map(select(.state=="QUEUED"))) as $queued
     | ($checks | map(select(.state=="PENDING"))) as $running
     # "pending" downstream keeps meaning "not finished", queued or running.
@@ -196,6 +210,8 @@ evaluate() {
           queued: ($queued|length),
           running:($running|length),
           skip:  ($checks|map(select(.state=="SKIP"))|length),
+          stale: ($stale|length),
+          cancelled: ($cancelled|map(.name)),
           failing: ($failing|map(.name)),
           failing_required: ($failing_required|map(.name)),
           pending_required: ($pending_required|map(.name)),
@@ -209,6 +225,16 @@ evaluate() {
                    | select((.signature.isValid // false) | not)
                    | .oid[0:8]],
         undispatched: $undispatched,
+        # Whether the check set has finished registering AND finished running.
+        # The review branches of the NEXT ladder sit above every CI branch, so
+        # on a repo with the copilot_code_review ruleset NEXT answers
+        # request-review from the second a commit is pushed and never mentions
+        # CI at all. A caller that automates enqueueing needs the CI answer on
+        # its own, and the checks counts alone do not give it: right after a
+        # push "0 pending" is true because one context has registered and the
+        # other ninety have not.
+        checks_settled: (($pending|length) == 0 and ($undispatched|length) == 0
+                         and ($checks|length) > 0),
         rulesets: $ruletypes,
         # Every distinct state per author, not just the last one. `add` over
         # map({login: state}) overwrites, so a reviewer who approves and then
@@ -377,7 +403,14 @@ evaluate() {
                and ($s.requested_reviewers|map(test("copilot";"i"))|any)) then
            {action:"await-review", why:"Copilot review already requested for \($s.headOid[0:8]) and not delivered yet — waiting, not re-requesting"}
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)) then
-           {action:"request-review", why:"copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate",
+           # This branch outranks every CI branch below, so it is the one place
+           # the CI state has to be carried along: without it NEXT reads
+           # request-review while the checks are still registering, and a
+           # caller that acts on it enqueues a pull request whose CI has not
+           # started. Says it, rather than reordering the ladder — the review
+           # really is the blocking gate here.
+           {action:"request-review", why:("copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate"
+                 + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported — do not enqueue on this reading)" end)),
             cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
          elif ($s.has_review_on_head|not) then
            # The generic gate is also reached by repos WITHOUT the
@@ -484,6 +517,8 @@ render() {
     "  head        : \(.headOid[0:8]) on \(.head) -> \(.base)",
     "  checks      : \(.checks.pass) pass, \(.checks.fail) fail, \(.checks.pending) pending\(if .checks.pending > 0 then " (\(.checks.running) running, \(.checks.queued) queued)" else "" end), \(.checks.skip) skip (of \(.checks.total))",
     (if (.checks.failing|length) > 0 then "  failing     : \(.checks.failing|join(", "))" else empty end),
+    (if (.checks.cancelled|length) > 0 then "  cancelled   : \(.checks.cancelled|join(", ")) — re-run, do not debug" else empty end),
+    (if .checks.stale > 0 then "  stale       : \(.checks.stale) cancelled row(s) from a superseded run, ignored" else empty end),
     (if (.checks.failing_required|length) > 0 then "  ^ REQUIRED  : \(.checks.failing_required|join(", "))" else empty end),
     "  rulesets    : \(if (.rulesets|length)>0 then (.rulesets|join(", ")) else "none" end)",
     "  reviews     : \(if .has_review_on_head then (.reviews_on_head|to_entries|map("\(.key)=\(.value)")|join(", ")) else "NONE on current head" end)  decision=\(if .reviewDecision=="" then "-" else .reviewDecision end)",
