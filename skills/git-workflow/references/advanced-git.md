@@ -361,11 +361,13 @@ Make the cleanup end somewhere that still exists:
 
 ```bash
 cd /path/to/project/main            # or any surviving directory
-git worktree remove /path/to/project/feature-x --force
+git worktree remove /path/to/project/feature-x
 ```
 
-Give the removal an absolute path and never a relative one resolved from inside
-the target. If a later command already failed this way, `cd` to a real directory
+Give the removal an absolute path, not a relative one resolved from inside the
+target. Leave `--force` off unless you mean it: without the flag the command
+refuses a worktree with uncommitted changes, which is the check that catches a
+removal you did not intend. If a later command already failed this way, `cd` to a real directory
 and re-run it — do not start diagnosing the repository.
 
 ### A stale worktree is a stale source
