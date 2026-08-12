@@ -100,6 +100,8 @@ done
 
 Pitfalls baked in: `grep -c` exits 1 on zero matches (`|| true`); decide hard-fail only at `PENDING -eq 0` (codecov posts transient FAILURE mid-run); never count a check class you did not explicitly list.
 
+**On a merge-queue repo, drop the strategy flag.** `gh pr merge $PR --merge` (or `--squash`/`--rebase`) on a repo whose `main` uses a merge queue prints `! The merge strategy for main is set by the merge queue` and ignores the flag — but it still **enqueues** the PR, so that line is a notice, not a failure. Confirm via the queue-entry check (below), not the command's output. Call `gh pr merge $PR` without a strategy flag there and let the queue decide; keep the explicit strategy only for non-queue repos.
+
 ## Two facts the loop depends on
 
 **`gh run rerun` reuses the original `GITHUB_SHA`.** For `pull_request` events that is the merge commit computed at first run — a rerun after a base-branch fix still tests against the broken base. Rerun is only for flakes; to pick up a repaired base, rebase the branch and push.
@@ -114,6 +116,8 @@ gh pr view $PR --repo $R --json reviews \
 ```
 
 Treat `unable to review` as **no review** and re-request; if the re-request returns the same notice the quota is still exhausted, and merging means merging unreviewed. Check the repo's recent merged PRs the same way before concluding that a bot review is the local norm — a quota outage can span every PR in a window, so "the last three merged PRs also show COMMENTED" is not evidence they were reviewed.
+
+Once you know the quota is exhausted, mind *when* `--watch` returns: `pr-status.sh --watch` (and any read whose `NEXT` is `request-review`) fires on that review-state event **immediately, even while CI is still running** — the event is independent of check completion, so it returns before the gate can be `CLEAN`. Do not merge on that first return. After deciding to proceed unreviewed, re-arm `--watch` (or watch the checks) until `mergeState=CLEAN`; only `CLEAN` passes the merge gate — `BLOCKED` means checks or threads are outstanding and `UNSTABLE` means a non-required check is still pending (seen 2026-08-12: a docs PR cycled `BLOCKED → UNSTABLE → CLEAN` across three re-arms while the bot stayed quota-dead).
 
 **On a docs/prose PR the loop does not decay — it must be actively terminated.** The bot re-reads the whole changed file each round and keeps surfacing a *new cosmetic* nit (wording, an illustrative example value, a spelling), so pushing a fix just triggers another round almost indefinitely. To converge: once a finding is purely cosmetic and defensible, **reply on the thread and resolve it *without* a new commit** — no push means no re-review means no new nit. Reserve fresh pushes for substantive findings; batch several real fixes into one push rather than one-per-thread.
 
