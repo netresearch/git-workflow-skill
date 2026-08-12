@@ -36,9 +36,10 @@ so, which is how a GitLab MR ended up behind a watcher that could never fire.
 For GitLab the equivalent is one `glab api` call:
 
 ```bash
-glab api "projects/$(printf %s 'group/project' | jq -sRr @uri)/merge_requests/123" \
+P=$(printf %s 'group/project' | jq -sRr @uri)   # the path must be URI-encoded
+glab api "projects/$P/merge_requests/123" \
   | jq '{state, detailed_merge_status, pipeline: .head_pipeline.status}'
-glab api "projects/.../merge_requests/123/discussions" \
+glab api "projects/$P/merge_requests/123/discussions" \
   | jq '[.[] | select(.notes[0].resolvable==true and .notes[0].resolved==false)] | length'
 ```
 
