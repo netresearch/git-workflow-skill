@@ -341,6 +341,35 @@ git worktree remove ../project-feature
 git worktree prune
 ```
 
+### Leave the worktree before you remove it
+
+`git worktree remove` deletes the directory, including the one your shell may be
+sitting in. The removal itself succeeds, so nothing looks wrong — the damage
+shows up in the *next* commands, which run in a directory that no longer exists:
+
+```
+fatal: not a git repository (or any of the parent directories): .git
+pwd: error retrieving current directory: getcwd: cannot access parent directories
+```
+
+Both read like a broken repository or a bad `-C` path, and that is the trap:
+the repository is fine, the shell's cwd is a ghost. It bites hardest in agent
+and script sessions, where `cd` persists between calls and the removal often sits
+several commands before the failure.
+
+Make the cleanup end somewhere that still exists:
+
+```bash
+cd /path/to/project/main            # or any surviving directory
+git worktree remove /path/to/project/feature-x
+```
+
+Give the removal an absolute path, not a relative one resolved from inside the
+target. Leave `--force` off unless you mean it: without the flag the command
+refuses a worktree with uncommitted changes, which is the check that catches a
+removal you did not intend. If a later command already failed this way, `cd` to a real directory
+and re-run it — do not start diagnosing the repository.
+
 ### A stale worktree is a stale source
 
 A worktree checked out days ago can be many commits behind `origin` — its
