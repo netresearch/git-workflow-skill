@@ -203,7 +203,9 @@ evaluate() {
         reviewDecision: ($p.reviewDecision // ""),
         base: $p.baseRefName, head: $p.headRefName, headOid: $head,
         checks: {
-          total: ($checks|length),
+          # Stale rows are excluded so pass+fail+pending+skip still adds up to
+          # total; the stale count is reported on its own line.
+          total: (($checks|length) - ($stale|length)),
           pass:  ($checks|map(select(.state=="PASS"))|length),
           fail:  ($failing|length),
           pending:($pending|length),
@@ -211,7 +213,10 @@ evaluate() {
           running:($running|length),
           skip:  ($checks|map(select(.state=="SKIP"))|length),
           stale: ($stale|length),
-          cancelled: ($cancelled|map(.name)),
+          # Flattened: where the name: of a workflow is an unevaluated expression the
+          # check-run name arrives with newlines in it and would break the
+          # single-line summary into fragments.
+          cancelled: ($cancelled|map(.name|gsub("\\s+";" ")|.[0:90])),
           failing: ($failing|map(.name)),
           failing_required: ($failing_required|map(.name)),
           pending_required: ($pending_required|map(.name)),
@@ -233,8 +238,13 @@ evaluate() {
         # its own, and the checks counts alone do not give it: right after a
         # push "0 pending" is true because one context has registered and the
         # other ninety have not.
-        checks_settled: (($pending|length) == 0 and ($undispatched|length) == 0
-                         and ($checks|length) > 0),
+        # null, not false, when the rules could not be fetched: $required is
+        # empty then, so $undispatched is empty for the wrong reason and a
+        # caller gating on this would act on a set it never verified.
+        checks_settled: (if $ok == 1
+                         then (($pending|length) == 0 and ($undispatched|length) == 0
+                               and ($checks|length) > 0)
+                         else null end),
         rulesets: $ruletypes,
         # Every distinct state per author, not just the last one. `add` over
         # map({login: state}) overwrites, so a reviewer who approves and then
