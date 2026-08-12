@@ -44,6 +44,37 @@ Because the exit code cannot distinguish "watched and passed" from "never
 found the run", assert the run exists before watching it, or re-read the
 check's state afterwards rather than trusting the watcher's return.
 
+### The step output of a failed job comes from the RUN's log archive
+
+`gh api repos/$R/actions/jobs/$JOB/logs` and `gh run view --job $JOB --log`
+routinely hand back only the runner's own preamble — image provisioning,
+hardening-agent chatter, `Cleaning up orphan processes` — with the failing
+step's output absent entirely. One of them can also return an empty body and
+exit 0. Filtering that noise then produces nothing and reads as "the log says
+nothing about why it failed", which sends you diagnosing the wrong layer.
+
+Download the **run's** archive instead. It contains one text file per job, with
+the real step output:
+
+```bash
+gh api "repos/$R/actions/runs/$RUN/logs" > /tmp/logs.zip
+unzip -q -o /tmp/logs.zip -d /tmp/logs
+grep -rn '##\[error\]' /tmp/logs | grep -viE 'armour|agentservice|pam_unix'
+```
+
+On 2026-08-12 this was the difference between three unexplained merge-queue
+ejections and one line — `[ERROR] Undefined constant …PHPUnitSetList::PHPUNIT_110`
+— that named the cause outright. The job-level calls had been tried first and
+showed nothing but setup.
+
+Note the archive is per *run*, so for a queue ejection you need the
+`gh-readonly-queue/*` run, not the pull request's own:
+
+```bash
+gh run list --repo "$R" --limit 20 --json headBranch,databaseId,conclusion \
+  --jq '.[] | select(.headBranch | startswith("gh-readonly-queue"))'
+```
+
 Hand-rolled `gh pr checks | jq` poll loops re-derive those semantics from
 undocumented field shapes (a running check's `conclusion` may be `""`, `null`,
 or absent) and are a recurring source of bugs. The sharpest one: a poll run
@@ -55,6 +86,15 @@ both before runs start and after they finish — it cannot tell the two apart.
 If you must hand-roll (e.g. watching something with no native watcher), gate on
 a **named required check reaching a terminal `pass`/`fail` state**, never on a
 zero-pending count, and confirm the run belongs to the current head SHA first.
+
+`pr-status.sh --json` answers this in one field: **`checks_settled`** is true
+only when nothing is pending *and* every required context has reported at
+least once. Gate on that rather than re-deriving it — and note the `NEXT:` line
+does not carry it, because the review branches of the ladder outrank every CI
+branch. On a repo with the `copilot_code_review` ruleset, `NEXT:` says
+`request-review` from the second a commit lands and keeps saying it; the CI
+state now rides along in that answer's `why`, but a script should read the
+field.
 
 ## Before you add or edit a workflow file: read the repo's Actions policy
 
