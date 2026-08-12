@@ -28,6 +28,23 @@ Measured on a 40-PR rollout that did not have it: **183 of 370 shell calls
 were PR-status probing**, the rulesets endpoint was queried exactly once, and
 `copilot_code_review` blocked four merges by surprise.
 
+**GitHub only.** The script speaks GitHub GraphQL, so it cannot answer for a
+GitLab merge request — `-R git.netresearch.de/group/project` is accepted at the
+command line and then fails with a bare `pr-status: GraphQL query failed`, and
+`--watch` produces nothing at all until it is killed. Nothing in the name says
+so, which is how a GitLab MR ended up behind a watcher that could never fire.
+For GitLab the equivalent is one `glab api` call:
+
+```bash
+glab api "projects/$(printf %s 'group/project' | jq -sRr @uri)/merge_requests/123" \
+  | jq '{state, detailed_merge_status, pipeline: .head_pipeline.status}'
+glab api "projects/.../merge_requests/123/discussions" \
+  | jq '[.[] | select(.notes[0].resolvable==true and .notes[0].resolved==false)] | length'
+```
+
+`detailed_merge_status` is GitLab's counterpart to `mergeStateStatus` and,
+unlike it, does name the reason.
+
 ## Then Merge: `scripts/pr-merge.sh`
 
 ```bash
