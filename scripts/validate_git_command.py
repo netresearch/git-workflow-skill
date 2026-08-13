@@ -198,6 +198,21 @@ def reply_path_without_pr(cmd: str) -> str | None:
     return None
 
 
+# The plugin's scripts are not on PATH: recommending a bare `pr-status.sh`
+# sends the reader into `command not found` (exit 127) and a hunt through the
+# plugin cache before the gate's advice becomes followable (2026-08-13). The
+# script ships in this plugin, so the message can name the invocable path;
+# the bare name stays as fallback for layouts where the sibling is absent.
+_PR_STATUS_SH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "skills",
+    "git-workflow",
+    "scripts",
+    "pr-status.sh",
+)
+PR_STATUS = _PR_STATUS_SH if os.path.isfile(_PR_STATUS_SH) else "pr-status.sh"
+
+
 def handrolled_pr_poll(cmd: str) -> str | None:
     if "--watch" in cmd or not POLLS_PR.search(cmd):
         return None
@@ -205,7 +220,7 @@ def handrolled_pr_poll(cmd: str) -> str | None:
         return None
     return (
         "Hand-rolled poll over pull-request state. Use "
-        "`pr-status.sh -R <owner/repo> <pr> --watch` instead: it returns at the "
+        f"`{PR_STATUS} -R <owner/repo> <pr> --watch` instead: it returns at the "
         "FIRST actionable event — a check that failed, a review that arrived, a "
         "thread that needs an answer — where a loop written here waits for the "
         "one outcome it was told about and sleeps through the rest. A loop that "
@@ -243,7 +258,7 @@ def merge_readiness_without_pr_status(cmd: str) -> str | None:
         if QUERIES_FORGE.match(segment) and MERGE_READINESS_FIELD.search(segment):
             return (
                 "Merge readiness asked of gh directly. Use "
-                "`pr-status.sh -R <owner/repo> <pr>` instead: it reports checks, "
+                f"`{PR_STATUS} -R <owner/repo> <pr>` instead: it reports checks, "
                 "reviews, rulesets and unresolved threads together and ends with "
                 "a NEXT: line naming the action. mergeable_state and "
                 "mergeStateStatus answer only 'blocked' and never say why, so an "
