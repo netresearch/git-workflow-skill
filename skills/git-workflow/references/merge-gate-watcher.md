@@ -283,6 +283,38 @@ Three rules follow, and they cost nothing:
 
 Recovery is waiting: `gh api rate_limit --jq '.resources.graphql.reset'` is an epoch timestamp — sleep to it in **one** background command rather than retrying into the limit.
 
+### "Has it merged yet?" costs nothing — ask git, not the API
+
+The three rules above make a watcher cheaper. This one makes the commonest watcher free. Once a PR is queued the only question left is whether its head landed on the base, and git answers that with no API budget at all:
+
+```bash
+git fetch origin main --quiet
+git merge-base --is-ancestor "$HEAD_SHA" origin/main && echo MERGED
+```
+
+`$HEAD_SHA` is the PR head you pushed, which you already know. This keeps working while both budgets are exhausted, which is exactly when a watcher is most likely to be running. Reserve `pr-status.sh` for the merge *gate* — checks, threads, reviews, the `NEXT` line — and use git for the merge *fact*.
+
+**Ancestry answers only where the merge preserves the commit.** `--merge` and `--rebase` do; **squash does not** — it writes one new commit with a new hash, so the original head is never an ancestor and the check reads "not merged" forever. In a squash-merge repo, accept one cheap REST call instead: `gh api repos/$R/pulls/$PR --jq .merged`. Know which strategy the repo allows before relying on ancestry — `pr-status.sh` prints it as `merge: methods=[…]`.
+
+**`git log --grep="#<pr>"` is not that test.** It is the tempting one-liner and it produces false positives: `--grep` searches the whole commit *message*, and a dependency bump carries its upstream changelog in the body — including that upstream's issue numbers, from a different repository. Observed 2026-08-13: a watcher on PR #765 reported `MERGED` on its first tick, seven months after the commit it matched. That commit was `chore(deps): bump actions/attest-build-provenance` from January, whose embedded changelog links `actions/attest-build-provenance` issue #765. The PR being watched was in fact `CONFLICTING` and needed a rebuild.
+
+Ancestry is a fact about the graph; `--grep` is a text search over prose that nobody wrote for you to parse.
+
+The same asymmetry as the empty-result rule, inverted: an empty result is first a broken query, and a *positive* result from a text search is first a coincidence.
+
+### When GraphQL is exhausted, REST still opens the PR
+
+`gh pr create` and `gh pr view` are GraphQL; the two budgets drain independently, so `graphql: 0/5000` with `core: 4700/5000` leaves the whole `gh pr *` surface dead while REST is untouched. The REST endpoint takes the same arguments:
+
+```bash
+gh api repos/$OWNER/$REPO/pulls -X POST \
+  -f title="…" -f head="<branch>" -f base=main -F body=@body.md --jq '.html_url'
+```
+
+`gh api repos/$OWNER/$REPO/issues/$PR/comments -X POST -F body=@file` posts a PR comment the same way. Both worked on 2026-08-13 while `gh pr create` returned `GraphQL: API rate limit already exceeded`.
+
+One flag trap while you are there: `gh api --paginate --slurp` is **rejected** together with `--jq` (`the --slurp option is not supported with --jq or --template`). Write the paginated JSON to a file first, then run `jq` over it.
+
 ### `gh api` writes its error to stdout — test a field, never emptiness
 
 On a 404 (or any error) `gh api` prints a JSON error object to **stdout** and exits non-zero. A watcher that decides on "did I get output?" reads the error as the answer:
