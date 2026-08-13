@@ -907,6 +907,29 @@ gh pr merge 123 --squash --delete-branch
 gh pr close 123
 ```
 
+### A stacked PR loses its approvals the moment its base merges
+
+Stacking — PR B opened against PR A's branch so B can build on text or code that exists only there — is the right shape when B has no anchor without A. GitHub retargets B to `main` automatically when A merges, which is the point of the pattern. What it also does is **dismiss every review on B**, because the base changed:
+
+```
+reviews : github-actions=DISMISSED   decision=REVIEW_REQUIRED
+```
+
+Nothing about B changed. Its head SHA is the same, its checks are still green, no file moved. But `REVIEW_REQUIRED` is a host gate, not advice, so B cannot merge until an approval lands on that head again — and an automated approver only reruns on a new head. The recovery is to give it one:
+
+```bash
+gh api repos/$OWNER/$REPO/pulls/$PR/update-branch -X PUT
+```
+
+That merges the (now advanced) base into B, which re-triggers CI **and** the approval workflow. Budget the full check matrix again, not a re-check.
+
+Two things follow when you plan a stack:
+
+- **Expect the second CI run.** The stack saves you a conflict, not a pipeline. If B's diff would conflict only trivially with A, opening B against `main` and resolving once may be cheaper than a retarget plus a full rerun.
+- **Merging the base advances `main`, so the child may now conflict.** The retarget makes B's *diff* correct, not its *tree*: anything both PRs touched — a shared `CHANGELOG.md` "Unreleased" section is the usual one — conflicts on the update-branch. Resolve it there; do not merge the base into the child while the child is queued.
+
+Observed 2026-08-13 on netresearch/t3x-nr-llm#759, stacked on #758 for a documentation anchor that existed only on that branch.
+
 ### Handling Stale PRs
 
 ```yaml
