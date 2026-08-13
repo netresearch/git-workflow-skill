@@ -93,7 +93,9 @@ EOF
 ```
 
 **Hard-wrap the commit *body* (~72 cols); don't hard-wrap prose whose wrapping
-you don't control.** The 72-column convention is for commit message bodies. For
+you don't control.** The 72-column convention is for commit message bodies —
+which is exactly why a commit body must not be piped into a PR description
+unchanged; see *The rule breaks at the pipe* in `no-editorializing.md`. For
 **PR/MR & issue descriptions, release notes, review comments, and chat**, write
 one line per paragraph (and per list item) and let the renderer soft-wrap — a
 hard break mid-paragraph there does nothing for the output. For **committed

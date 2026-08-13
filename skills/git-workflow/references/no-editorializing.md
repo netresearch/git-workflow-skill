@@ -58,3 +58,45 @@ pipelines, and hard-wrapping prose is right in one and wrong in the other.
 Do not wrap a release body or PR/comment the way you wrap a `.md` file. Fix one
 already published with hard-wraps via `gh release edit <tag> --notes-file <file>`
 (release bodies stay editable) or by editing the PR/comment.
+
+### The rule breaks at the pipe, not at the keyboard
+
+Knowing the rule is not enough, because the way it gets violated does not feel
+like writing prose at all:
+
+```bash
+git log -1 --format=%b > /tmp/body.md
+gh pr create --body-file /tmp/body.md      # <-- wrapped, every time
+```
+
+A commit body is *correctly* hard-wrapped at ~72 columns — `commit-conventions.md`
+says so. Piping it into a PR body moves that text across the boundary this
+section is about, and nothing in the command looks wrong. Observed on six of six
+pull requests created that way in one session, while every body and comment the
+same author typed by hand in the same session was clean: the rule was held for
+writing and lost for plumbing.
+
+The same applies to any other correctly-wrapped source: a CHANGELOG entry, an
+ADR paragraph, a quoted issue body.
+
+**Join the paragraphs before posting**, and strip the trailers while you are
+there — a commit body carries `Signed-off-by`, which is noise in a PR
+description:
+
+```bash
+git log -1 --format=%b \
+  | sed '/^Signed-off-by:/d' \
+  | awk 'BEGIN{RS="";ORS="\n\n"} {gsub(/\n/," "); gsub(/  +/," "); print}' > /tmp/body.md
+```
+
+That `awk` joins each blank-line-separated paragraph onto one line. It is
+deliberately naive — it will also join a fenced code block or a list, so read
+the result before posting rather than trusting it on a body that has either.
+
+**The fingerprint.** `Signed-off-by:` visible in a rendered PR description means
+that description came from a commit message, which means it is hard-wrapped.
+Grep for it when auditing:
+
+```bash
+gh pr view "$PR" --repo "$R" --json body --jq .body | grep -c '^Signed-off-by:'
+```
