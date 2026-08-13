@@ -17,9 +17,11 @@ inspection, so a relative `./scripts/…` misses. Bind the skill directory once,
 then call it by that path:
 
 ```bash
+# sort -V, not plain sort: 1.10.0 must beat 1.9.0. A directly installed
+# skill sorts after the cache paths and so wins when both exist.
 GW=$(ls -d ~/.claude/skills/git-workflow \
         ~/.claude/plugins/cache/*/git-workflow/*/skills/git-workflow \
-        2>/dev/null | tail -1)
+        2>/dev/null | sort -V | tail -1)
 
 bash "$GW/scripts/pr-status.sh" -R owner/repo 123        # human summary + NEXT action
 bash "$GW/scripts/pr-status.sh" -R owner/repo 123 --json # for scripts and merge drivers
