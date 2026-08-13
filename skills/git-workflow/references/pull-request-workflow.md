@@ -12,10 +12,18 @@ BLOCKED` never says *why*, and the reason lives in five different places:
 checks, rulesets, review threads, whether a review exists on the *current*
 head, and the repository's allowed merge methods.
 
+The script is not on `PATH`, and you run it from the repository under
+inspection, so a relative `./scripts/…` misses. Bind the skill directory once,
+then call it by that path:
+
 ```bash
-./scripts/pr-status.sh -R owner/repo 123        # human summary + NEXT action
-./scripts/pr-status.sh -R owner/repo 123 --json # for scripts and merge drivers
-./scripts/pr-status.sh -R owner/repo 123 --watch
+GW=$(ls -d ~/.claude/skills/git-workflow \
+        ~/.claude/plugins/cache/*/git-workflow/*/skills/git-workflow \
+        2>/dev/null | tail -1)
+
+bash "$GW/scripts/pr-status.sh" -R owner/repo 123        # human summary + NEXT action
+bash "$GW/scripts/pr-status.sh" -R owner/repo 123 --json # for scripts and merge drivers
+bash "$GW/scripts/pr-status.sh" -R owner/repo 123 --watch
 ```
 
 Two API calls, and the output ends in a computed `NEXT:` — rebase, fix-ci,
