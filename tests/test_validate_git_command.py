@@ -137,20 +137,17 @@ def fifo_case() -> bool:
         os.rmdir(tmp)
 
 
-def pr_status_path_case() -> bool:
+def pr_status_path_case(command: str) -> bool:
     """The deny must name an invocable pr-status.sh, not a bare command name.
 
     The plugin's scripts are not on PATH: a bare `pr-status.sh` produced
     `command not found` (exit 127) and a hunt through the plugin cache
     (2026-08-13). The recommendation must carry the absolute path of the
-    script shipped in this plugin, and that path must exist.
+    script shipped in this plugin, and that path must exist. Both gates
+    that recommend the script are exercised, so a later message edit
+    cannot drop the interpolation from one of them unnoticed.
     """
-    payload = json.dumps(
-        {
-            "tool_name": "Bash",
-            "tool_input": {"command": "gh pr view 6651 --json mergeStateStatus"},
-        }
-    )
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
     proc = subprocess.run(
         [sys.executable, HOOK],
         input=payload,
@@ -182,12 +179,22 @@ def main() -> int:
         f"got={'no-hang' if ok else 'HUNG'}"
     )
 
-    ok = pr_status_path_case()
-    fails += 0 if ok else 1
-    print(
-        f"  {'OK  ' if ok else 'FAIL'} {'deny names an existing pr-status.sh path':<44} "
-        f"want=abs-path got={'abs-path' if ok else 'bare-name'}"
-    )
+    for name, command in [
+        (
+            "merge-readiness deny names pr-status.sh path",
+            "gh pr view 6651 --json mergeStateStatus",
+        ),
+        (
+            "poll deny names pr-status.sh path",
+            "until [ x = y ]; do gh pr view 1 --json state; sleep 30; done",
+        ),
+    ]:
+        ok = pr_status_path_case(command)
+        fails += 0 if ok else 1
+        print(
+            f"  {'OK  ' if ok else 'FAIL'} {name:<44} "
+            f"want=abs-path got={'abs-path' if ok else 'bare-name'}"
+        )
 
     print(f"  ---- failures: {fails}")
     return 1 if fails else 0

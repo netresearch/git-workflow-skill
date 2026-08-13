@@ -264,7 +264,7 @@ def merge_readiness_without_pr_status(cmd: str) -> str | None:
                 "mergeStateStatus answer only 'blocked' and never say why, so an "
                 "unresolved thread or a red check stays invisible and the pull "
                 "request looks like it is merely waiting. To find out which "
-                "required context is unmet, run pr-status.sh first, then the "
+                f"required context is unmet, run {PR_STATUS} first, then the "
                 "GraphQL query with `isRequired` — that one is not gated."
             )
     return None
