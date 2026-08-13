@@ -2,6 +2,26 @@
 
 ## Rewriting History
 
+### After ANY reset-based rebuild: the commit takes the INDEX, not the worktree
+
+`git reset --soft <base>` + `git commit` is the standard way to collapse a
+branch into one clean commit — and it commits whatever is **staged**, which
+is the old tree, not the files as they lie on disk. Edits made after the last
+`git add` (every editor/tool write) silently stay out, the commit "succeeds",
+and only CI notices that the pushed tree is the stale one (2026-08-13: a
+history rewrite meant to purge two files shipped without the accompanying
+test/docs edits; the red CI on removed-file assertions was the first signal).
+
+After the rebuild, before pushing:
+
+```bash
+git status --porcelain          # anything listed = NOT in the commit you just made
+git grep -l <purged-artifact> HEAD   # verify against the COMMIT, not the worktree
+```
+
+Run the second command bare — behind a pipe (`| head`) `$?` is the pipe
+tail's, and a "found it" exit code reads as clean.
+
 ### Interactive Rebase
 
 ```bash

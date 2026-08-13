@@ -17,6 +17,29 @@ Gate on the **exit code**, not on parsed output. `gh pr checks` and
 `gh run watch` already handle pending-state representation, the appearance of
 newly-triggered runs, and refresh.
 
+### `$(gh api … || echo "")` captures the ERROR BODY as data
+
+On an HTTP error (404, 403 rate limit, 5xx) `gh api` prints the JSON error
+body to **stdout** and does not apply `--jq` to it — so the classic fallback
+capture poisons the variable instead of emptying it:
+
+```bash
+# Wrong: on a 404, $rel holds '{"message":"Not Found",…}' — non-empty,
+# and every [[ -n "$rel" ]] downstream believes it is real data
+rel=$(gh api "repos/$R/releases/latest" --jq .tag_name 2>/dev/null || echo "")
+
+# Right: output reaches the variable only when the call SUCCEEDED
+if out=$(gh api "repos/$R/releases/latest" 2>/dev/null); then
+  rel=$(jq -r '.tag_name // empty' <<<"$out")
+else
+  rel=""
+fi
+```
+
+Verified with gh 2.97 (2026-08-13): a fleet survey using the wrong form
+classified never-released repos from their own error bodies. The same trap
+applies to `glab api` — gate on the exit code, never on non-empty stdout.
+
 ### `gh run watch` takes the RUN id — a check-run's `details_url` ends in the JOB id
 
 Reaching for `gh run watch` from a check-run means extracting an id from its

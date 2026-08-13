@@ -185,6 +185,37 @@ web UI: consistent authentication, structured `--json` output, and clearer
 errors. Drop to raw `gh api` only for endpoints the porcelain commands don't
 cover yet.
 
+### The quotas are session-shared pools — act, don't re-preflight
+
+Every `gh` call in a session draws from a shared pool — REST 5,000/h and
+GraphQL 5,000 points/h are SEPARATE pools, each shared across watchers,
+agents and scripts, plus short burst limits on top. A heavy session (fleet
+survey, repeated preflight batteries, parallel reviewers) usually kills the
+**GraphQL pool first** — and `gh pr merge`, `gh pr view --json`, and
+`pr-status.sh` are GraphQL-backed, so exactly the merge you verified
+everything for stops working (observed 2026-08-13, between "all gates green"
+and the merge).
+
+Two practices keep this from biting:
+
+- **When the full gate was verified on head X and nothing was pushed since,
+  the action is ONE call — not another preflight battery.** The REST merge
+  endpoint takes a `sha` pin whose 409 on mismatch IS the freshness check:
+
+  ```bash
+  gh api -X PUT "repos/$R/pulls/$PR/merge" \
+    -f merge_method=merge -f "sha=$(git rev-parse HEAD)"
+  ```
+
+  Take the SHA from local git, never by retyping a short SHA into a long one
+  — the pin rejects a fabricated tail exactly as it rejects a moved head.
+- **GraphQL dead ≠ blocked.** The REST twins keep answering: merge (above),
+  branch delete (`gh api -X DELETE repos/$R/git/refs/heads/<branch>`; a 422
+  means auto-delete beat you to it), reviews and comments lists. `gh api
+  rate_limit` is exempt and tells you both pools' reset times. Prefer one
+  `--watch` over repeated status reads, and stop any watcher whose answer
+  you already have.
+
 ## Describing the Change (PR Body, Commit Message, Issue)
 
 The rest of this file is about getting a change *merged*. This section is about
