@@ -915,13 +915,15 @@ Stacking — PR B opened against PR A's branch so B can build on text or code th
 reviews : github-actions=DISMISSED   decision=REVIEW_REQUIRED
 ```
 
-Nothing about B changed. Its head SHA is the same, its checks are still green, no file moved. But `REVIEW_REQUIRED` is a host gate, not advice, so B cannot merge until an approval lands on that head again — and an automated approver only reruns on a new head. The recovery is to give it one:
+Nothing about B changed. Its head SHA is the same, its checks are still green, no file moved. But `REVIEW_REQUIRED` is a host gate, not advice, so B cannot merge until an approval lands on that head again — and an automated approver only reruns on a new head. The recovery is to give it one, with the plain (merging) form of the command in [Updating a PR branch without a local clone](#updating-a-pr-branch-without-a-local-clone--gh-pr-update-branch---rebase):
 
 ```bash
-gh api repos/$OWNER/$REPO/pulls/$PR/update-branch -X PUT
+gh pr update-branch $PR --repo $OWNER/$REPO
 ```
 
-That merges the (now advanced) base into B, which re-triggers CI **and** the approval workflow. Budget the full check matrix again, not a re-check.
+That merges the now-advanced base into B, which re-triggers CI **and** the approval workflow. Budget the full check matrix again, not a re-check.
+
+Note the difference in *why* you reach for it. That section's caution is that `--rebase` force-updates and *can* reset approvals; here the approvals are **already** gone before you touch anything, dismissed by the retarget itself, and the update is what restores them.
 
 Two things follow when you plan a stack:
 
