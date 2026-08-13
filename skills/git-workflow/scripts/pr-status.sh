@@ -24,6 +24,35 @@
 # soon as something can be worked on: a failing check, a new annotation, or all
 # required checks concluded. Waiting for `pending == 0` means learning nothing
 # until the slowest matrix job ends, long after the first failure was visible.
+#
+# --json contract
+#
+# One object, and its field names are THIS SCRIPT'S — not the GraphQL names
+# `gh pr view` uses. `mergeState`, not `mergeStateStatus`. `base`, not
+# `baseRefName`. Guessing costs more than reading: jq answers a missing key
+# with `null` and says nothing, so a loop waiting for
+# `.mergeStateStatus == "CLEAN"` never fires and reads as "still running"
+# forever. Top-level keys:
+#
+#   state mergeable mergeState draft number title repo author
+#   base head headOid
+#   checks checks_settled threads unresolved_threads
+#   reviewDecision reviews_on_head has_review_on_head
+#   has_copilot_review_on_head copilot_review_errored copilot_error_count
+#   requested_reviewers
+#   merge_methods auto_merge_allowed queue_active queue_entry
+#   rulesets rules_fetched required_contexts undispatched unsigned
+#   next
+#
+# `checks` is {total,pass,fail,pending,skip,...} and `next` is
+# {action,why,cmd} — the same two things the prose rendering leads with.
+#
+# Before writing a jq filter against any of these, consider whether --watch
+# already answers the question; it usually does, and a hand-rolled poll loop is
+# how the wrong field name gets guessed in the first place.
+#
+# tests/test_pr_status_json_contract.sh fails when this list and the emitted
+# object drift apart, in either direction.
 set -uo pipefail
 
 REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600
@@ -39,7 +68,10 @@ while [ $# -gt 0 ]; do
     --watch)    WATCH=1; shift ;;
     --interval) need "$@"; INTERVAL="$2"; shift 2 ;;
     --max-wait) need "$@"; MAXWAIT="$2"; shift 2 ;;
-    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # Prints the whole leading comment block rather than a fixed line range:
+    # a hard-coded range silently truncates --help the moment the header
+    # grows, which is how a documented contract stops being visible.
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  PR="$1"; shift ;;
   esac
