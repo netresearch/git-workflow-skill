@@ -294,6 +294,8 @@ git merge-base --is-ancestor "$HEAD_SHA" origin/main && echo MERGED
 
 `$HEAD_SHA` is the PR head you pushed, which you already know. This keeps working while both budgets are exhausted, which is exactly when a watcher is most likely to be running. Reserve `pr-status.sh` for the merge *gate* — checks, threads, reviews, the `NEXT` line — and use git for the merge *fact*.
 
+**Ancestry answers only where the merge preserves the commit.** `--merge` and `--rebase` do; **squash does not** — it writes one new commit with a new hash, so the original head is never an ancestor and the check reads "not merged" forever. In a squash-merge repo, accept one cheap REST call instead: `gh api repos/$R/pulls/$PR --jq .merged`. Know which strategy the repo allows before relying on ancestry — `pr-status.sh` prints it as `merge: methods=[…]`.
+
 **`git log --grep="#<pr>"` is not that test.** It is the tempting one-liner and it produces false positives: `--grep` searches the whole commit *message*, and a dependency bump carries its upstream changelog in the body — including that upstream's issue numbers, from a different repository. Observed 2026-08-13: a watcher on PR #765 reported `MERGED` on its first tick, seven months after the commit it matched. That commit was `chore(deps): bump actions/attest-build-provenance` from January, whose embedded changelog links `actions/attest-build-provenance` issue #765. The PR being watched was in fact `CONFLICTING` and needed a rebuild.
 
 Ancestry is a fact about the graph; `--grep` is a text search over prose that nobody wrote for you to parse.
