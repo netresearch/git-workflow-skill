@@ -403,6 +403,22 @@ On `CLOSED / FIXED`, treat it as an ordinary already-fixed bot thread: reply wit
 
 Observed 2026-07-30 on a `docker:S8544` finding: gate `OK`, 0 open issues, 0 failing checks, `mergeStateStatus: BLOCKED` on one stale thread — a merge that looked inexplicably stuck until the thread was read.
 
+### `gh pr update-branch` re-writes the head UNSIGNED
+
+Both forms (merge and `--rebase`) create the new commit server-side, signed by
+nobody. In a repo that requires signed commits — including a requirement
+living in **classic branch protection**, which neither the rulesets endpoint
+nor a non-admin protection query can see — the PR then sits at
+`mergeStateStatus: BLOCKED` with every visible gate green (observed on a PR
+that reported request-review for an hour while the real blocker was the
+signature). Rebase locally instead: signing is wired into git, so a plain
+`git rebase origin/main` (or `git commit --amend --no-edit` when only the
+signature is missing) re-signs, then push with `--force-with-lease`. Two
+traps in that push: a checkout created from `FETCH_HEAD` has no lease
+baseline and fails with `stale info` — pass the lease explicitly as
+`--force-with-lease=<branch>:<remote-sha>`; and that remote SHA must be
+**measured** (`git ls-remote origin <branch>`), never retyped from memory.
+
 ### Signature verification: the GitHub API is the source of truth, not your keyring
 
 For "is this commit signed?" in a review, ask the API:
