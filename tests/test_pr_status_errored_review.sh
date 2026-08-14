@@ -223,6 +223,30 @@ case "$(run_flag 'next.cmd')" in
         fail=1 ;;
 esac
 
+# Quota is not an outage: the error body names the quota limit, the quota is
+# monthly, and no re-request on any PR will succeed until the reset. The retry
+# command must be withheld even on the FIRST failure, and the advice must say
+# the state will not change this month — this is the message an operator sees
+# exactly once instead of rediscovering the wall per PR.
+echo "case 7c: quota error — no retry cmd even on the FIRST failure, monthly advice"
+make_stub "$ERR_QUOTA"
+check "copilot_quota_hit"   "true"           "$(run_flag copilot_quota_hit)"
+check "copilot_error_count" "1"              "$(run_flag copilot_error_count)"
+check "next.action"         "request-review" "$(run_next)"
+check "next.cmd absent"     "null"           "$(run_flag 'next.cmd')"
+if status | jq -e '.next.why | test("MONTHLY")' >/dev/null; then
+    echo "  ok   why states the quota is monthly and will not recover"
+else
+    echo "  FAIL why lacks the monthly-quota advice"
+    fail=1
+fi
+
+# The quota detector must be able to stay quiet: a generic outage row must not
+# trip it, or every outage would be misreported as a month-long dead end.
+echo "case 7d: generic outage only — quota flag stays false"
+make_stub "$ERR_GENERIC"
+check "copilot_quota_hit" "false" "$(run_flag copilot_quota_hit)"
+
 # Regression for a dead end that shipped once: an earlier version escalated to a
 # distinct "review-yourself" action guarded on has_review_on_head. A review by
 # the PR author is excluded from that gate by design, and the operator driving
