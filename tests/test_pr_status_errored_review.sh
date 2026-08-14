@@ -64,6 +64,7 @@ head = "deadbeefcafe"
 #   PENDING_CHECK=1 adds an IN_PROGRESS check run (checks_settled -> false).
 merge_state = os.environ.get("MERGE_STATE", "CLEAN")
 signed = os.environ.get("SIGNED", "1") == "1"
+review_decision = os.environ.get("REVIEW_DECISION") or None
 checks = [{"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS",
            "status": "COMPLETED", "detailsUrl": "u",
            "startedAt": "2026-01-01T00:00:00Z"}]
@@ -79,7 +80,7 @@ json.dump({"data": {"repository": {
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
         "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
-        "mergeable": "MERGEABLE", "mergeStateStatus": merge_state, "reviewDecision": None,
+        "mergeable": "MERGEABLE", "mergeStateStatus": merge_state, "reviewDecision": review_decision,
         "author": {"login": "someone"},
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
         "isCrossRepository": False,
@@ -460,6 +461,15 @@ echo "case S3: CLEAN + unsigned — no signature rule visible, merge stays open"
 MERGE_STATE=CLEAN SIGNED=0 make_stub "$REAL_REVIEW"
 check "next.action" "merge" "$(run_next)"
 
+echo "case S4: BLOCKED + unsigned + REVIEW_REQUIRED — review cause outranks the signature guess"
+MERGE_STATE=BLOCKED SIGNED=0 REVIEW_DECISION=REVIEW_REQUIRED make_stub "$ERR_QUOTA"
+if [ "$(run_next)" = "fix-signatures" ]; then
+    echo "  FAIL fired fix-signatures although a required review explains the BLOCKED"
+    fail=1
+else
+    echo "  ok   signature branch stays quiet when reviewDecision explains BLOCKED"
+fi
+
 # --- Watch settle-gate (#186): request-review with unsettled CI must WAIT ---
 watch() { PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 1 --watch --interval 1 --max-wait 2; }
 echo "case W1: watch + pending check + no review — holds until timeout, no ACTIONABLE"
@@ -483,11 +493,29 @@ esac
 
 echo "case W3: watch + pending check + QUOTA error — quota exemption still returns immediately"
 PENDING_CHECK=1 make_stub "$ERR_QUOTA"
+# Assert the discriminating signal: the exemption path's unique ACTIONABLE
+# prefix AND no TIMEOUT. The bare quota phrase also appears in every
+# "waiting:" line's why-text, so matching it passes vacuously when the
+# exemption is broken and the watch holds to timeout (found by mutation d).
 out=$(watch || true)
 case "$out" in
-    *"OUT OF REVIEW QUOTA"*) echo "  ok   quota dead-end returns despite unsettled CI" ;;
-    *) echo "  FAIL quota exemption did not fire"; fail=1 ;;
+    *"ACTIONABLE: request-review (UNSATISFIABLE"*)
+        case "$out" in
+            *TIMEOUT*) echo "  FAIL exemption fired only at timeout"; fail=1 ;;
+            *) echo "  ok   quota dead-end returns immediately despite unsettled CI" ;;
+        esac ;;
+    *) echo "  FAIL quota exemption did not fire (no UNSATISFIABLE ACTIONABLE line)"; fail=1 ;;
 esac
+
+echo "case W4: watch + BLOCKED + unsigned + settled — fix-signatures is an actionable event"
+MERGE_STATE=BLOCKED SIGNED=0 make_stub "$REAL_REVIEW"
+out=$(watch || true)
+case "$out" in
+    *"ACTIONABLE: fix-signatures"*) echo "  ok   watch returns immediately on the signature gate" ;;
+    *TIMEOUT*) echo "  FAIL watch held to timeout on its own headline scenario"; fail=1 ;;
+    *) echo "  FAIL unexpected watch output"; fail=1 ;;
+esac
+
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"

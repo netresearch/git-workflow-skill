@@ -418,8 +418,14 @@ evaluate() {
          # PR reported request-review while the real blocker was the
          # signature; #187). Guarded on checks_settled and zero failures so
          # it only fires when nothing visible explains the BLOCKED.
+         # reviewDecision is consulted first: BLOCKED caused by a required
+         # human review (REVIEW_REQUIRED / CHANGES_REQUESTED) reaches this
+         # spot too, and authors who simply do not sign commits would get a
+         # history-rewriting rebase command for a review problem.
          elif (($s.unsigned|length) > 0
                and $s.mergeState == "BLOCKED"
+               and ($s.reviewDecision != "REVIEW_REQUIRED")
+               and ($s.reviewDecision != "CHANGES_REQUESTED")
                and $s.checks_settled
                and (($s.checks.failing|length) == 0)
                and $s.unresolved_threads == 0) then
@@ -701,7 +707,7 @@ while :; do
          || [ "$(jq -r '.copilot_quota_hit // false' <<<"$s")" = "true" ]; then
         emit "$s"; exit 0
       fi ;;
-    fix-ci|triage-ci|resolve-threads|rebase|resolve-conflicts|merge|blocked|none)
+    fix-ci|triage-ci|resolve-threads|rebase|resolve-conflicts|merge|blocked|none|fix-signatures)
       echo "ACTIONABLE: $act"
       emit "$s"; exit 0 ;;
   esac
