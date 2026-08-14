@@ -38,7 +38,7 @@
 #   base head headOid
 #   checks checks_settled threads unresolved_threads
 #   reviewDecision reviews_on_head has_review_on_head
-#   has_copilot_review_on_head copilot_review_errored copilot_error_count
+#   has_copilot_review_on_head copilot_review_errored copilot_error_count copilot_quota_hit
 #   requested_reviewers
 #   merge_methods auto_merge_allowed queue_active queue_entry
 #   rulesets rules_fetched required_contexts undispatched unsigned
@@ -308,6 +308,10 @@ evaluate() {
         # $copilot_errored for why the check-run is not consulted.
         copilot_review_errored: $copilot_review_errored,
         copilot_error_count: ($copilot_errored|length),
+        # True when an errored Copilot review body names the quota limit.
+        # Quota is MONTHLY: once this is true, no re-request on any PR will
+        # succeed until the monthly reset — distinct from a transient outage.
+        copilot_quota_hit: (([$copilot_errored[] | select((.body // "") | test("quota"; "i"))] | length) > 0),
         author: $author,
         requested_reviewers: [$p.reviewRequests.nodes[]?.requestedReviewer|(.login // .slug)],
         unresolved_threads: ($unresolved|length),
@@ -422,7 +426,20 @@ evaluate() {
          elif ($needs_copilot and $s.copilot_review_errored
                and ($s.has_copilot_review_on_head | not)
                and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
-           (if $copilot_exhausted then
+           (if $s.copilot_quota_hit then
+             # Quota, not outage: the error body names the quota limit. Said
+             # once, with the fact that makes retrying pointless — the quota
+             # is monthly and will NOT recover this month, on this or any
+             # other PR. No cmd on purpose: there is nothing to run.
+             {action:"request-review",
+              why:($unreviewed
+                   + "Copilot is OUT OF REVIEW QUOTA — the error body says the requesting"
+                   + " user reached the quota limit. The quota is MONTHLY: it will not"
+                   + " recover this month, on this or any other PR, and re-requesting"
+                   + " cannot change that. Review the diff yourself, note in the PR that"
+                   + " the bot review was unavailable, and decide on that. Treat this"
+                   + " notice as covering every PR until the monthly reset\($stale_approval)")}
+            elif $copilot_exhausted then
              {action:"request-review",
               why:($unreviewed
                    + "Copilot failed \($s.copilot_error_count)x on \($s.headOid[0:8]), so the COMMENTED rows"
@@ -631,7 +648,13 @@ while :; do
       # re-arm of --watch returns instantly with the same line. Saying so is
       # what stops an operator re-arming it three times before switching to
       # `gh pr checks --watch`, which watches something that does move.
-      if [ "$(jq -r '.copilot_error_count // 0' <<<"$s")" -ge 2 ]; then
+      if [ "$(jq -r '.copilot_quota_hit // false' <<<"$s")" = "true" ]; then
+        echo "ACTIONABLE: request-review (UNSATISFIABLE — Copilot is OUT OF REVIEW QUOTA" \
+             "for the month; this will NOT change until the monthly reset, on this or any" \
+             "other PR. Do not re-arm this watch and do not re-request — review the diff" \
+             "yourself and decide. To watch something that moves:" \
+             "gh pr checks $(jq -r '.number' <<<"$s") --repo $(jq -r '.repo' <<<"$s") --watch)"
+      elif [ "$(jq -r '.copilot_error_count // 0' <<<"$s")" -ge 2 ]; then
         echo "ACTIONABLE: request-review (UNSATISFIABLE — the review bot has failed" \
              "$(jq -r '.copilot_error_count' <<<"$s")x on this head; re-arming this watch" \
              "returns immediately. Review the diff yourself, or watch the checks instead:" \
