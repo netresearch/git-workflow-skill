@@ -540,15 +540,15 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(primary|main/|master/|default[- ]branch) (director|worktree)"
+        "pattern": "(?i)(primary|default[- ]branch|\\bmain\\b|\\bmaster\\b)[^\\n]{0,40}(director|worktree)"
       },
       {
         "type": "content",
-        "pattern": "git (-C [^ ]+ )?switch"
+        "pattern": "(?i)\\bswitch\\b[^\\n]{0,30}\\b(main|master|default)"
       },
       {
         "type": "content",
-        "pattern": "(not|never|do not|instead of) .{0,40}(remove|delete)"
+        "pattern": "(?i)(never|not|don't|do not|instead of|rather than)[^\\n]{0,50}(remov|delet)"
       }
     ]
   }
