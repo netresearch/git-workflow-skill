@@ -1,6 +1,8 @@
-.idea/
-.vscode/
+*.pyc
 *.swp
 .DS_Store
-vendor/
+.idea/
+.vscode/
+__pycache__/
 composer.lock
+vendor/

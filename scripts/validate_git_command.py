@@ -7,6 +7,7 @@ Checks conventional commits, branch naming, and common mistakes.
 import json
 import os
 import re
+import subprocess
 import sys
 
 # Enough of a body to count wrapped lines in; a cap so an accidentally huge
@@ -270,6 +271,166 @@ def merge_readiness_without_pr_status(cmd: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Gates promoted from a harness-local hook (2026-08-15). Each earned its place
+# by a real incident; the comment above each names it.
+# ---------------------------------------------------------------------------
+
+# A commit hash written from memory instead of looked up. A reader who follows
+# a wrong hash finds nothing, and the claim it supported becomes unverifiable
+# (2026-08-03: a review reply cited 8e1c9b0 for work that landed in 4a4e981).
+# Hex, 7-40 chars, at least one letter so a PR number does not qualify, and no
+# `-`/`/` on either side so hex runs inside a UUID path are not mistaken for
+# hashes.
+SHA_TOKEN = re.compile(
+    r"(?<![0-9a-zA-Z/_.-])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9a-zA-Z/_.-])"
+)
+POSTS_TEXT = re.compile(
+    r"\bgh\s+(?:pr|issue)\s+(?:comment|create|edit)\b"
+    r"|\bgh\s+api\b[^\n]*?/(?:comments|replies|issues)\b"
+    r"|\bglab\s+(?:mr|issue)\s+(?:note|create|update)\b"
+)
+TARGET_REPO = re.compile(r"--repo[= ]([\w.-]+/[\w.-]+)|\brepos/([\w.-]+/[\w.-]+)/")
+
+# A quoted heredoc body is literal data — a file being written, a test fixture,
+# a payload. Scanning it flags documentation that merely CONTAINS a forge call
+# with an example hash; the harness-local ancestor of this gate blocked exactly
+# that while its own test cases were being written. Unquoted heredocs expand
+# and stay in.
+QUOTED_HEREDOC = re.compile(r"<<-?\s*(['\"])(\w+)\1.*?^\2$", re.DOTALL | re.MULTILINE)
+
+
+def _resolve_commit(repo: str, token: str):
+    """True/False when the forge answered, None when it could not be asked."""
+    try:
+        p = subprocess.run(
+            ["gh", "api", f"repos/{repo}/commits/{token}", "--jq", ".sha"],
+            capture_output=True,
+            timeout=8,
+            check=False,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if p.returncode == 0:
+        return True
+    err = p.stderr or ""
+    # 422 "No commit found for SHA" / 404 unknown ref are answers; anything
+    # else (auth, rate limit, network) is "could not check", not "invented".
+    if "No commit found" in err or "HTTP 404" in err:
+        return False
+    return None
+
+
+def unresolvable_sha(cmd: str, resolve=_resolve_commit) -> str | None:
+    """Deny a published body naming a commit the target repo does not know."""
+    cmd = QUOTED_HEREDOC.sub(" ", cmd or "")
+    if not POSTS_TEXT.search(cmd):
+        return None
+    m = TARGET_REPO.search(cmd)
+    if not m:
+        return None
+    repo = m.group(1) or m.group(2)
+    urls = re.findall(r"https?://\S+", cmd)
+    bad = [
+        t
+        for t in sorted(set(SHA_TOKEN.findall(cmd)))
+        if not any(t in u for u in urls) and resolve(repo, t) is False
+    ]
+    if not bad:
+        return None
+    return (
+        "This body names commit " + ", ".join(bad) + ", which resolves to no "
+        "object in this repository — a hash written from memory rather than "
+        "looked up. Get the real one (`git rev-parse --short HEAD`, "
+        "`git log -1 --format=%h`) and put that in the text; a reader who "
+        "follows a wrong hash finds nothing and the claim it supported becomes "
+        "unverifiable."
+    )
+
+
+# Waiting on workflow runs is legitimate — after a merge there is no PR to
+# watch — but two defects recur in hand-written loops and both are cheap to
+# catch: waiting for EVERY run (the first failure is actionable minutes
+# earlier) and having no arm for the query itself failing (one such loop spun
+# 20 rounds against an exhausted quota, reporting nothing).
+POLLS_RUNS = re.compile(r"\bgh\s+run\s+(?:list|view|watch)\b")
+WAITS_FOR_ALL_RUNS = re.compile(
+    r'status\s*!=\s*"?completed'
+    r"|!=\s*'completed'"
+    r"|\bpending\b[^\n]{0,20}(?:==|-eq)\s*0"
+)
+HAS_FAILURE_ARM = re.compile(
+    r"\|\|\s*echo\s+\w+.*?\b(?:break|exit)\b"
+    r"|\berr\w*\s*\)"
+    r'|""\s*\|'
+    r"|\brate_limit\b",
+    re.DOTALL,
+)
+
+
+def run_poll_problem(cmd: str) -> str | None:
+    """Warn (never deny) about a run-poll that cannot report a failure early."""
+    if not POLLS_RUNS.search(cmd):
+        return None
+    if not (POLL_LOOP.search(cmd) or FOR_LOOP_POLL.search(cmd)):
+        return None
+    reasons = []
+    if WAITS_FOR_ALL_RUNS.search(cmd):
+        reasons.append(
+            "  - It exits only when every run has finished. The first failing "
+            "job is actionable at once, but gets slept through until the "
+            "slowest matrix cell ends."
+        )
+    if not HAS_FAILURE_ARM.search(cmd):
+        reasons.append(
+            "  - It has no branch for the query itself failing. An empty answer "
+            "(rate limit, wrong flag, output on stderr) reads as 'not ready "
+            "yet', and the loop spins silently."
+        )
+    if not reasons:
+        return None
+    return (
+        "Waiting on workflow runs is fine — after a merge there is no PR to "
+        "watch. Two defects in this loop:\n\n"
+        + "\n".join(reasons)
+        + "\n\nExit on the first failing run, not only on completion. Write the "
+        'failure arm before the success arms: `case "$x" in "" | err) echo '
+        '"query failed"; break ;; …`. And when the round limit runs out, print '
+        "that — an abandoned wait is not an observation."
+    )
+
+
+# A git measurement inherits its working directory: `cd` survives between tool
+# calls, so a command issued later still runs wherever the last one left off.
+# The failure mode is not an error — it succeeds and answers about a different
+# repository (2026-08-12: an `ls-remote` answered from the wrong checkout and
+# produced a wrong "deviation" claim). Reads only; writes are covered by the
+# reference-worktree gate.
+GIT_MEASURING_READ = re.compile(
+    r"(?:^|[|&;\n(]|\$\()\s*git\s+(?!-C\b)(?!--git-dir)(?:-c\s+\S+\s+)*"
+    r"(ls-remote|rev-parse|rev-list|log|status|diff|show|describe"
+    r"|symbolic-ref|for-each-ref|ls-files|cat-file)\b"
+)
+CD_BEFORE = re.compile(r"(?:^|[|&;\n])\s*cd\s+\S")
+
+
+def git_read_without_named_dir(cmd: str) -> str | None:
+    """Warn when a git measurement does not say which directory it measures."""
+    m = GIT_MEASURING_READ.search(cmd or "")
+    if not m or CD_BEFORE.search(cmd[: m.start()]):
+        return None
+    return (
+        "This git command inherits its working directory. `cd` survives between "
+        "tool calls, so it runs wherever the last one left off — and on the "
+        "wrong repository it does not fail, it answers about that one. If this "
+        "output becomes a claim, name the directory:\n\n"
+        "  git -C /abs/path <subcommand>\n"
+        "  cd /abs/path && git <subcommand>\n\n"
+        "Nothing to change if you only need the current checkout."
+    )
+
+
 def check_conventional_commit(message: str) -> str | None:
     """Validate commit message follows conventional commits."""
     if not re.match(CONVENTIONAL_COMMIT_PATTERN, message):
@@ -388,10 +549,23 @@ def main():
         reply_path_without_pr,
         handrolled_pr_poll,
         merge_readiness_without_pr_status,
+        unresolvable_sha,
     ):
         reason = gate(command)
         if reason:
             deny(reason)
+            return
+
+    # Advisory: the command is usually right, and only its author knows whether
+    # the inherited directory or the poll shape was intended.
+    for advisory in (run_poll_problem, git_read_without_named_dir):
+        note = advisory(command)
+        if note:
+            print(
+                json.dumps(
+                    {"systemMessage": f"git-workflow: {note}", "suppressOutput": True}
+                )
+            )
             return
 
     if "git" not in command.lower():

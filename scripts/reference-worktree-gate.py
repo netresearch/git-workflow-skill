@@ -33,7 +33,19 @@ DEFAULT_ROOTS = ("~/projects", "~/p")
 GIT_WRITE = re.compile(
     r"\bgit\s+(?:commit|add|merge|rebase|cherry-pick|revert|am|stash)\b"
     r"|\bgit\s+reset\s+--hard\b"
+    # Moving the reference checkout to another branch is the same damage one
+    # step earlier: the directory stops holding `main`, every later write lands
+    # on the wrong branch, and a sibling session reading it sees the branch
+    # change under it mid-edit. 48 such switches happened in one session on a
+    # machine where only prose forbade it. Returning it to main/master is
+    # allowed, and so is `git checkout -- <path>` (a file restore, not a
+    # branch move) — the trailing-token form below never matches that.
+    r"|\bgit\s+(?:checkout|switch)\s+(?:-[a-zA-Z]*\s+)*-[bcB]\b"
 )
+# A plain switch to a named branch: `git checkout feature/x`. Excluded are
+# `main`, `master` and `-` (going back is the point), and anything with a `--`
+# or a path, which is a restore rather than a branch move.
+BRANCH_SWITCH = re.compile(r"\bgit\s+(?:checkout|switch)\s+(?!-)(?!--)([\w./-]+)\s*$")
 # `git -C <path>` moves the operation out of the working directory, so the
 # working directory no longer decides where the write lands. That is the
 # explicit form this gate asks for, so it is never blocked.
@@ -76,9 +88,17 @@ def is_reference_worktree(path: str) -> bool:
     return os.path.isdir(os.path.join(parent, ".bare"))
 
 
+def switches_branch(cmd: str) -> bool:
+    """True for a plain switch to a branch other than main/master/-."""
+    m = BRANCH_SWITCH.search(cmd)
+    return bool(m) and m.group(1) not in ("main", "master", "-")
+
+
 def denies(cmd: str, cwd: str) -> bool:
     c = (cmd or "").strip()
-    if "git worktree" in c or not GIT_WRITE.search(c):
+    if "git worktree" in c:
+        return False
+    if not (GIT_WRITE.search(c) or switches_branch(c)):
         return False
     if GIT_DASH_C.search(c) or FAST_FORWARD_ONLY.search(c):
         return False
@@ -86,9 +106,10 @@ def denies(cmd: str, cwd: str) -> bool:
 
 
 REASON = (
-    "This is a git write inside a reference `main/` worktree. That directory is "
-    "for reading, for `git fetch`, and as the base for new worktrees; work "
-    "belongs in its own worktree beside it.\n\n"
+    "This is a git write or a branch switch inside a reference `main/` worktree. "
+    "That directory is for reading, for `git fetch`, and as the base for new "
+    "worktrees; work belongs in its own worktree beside it:\n\n"
+    "  git worktree add -b <branch> ../<branch> && cd ../<branch>\n\n"
     "Usually the cause is an inherited working directory rather than intent — a "
     "previous call left the shell somewhere else. Name the target:\n\n"
     "  cd <project>/<branch> && git commit …\n"
