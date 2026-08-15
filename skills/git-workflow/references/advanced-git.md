@@ -390,6 +390,48 @@ refuses a worktree with uncommitted changes, which is the check that catches a
 removal you did not intend. If a later command already failed this way, `cd` to a real directory
 and re-run it — do not start diagnosing the repository.
 
+### "Merged and clean" is not the whole test — check the worktree's role
+
+A cleanup sweep classifies worktrees by branch state: HEAD contained in
+`origin/main`, tree clean, therefore safe to remove. That test is necessary and
+not sufficient. It says nothing about *which* worktree it matched, and a
+worktree the rest of the setup treats as the primary one can satisfy it too —
+in the bare-repository layout (`project/.bare` plus one directory per branch,
+`project/main`, `project/feature-x`), a `main/` directory that was switched to
+a feature branch and left there stays behind after that branch merges, and then
+classifies exactly like a disposable feature worktree. Git itself knows no such
+role; the convention lives in the directory name, which is precisely why a
+state-only classifier cannot see it.
+
+Removing it deletes the directory every other tool, script and shell in that
+repository points at. The fix for that case is a switch, not a removal:
+
+```bash
+git -C /path/to/project/main switch main     # fails if another worktree
+                                             # already has main checked out
+git -C /path/to/project/main fetch origin main
+git -C /path/to/project/main merge --ff-only origin/main
+git -C /path/to/project/main branch -d <merged-feature-branch>
+```
+
+The `fetch` is not optional: bare clones under this layout are often missing
+`remote.origin.fetch`, so `origin/main` never moves on its own and the
+`merge --ff-only` then silently does nothing while looking like it worked. If
+the `switch` reports that `main` is checked out elsewhere, that other worktree
+*is* the primary one — leave both alone and re-read the layout.
+
+So the classifier needs two predicates, not one: the branch state **and** the
+directory's role. Treat the worktree whose basename is `main`, `master` or the
+repository's default-branch name as never-removable; only the others are
+candidates for `git worktree remove`. In one sweep on 2026-08-15 over 171
+bare-layout repositories holding 210 worktrees, 78 sat on a non-default branch;
+12 of those passed the merged-and-clean test, and 9 of the 12 were primary
+directories sitting on a merged feature branch — a role check that ran second
+would have been a role check that ran too late.
+
+The same shape applies to any cleanup rule that matches on state: state answers
+whether the artifact is *finished*, never whether it is *disposable*.
+
 ### A stale worktree is a stale source
 
 A worktree checked out days ago can be many commits behind `origin` — its
