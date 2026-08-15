@@ -32,7 +32,14 @@ check() { # check <name> <expected> <actual>
 # from the review bodies passed in. Bodies never pass through shell quoting.
 #   make_stub <body>...                 — repo HAS the copilot_code_review ruleset
 #   RULES_JSON='[]' make_stub <body>... — repo has NO ruleset
+#   KEEP_MARKER=1 make_stub …           — keep the quota marker a previous case
+#                                         (or a previous run in the same case)
+#                                         left behind
+# Setting up a scenario clears the quota marker by default. It is the one piece
+# of state that survives an invocation, so without this the first case feeding a
+# quota body would silently change the verdict of every case after it.
 make_stub() {
+    [ "${KEEP_MARKER:-0}" = "1" ] || clear_marker
     # Assigned in a branch, not via ${VAR:-default}: a literal } inside the
     # default value closes the parameter expansion early and mangles the JSON.
     local rules
@@ -102,6 +109,7 @@ PY
 # cannot occur in production and would test the author filter instead of the
 # commit-staleness filter the warning is actually about.
 make_stub_reviews() {
+    [ "${KEEP_MARKER:-0}" = "1" ] || clear_marker
     local rules
     if [ -n "${RULES_JSON:-}" ]; then
         rules="$RULES_JSON"
@@ -161,6 +169,30 @@ json.dump({"data": {"repository": {
                                              "signature": {"isValid": True}}}]},
     }}}}, open(out, "w"))
 PY
+}
+
+# pr-status.sh remembers a proven quota wall under $XDG_CACHE_HOME/pr-status and
+# reads it back on every later run, so the cache has to live in the throwaway
+# stub dir: otherwise the suite answers differently on a machine whose operator
+# hit the wall this month, and writes into their real cache while doing it.
+export XDG_CACHE_HOME="$STUB_DIR/cache"
+marker_path() {
+    printf '%s/pr-status/copilot-quota-exhausted-%s\n' "$XDG_CACHE_HOME" "$(date -u +%Y-%m)"
+}
+clear_marker() { rm -rf "$XDG_CACHE_HOME/pr-status"; }
+plant_marker() {
+    mkdir -p "$XDG_CACHE_HOME/pr-status"
+    printf 'planted by the test suite\n' > "$(marker_path)"
+}
+# Derived from the script's own month (UTC), not from the local date: on the
+# first of a month the two can name different months for a few hours, and the
+# case would then plant a marker for the CURRENT month and assert it is ignored.
+prev_month() {
+    python3 -c "
+import datetime
+cur = datetime.datetime.strptime('$(date -u +%Y-%m)', '%Y-%m').date()
+print((cur - datetime.timedelta(days=1)).strftime('%Y-%m'))
+"
 }
 
 status() { PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 1 --json; }
@@ -256,6 +288,103 @@ fi
 echo "case 7d: generic outage only — quota flag stays false"
 make_stub "$ERR_GENERIC"
 check "copilot_quota_hit" "false" "$(run_flag copilot_quota_hit)"
+
+# --- Quota marker: the wall is account-wide, the evidence is per PR ---------
+# A PR nobody ever requested a Copilot review on carries no error row at all, so
+# every case above is blind to a quota that is already exhausted — and the
+# ladder handed those PRs a re-request command GitHub rejects (netresearch/maint
+# #52 and #53). The marker is what carries the fact from the PR that proved it.
+echo "case Q1: a quota error is written to the month-keyed marker"
+make_stub "$ERR_QUOTA"
+status >/dev/null
+if [ -f "$(marker_path)" ]; then
+    echo "  ok   marker written for the current month"
+else
+    echo "  FAIL no marker at $(marker_path)"
+    fail=1
+fi
+
+# The marker must be as quiet as the flag: an outage is not a month-long wall,
+# and a marker written for one would suppress every re-request until the reset.
+echo "case Q2: a generic outage writes no marker"
+make_stub "$ERR_GENERIC"
+status >/dev/null
+if [ -f "$(marker_path)" ]; then
+    echo "  FAIL an outage row left a quota marker behind"
+    fail=1
+else
+    echo "  ok   no marker for a generic outage"
+fi
+
+# The regression this change exists for: ruleset active, no Copilot row on the
+# head at all, quota already proven elsewhere. Before the marker this answered
+# request-review WITH the POST command.
+echo "case Q3: marker + no Copilot row (ruleset) — quota advice, no retry cmd"
+make_stub
+plant_marker
+check "copilot_quota_hit"       "false"          "$(run_flag copilot_quota_hit)"
+check "copilot_quota_exhausted" "true"           "$(run_flag copilot_quota_exhausted)"
+check "next.action"             "request-review" "$(run_next)"
+check "next.cmd absent"         "null"           "$(run_flag 'next.cmd')"
+if status | jq -e '.next.why | test("OUT OF REVIEW QUOTA")' >/dev/null; then
+    echo "  ok   why carries the quota guidance"
+else
+    echo "  FAIL why does not name the exhausted quota"
+    fail=1
+fi
+# Remembered is not measured: the why must say which of the two it is, and name
+# the file, or the operator has no way to undo a wrongly recorded wall.
+if status | jq -e --arg m "$(marker_path)" '.next.why | index($m) != null' >/dev/null; then
+    echo "  ok   why names the marker file it read"
+else
+    echo "  FAIL why does not name the marker file"
+    fail=1
+fi
+
+# The generic gate serves the repos without the ruleset and re-requests the same
+# bot, so the suppression has to reach it too — the trap a previous fix fell
+# into by putting the check inside the $needs_copilot guard.
+echo "case Q4: marker + NO ruleset — retry command dropped here too"
+RULES_JSON='[]' make_stub
+plant_marker
+check "next.action"     "request-review" "$(run_next)"
+check "next.cmd absent" "null"           "$(run_flag 'next.cmd')"
+
+# The quota resets monthly, so a marker must expire with its month — and by its
+# NAME, since any write refreshes an mtime.
+echo "case Q5: a marker from the previous month is ignored"
+make_stub
+mkdir -p "$XDG_CACHE_HOME/pr-status"
+printf 'stale\n' > "$XDG_CACHE_HOME/pr-status/copilot-quota-exhausted-$(prev_month)"
+check "copilot_quota_exhausted" "false" "$(run_flag copilot_quota_exhausted)"
+case "$(run_flag 'next.cmd')" in
+    *"repos/o/r/pulls/1/requested_reviewers"*)
+        echo "  ok   last month's marker does not suppress the re-request" ;;
+    *)  echo "  FAIL a stale marker suppressed the re-request command"
+        fail=1 ;;
+esac
+
+# Remembering is an optimisation; refusing to answer is not. A cache directory
+# that cannot be written must cost one wasted re-request, never a status query.
+# Skipped as root, where the mode bits do not bite and the case would pass
+# without ever exercising the failure.
+echo "case Q6: an unwritable cache directory does not break the run"
+if [ "$(id -u)" = "0" ]; then
+    echo "  skip running as root — the read-only cache dir would be writable"
+else
+    make_stub "$ERR_QUOTA"
+    mkdir -p "$STUB_DIR/ro-cache"
+    chmod 500 "$STUB_DIR/ro-cache"
+    if out=$(XDG_CACHE_HOME="$STUB_DIR/ro-cache" PATH="$STUB_DIR:$PATH" \
+             bash "$SCRIPT" -R o/r 1 --json) \
+       && [ "$(jq -r '.next.action' <<<"$out")" = "request-review" ]; then
+        echo "  ok   status still answered with an unwritable cache dir"
+    else
+        echo "  FAIL an unwritable cache dir broke the run"
+        fail=1
+    fi
+    chmod 700 "$STUB_DIR/ro-cache"
+fi
 
 # Regression for a dead end that shipped once: an earlier version escalated to a
 # distinct "review-yourself" action guarded on has_review_on_head. A review by
@@ -514,6 +643,22 @@ case "$out" in
     *"ACTIONABLE: fix-signatures"*) echo "  ok   watch returns immediately on the signature gate" ;;
     *TIMEOUT*) echo "  FAIL watch held to timeout on its own headline scenario"; fail=1 ;;
     *) echo "  FAIL unexpected watch output"; fail=1 ;;
+esac
+
+# Same exemption as W3, reached through the marker instead of an error body:
+# waiting cannot clear a wall proven on another PR either, so a watch armed on
+# a PR with no Copilot row of its own must not hold to timeout.
+echo "case W5: watch + pending check + MARKER — exemption fires without an error row"
+PENDING_CHECK=1 make_stub
+plant_marker
+out=$(watch || true)
+case "$out" in
+    *"ACTIONABLE: request-review (UNSATISFIABLE"*)
+        case "$out" in
+            *TIMEOUT*) echo "  FAIL exemption fired only at timeout"; fail=1 ;;
+            *) echo "  ok   remembered quota returns immediately despite unsettled CI" ;;
+        esac ;;
+    *) echo "  FAIL marker exemption did not fire (no UNSATISFIABLE ACTIONABLE line)"; fail=1 ;;
 esac
 
 

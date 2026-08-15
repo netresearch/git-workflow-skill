@@ -138,6 +138,20 @@ yourself**: an outage may clear, but a quota ceiling does not clear by asking
 again, and the alternatives — merging unreviewed or waiting indefinitely on
 third-party infrastructure — are both worse than a self-review that says so.
 
+A body naming the **quota** is not an outage, so it costs no second strike:
+`pr-status.sh` withholds the retry command on the first failure and remembers
+the wall in
+`${XDG_CACHE_HOME:-~/.cache}/pr-status/copilot-quota-exhausted-YYYY-MM`. The
+quota is account-wide and monthly while the evidence is per PR — a pull request
+nobody ever requested a review on carries none at all — so without that file
+the next PR in the next repo is handed a `requested_reviewers` POST the same
+exhausted quota rejects (`netresearch/maint` #52 and #53, hours after the wall
+was proven elsewhere). Later runs read the marker, report
+`copilot_quota_exhausted: true` and answer with the self-review guidance and no
+command. The month is in the **filename**, so the marker stops applying at the
+reset rather than being aged out; delete the file to undo a verdict recorded in
+error.
+
 ## Check the Default Branch Before Operating
 
 Not every repo uses `main` — older repos often use `master`, and some use

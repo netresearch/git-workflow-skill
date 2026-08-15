@@ -25,6 +25,17 @@
 # required checks concluded. Waiting for `pending == 0` means learning nothing
 # until the slowest matrix job ends, long after the first failure was visible.
 #
+# Copilot review quota
+#
+# The quota is per ACCOUNT and per MONTH, but the only evidence a single pull
+# request carries is an errored review body on its own head — a PR nobody ever
+# requested a review on carries none at all, and used to be answered with a
+# re-request command the exhausted quota rejects. So the wall proven on one PR
+# is written to ${XDG_CACHE_HOME:-~/.cache}/pr-status/, one file per calendar
+# month, and every later invocation reads it before offering that command.
+# The month lives in the FILENAME, so a marker from an earlier month is ignored
+# rather than carried over the reset; delete the file to undo the effect.
+#
 # --json contract
 #
 # One object, and its field names are THIS SCRIPT'S — not the GraphQL names
@@ -39,6 +50,7 @@
 #   checks checks_settled threads unresolved_threads
 #   reviewDecision reviews_on_head has_review_on_head
 #   has_copilot_review_on_head copilot_review_errored copilot_error_count copilot_quota_hit
+#   copilot_quota_exhausted
 #   requested_reviewers
 #   merge_methods auto_merge_allowed queue_active queue_entry
 #   rulesets rules_fetched required_contexts undispatched unsigned
@@ -90,6 +102,30 @@ if [ -z "$PR" ]; then
 fi
 OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
 
+# --------------------------------------------------------- quota marker -----
+# The Copilot review quota is account-wide and monthly; the evidence for it is
+# not. It arrives as an error body on ONE pull request, and every other PR of
+# that account looks untouched — so the ladder below kept offering a
+# re-request command that the same exhausted quota would reject (observed on
+# netresearch/maint#52 and #53, hours after the wall was proven on another
+# repo). One file per calendar month carries the fact across invocations.
+QUOTA_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/pr-status"
+# The month is in the NAME, not in the mtime: any later write would refresh an
+# mtime and make a marker outlive the reset it describes.
+QUOTA_MARKER="$QUOTA_DIR/copilot-quota-exhausted-$(date -u +%Y-%m)"
+
+quota_marker_seen() { if [ -f "$QUOTA_MARKER" ]; then echo true; else echo false; fi; }
+
+# Best-effort by design: the marker only saves a wasted re-request, so a
+# read-only or full cache directory must never turn a status query into a
+# failure. Content is for the human who wonders where the verdict came from.
+remember_quota_hit() {
+  [ -f "$QUOTA_MARKER" ] && return 0
+  mkdir -p "$QUOTA_DIR" 2>/dev/null || return 0
+  printf 'copilot review quota exhausted; proven on %s#%s at %s\n' \
+    "$REPO" "$PR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$QUOTA_MARKER" 2>/dev/null || return 0
+}
+
 # ---------------------------------------------------------------- data ------
 collect() {
   # shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
@@ -132,8 +168,9 @@ collect() {
 # would discard the status flag.
 
 evaluate() {
-  local gql="$1" rules="$2" ok="$3"
-  jq -n --argjson g "$gql" --argjson r "$rules" --argjson ok "$ok" '
+  local gql="$1" rules="$2" ok="$3" marker="$4"
+  jq -n --argjson g "$gql" --argjson r "$rules" --argjson ok "$ok" \
+        --argjson marker "$marker" --arg marker_path "$QUOTA_MARKER" '
     # Defined once and used by BOTH the error list and the $head_reviews filter.
     # Two hand-kept copies would have to stay byte-identical: loosening one to
     # match a third error body and not the other puts the row back into
@@ -196,6 +233,11 @@ evaluate() {
     # API call.
     | ([$reviews_raw[] | select(is_errored_copilot_review)]) as $copilot_errored
     | (($copilot_errored | length) > 0) as $copilot_review_errored
+    # Bound rather than written twice: copilot_quota_hit reports the evidence
+    # found HERE, copilot_quota_exhausted folds in the marker, and a second
+    # copy of the test would let the two drift into disagreeing about the same
+    # review body.
+    | (([$copilot_errored[] | select((.body // "") | test("quota"; "i"))] | length) > 0) as $quota_hit
     # Drop the errored rows from $head_reviews itself, not just from the Copilot
     # view: has_review_on_head feeds the generic "no review on the current head"
     # gate, so filtering only the Copilot list would leave every repo WITHOUT
@@ -308,10 +350,14 @@ evaluate() {
         # $copilot_errored for why the check-run is not consulted.
         copilot_review_errored: $copilot_review_errored,
         copilot_error_count: ($copilot_errored|length),
-        # True when an errored Copilot review body names the quota limit.
-        # Quota is MONTHLY: once this is true, no re-request on any PR will
-        # succeed until the monthly reset — distinct from a transient outage.
-        copilot_quota_hit: (([$copilot_errored[] | select((.body // "") | test("quota"; "i"))] | length) > 0),
+        # True when an errored Copilot review body ON THIS PR names the quota
+        # limit — the evidence, not the verdict.
+        copilot_quota_hit: $quota_hit,
+        # The verdict, and what the NEXT ladder reads: the quota is MONTHLY and
+        # account-wide, so it is equally exhausted on a PR that carries no
+        # evidence of its own. True when this PR proves it, or when an earlier
+        # invocation this calendar month wrote the marker.
+        copilot_quota_exhausted: ($quota_hit or $marker),
         author: $author,
         requested_reviewers: [$p.reviewRequests.nodes[]?.requestedReviewer|(.login // .slug)],
         unresolved_threads: ($unresolved|length),
@@ -367,6 +413,21 @@ evaluate() {
     # assert this when a review does exist on the head.
     | "no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed" as $no_review
     | (if ($s.has_review_on_head | not) then "\($no_review). " else "" end) as $unreviewed
+    # One quota sentence for every branch that would otherwise hand back a
+    # re-request command. Where the evidence came from is stated rather than
+    # assumed: on a PR that carries no Copilot row at all, saying the error
+    # body names the limit would describe a review that is not there — and the
+    # operator could not tell a fresh reading from a remembered one, nor find
+    # the file to undo it.
+    | (if $s.copilot_quota_hit
+       then "the error body on this pull request says the requesting user reached the quota limit"
+       else "an earlier run recorded the wall this month in \($marker_path) — delete that file if it was recorded in error"
+       end) as $quota_evidence
+    | ("Copilot is OUT OF REVIEW QUOTA — \($quota_evidence). The quota is MONTHLY and"
+       + " account-wide: it will not recover this month, on this or any other PR, and"
+       + " re-requesting cannot change that. Review the diff yourself, note in the PR that"
+       + " the bot review was unavailable, and decide on that. Treat this notice as covering"
+       + " every PR until the monthly reset") as $quota_why
     | .next =
         (if $s.state != "OPEN" then
            {action:"none", why:"PR is \($s.state)"}
@@ -458,19 +519,14 @@ evaluate() {
          elif ($needs_copilot and $s.copilot_review_errored
                and ($s.has_copilot_review_on_head | not)
                and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
-           (if $s.copilot_quota_hit then
-             # Quota, not outage: the error body names the quota limit. Said
-             # once, with the fact that makes retrying pointless — the quota
-             # is monthly and will NOT recover this month, on this or any
-             # other PR. No cmd on purpose: there is nothing to run.
+           (if $s.copilot_quota_exhausted then
+             # Quota, not outage: the quota limit is named — by this PR or by
+             # the marker an earlier run left. Said once, with the fact that
+             # makes retrying pointless: the quota is monthly and will NOT
+             # recover this month, on this or any other PR. No cmd on purpose,
+             # there is nothing to run.
              {action:"request-review",
-              why:($unreviewed
-                   + "Copilot is OUT OF REVIEW QUOTA — the error body says the requesting"
-                   + " user reached the quota limit. The quota is MONTHLY: it will not"
-                   + " recover this month, on this or any other PR, and re-requesting"
-                   + " cannot change that. Review the diff yourself, note in the PR that"
-                   + " the bot review was unavailable, and decide on that. Treat this"
-                   + " notice as covering every PR until the monthly reset\($stale_approval)")}
+              why:($unreviewed + $quota_why + $stale_approval)}
             elif $copilot_exhausted then
              {action:"request-review",
               why:($unreviewed
@@ -500,9 +556,20 @@ evaluate() {
            # caller that acts on it enqueues a pull request whose CI has not
            # started. Says it, rather than reordering the ladder — the review
            # really is the blocking gate here.
-           {action:"request-review", why:("copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate"
-                 + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported — do not enqueue on this reading)" end)),
-            cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+           #
+           # This is the branch a PR reaches when Copilot was never asked here
+           # at all, so it carries no error row and $copilot_review_errored is
+           # false. Until the marker existed, that was every PR in every OTHER
+           # repo once the account hit the wall, and each of them was handed a
+           # POST command the quota had already made impossible.
+           (if $s.copilot_quota_exhausted then
+              {action:"request-review",
+               why:($unreviewed + $quota_why + $stale_approval)}
+            else
+              {action:"request-review", why:("copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate"
+                    + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported — do not enqueue on this reading)" end)),
+               cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
+            end)
          elif ($s.has_review_on_head|not) then
            # The generic gate is also reached by repos WITHOUT the
            # copilot_code_review ruleset, and its cmd re-requests Copilot. Once
@@ -515,7 +582,13 @@ evaluate() {
            # prints mergeState=CLEAN and decision=APPROVED directly above this
            # line, so dropping "do not merge unreviewed" reads as license to
            # merge on a review that sits on an older commit.
-           (if $copilot_exhausted then
+           (if $s.copilot_quota_exhausted then
+               # Reached without any Copilot row of its own whenever the marker
+               # is what proves the wall — the generic gate serves the repos
+               # without the ruleset, and its cmd re-requests the same bot.
+               {action:"request-review",
+                why:($unreviewed + $quota_why + $stale_approval)}
+             elif $copilot_exhausted then
                {action:"request-review",
                 why:("\($no_review). "
                      + "Copilot failed \($s.copilot_error_count)x on it, so its rows carry an error"
@@ -645,10 +718,18 @@ snapshot() {
 
   base=$(jq -r '.data.repository.pullRequest.baseRefName // "main"' <<<"$g")
 
-  local enc r ok
+  local enc r ok out
   enc=$(printf '%s' "$base" | jq -sRr @uri)
   if r=$(gh api "repos/$REPO/rules/branches/$enc" 2>/dev/null); then ok=1; else ok=0; r='[]'; fi
-  evaluate "$g" "$r" "$ok"
+  out=$(evaluate "$g" "$r" "$ok" "$(quota_marker_seen)")
+  # Written from the EVIDENCE field, never from the verdict: with
+  # copilot_quota_exhausted the marker would re-assert itself, and the PR named
+  # inside it would be whichever one read the file rather than the one that
+  # proved the wall — the single thing the content is there to answer.
+  if [ "$(jq -r '.copilot_quota_hit // false' <<<"$out")" = "true" ]; then
+    remember_quota_hit
+  fi
+  printf '%s\n' "$out"
 }
 
 emit() {
@@ -681,14 +762,14 @@ while :; do
       # checks settle this returns on the review state (#186). The quota
       # dead-end is exempt — waiting cannot clear it, return immediately.
       if [ "$(jq -r '.checks_settled' <<<"$s")" != "true" ] \
-         && [ "$(jq -r '.copilot_quota_hit // false' <<<"$s")" != "true" ]; then
+         && [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" != "true" ]; then
         :
       # A request-review whose cause is an exhausted review bot is a standing
       # condition, not an event: waiting cannot clear a quota ceiling, so every
       # re-arm of --watch returns instantly with the same line. Saying so is
       # what stops an operator re-arming it three times before switching to
       # `gh pr checks --watch`, which watches something that does move.
-      elif [ "$(jq -r '.copilot_quota_hit // false' <<<"$s")" = "true" ]; then
+      elif [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" = "true" ]; then
         echo "ACTIONABLE: request-review (UNSATISFIABLE — Copilot is OUT OF REVIEW QUOTA" \
              "for the month; this will NOT change until the monthly reset, on this or any" \
              "other PR. Do not re-arm this watch and do not re-request — review the diff" \
@@ -704,7 +785,7 @@ while :; do
       fi
       # Unsettled-CI hold: emit nothing, fall through to the wait line.
       if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ] \
-         || [ "$(jq -r '.copilot_quota_hit // false' <<<"$s")" = "true" ]; then
+         || [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" = "true" ]; then
         emit "$s"; exit 0
       fi ;;
     fix-ci|triage-ci|resolve-threads|rebase|resolve-conflicts|merge|blocked|none|fix-signatures)
