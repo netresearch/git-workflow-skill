@@ -9,6 +9,7 @@ were already here so the new one cannot quietly change their behaviour.
 """
 
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -179,6 +180,66 @@ class ForgeBodyLanguageGate(unittest.TestCase):
             f"FORGE_LANGUAGE_GATE_OFF=1 gh pr create --title x --body '{self.GERMAN}'"
         )
         self.assertNotEqual("deny", decision(out))
+
+    def test_english_body_quoting_a_german_log_passes(self) -> None:
+        # The case the denial message promises: a German error log inside an
+        # English body. Fenced blocks and quoted strings are not prose.
+        body = (
+            "The importer aborts on the second batch. The server returns this, "
+            "verbatim:\n\n```\nDer Vorgang wurde abgebrochen, weil die Datei "
+            "nicht gelesen werden konnte und der Puffer nicht mehr frei ist. "
+            "Bitte pruefen Sie die Rechte und starten Sie den Import erneut.\n```\n\n"
+            "The fix decodes the payload before the size check, so the buffer is "
+            "never consulted on a partial read."
+        )
+        out = run_hook(f"gh pr create --title x --body '{body}'")
+        self.assertNotEqual("deny", decision(out))
+
+    def test_english_body_about_german_content_passes(self) -> None:
+        body = (
+            "This adds the German translation catalogue. The labels are stored "
+            "under de/, the keys are unchanged, and the fallback stays English "
+            "when a key is missing. The reviewer only needs to check that the "
+            "plural forms resolve, since that is where the previous catalogue "
+            "was wrong for counts above twelve."
+        )
+        out = run_hook(f"gh pr create --title x --body '{body}'")
+        self.assertNotEqual("deny", decision(out))
+
+    def test_german_review_body_is_denied(self) -> None:
+        # `gh pr review` is how half of the incident's German text was posted.
+        out = run_hook(f"gh pr review 3 -R o/r --comment --body '{self.GERMAN}'")
+        self.assertEqual("deny", decision(out))
+
+    def test_german_review_reply_via_api_is_denied(self) -> None:
+        out = run_hook(
+            f"gh api repos/o/r/pulls/comments/123/replies -f body='{self.GERMAN}'"
+        )
+        self.assertEqual("deny", decision(out))
+
+    def test_german_glab_note_is_denied(self) -> None:
+        out = run_hook(f"glab mr note 7 --message x --body '{self.GERMAN}'")
+        self.assertEqual("deny", decision(out))
+
+    def test_marker_named_inside_a_body_does_not_disable_the_gate(self) -> None:
+        # The escape hatch is an assignment in front of the command, not the
+        # string appearing anywhere in it.
+        out = run_hook(
+            "gh pr create --title x --body "
+            f"'FORGE_LANGUAGE_GATE_OFF=1 is documented. {self.GERMAN}'"
+        )
+        self.assertEqual("deny", decision(out))
+
+    def test_a_body_file_that_is_not_utf8_does_not_crash_the_hook(self) -> None:
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("wb", suffix=".md", delete=False) as fh:
+            fh.write(b"Fixed in abc1234. Raw byte: \xff\xfe and more text.")
+            path = fh.name
+        out = run_hook(f"gh pr comment 3 -R o/r --body-file {path}")
+        os.unlink(path)
+        # No traceback, and the other gates in the file still got their turn.
+        self.assertNotIn("Traceback", out)
 
     def test_commit_message_is_not_a_forge_body(self) -> None:
         # Commit messages are out of scope for this gate; only forge bodies.

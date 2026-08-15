@@ -58,10 +58,20 @@ CHECKS = [
 
 # Bodies posted to a forge: gh pr/issue/release create|edit|comment.
 FORGE_BODY = re.compile(
-    r"\bgh\s+(pr|issue|release)\s+(create|edit|comment)\b", re.IGNORECASE
+    r"\bgh\s+(pr|issue|release)\s+(create|edit|comment|review)\b"
+    r"|\bglab\s+(mr|issue|release)\s+(create|update|note|comment)\b"
+    r"|/(?:pulls|issues)/[^\s'\"]*/(?:comments|replies)\b",
+    re.IGNORECASE,
 )
 BODY_FILE = re.compile(r"--(?:body|notes)-file[= ]+(\S+)")
 BODY_INLINE = re.compile(r"--(?:body|notes)[= ]+(['\"])(.*?)\1", re.DOTALL)
+# `gh api … -f body=…` / `--field body=…` and `-F body=@file`: the review-reply
+# endpoint takes its text this way, and a reply is the channel the PR-review
+# rules mandate, so leaving it out would miss the case that motivated the gate.
+BODY_FIELD = re.compile(
+    r"(?:-f|--field|--raw-field)[= ]+body=(['\"])(.*?)\1", re.DOTALL
+)
+BODY_FIELD_FILE = re.compile(r"(?:-F|--field)[= ]+body=@(\S+)")
 
 # Replying to a review comment needs the PR number in the path:
 # repos/O/R/pulls/{pr}/comments/{id}/replies. Without it GitHub answers 404 and
@@ -152,22 +162,28 @@ def hard_wrapped(text: str) -> int:
 def _forge_bodies(cmd: str) -> list[tuple[str, str]]:
     """Every body this command would post, as (label, text)."""
     bodies: list[tuple[str, str]] = []
-    for m in BODY_FILE.finditer(cmd):
-        p = m.group(1).strip("'\"")
-        try:
-            # Regular files only, and only the first chunk. `--body-file` can
-            # name a pipe -- process substitution (`--body-file <(...)`) hands
-            # over /dev/fd/N -- and reading one here blocks until a writer this
-            # process cannot see appears. A hook that hangs is worse than one
-            # that misses a finding, so a non-regular path is skipped.
-            if not os.path.isfile(p):
-                continue
-            with open(p, encoding="utf-8") as fh:
-                bodies.append((p, fh.read(BODY_READ_LIMIT)))
-        except OSError:
-            pass
+    for pattern in (BODY_FILE, BODY_FIELD_FILE):
+        for m in pattern.finditer(cmd):
+            p = m.group(1).strip("'\"")
+            try:
+                # Regular files only, and only the first chunk. `--body-file`
+                # can name a pipe -- process substitution (`--body-file <(...)`)
+                # hands over /dev/fd/N -- and reading one here blocks until a
+                # writer this process cannot see appears. A hook that hangs is
+                # worse than one that misses a finding, so a non-regular path is
+                # skipped. `errors="replace"` because a body that is not valid
+                # UTF-8 must not take the whole hook down with it: an exception
+                # here would skip every other gate in this file.
+                if not os.path.isfile(p):
+                    continue
+                with open(p, encoding="utf-8", errors="replace") as fh:
+                    bodies.append((p, fh.read(BODY_READ_LIMIT)))
+            except OSError:
+                pass
     for m in BODY_INLINE.finditer(cmd):
         bodies.append(("--body", m.group(2)))
+    for m in BODY_FIELD.finditer(cmd):
+        bodies.append(("body=", m.group(2)))
     return bodies
 
 
@@ -194,18 +210,47 @@ def forge_body_hard_wrapped(cmd: str) -> str | None:
 # "man", "war", "so" and "in" are deliberately absent: they are English too,
 # and a marker that fires on English is worse here than a missing one, because
 # this gate denies rather than nudges.
+# "mit" is absent although it is a German word: it is also the licence every
+# skill repository names, 18 times in one 60k-word English corpus. A marker
+# that fires on English prose is worse than a missing one, because this gate
+# denies rather than nudges. Same reasoning excludes "das", "von" and "hat",
+# which appear as DAS, von Neumann and HAT.
 GERMAN_MARKERS = frozenset(
     """und nicht wird werden wurde wurden eine einen einem einer der dem den des
-    das auch sich fuer für ueber über durch damit nach noch schon dann aber oder
-    mit von zum zur dass weil wenn ohne jetzt muss soll sind ist kann haben hat
+    auch sich fuer für ueber über durch damit nach noch schon dann aber oder
+    zum zur dass weil wenn ohne jetzt muss soll sind ist kann haben
     keine kein diese dieser dieses beim sowie bereits immer sehr zwei drei""".split()
 )
 WORD = re.compile(r"[A-Za-zÄÖÜäöüß]+")
+# An assignment in front of a command, not the string appearing anywhere: the
+# name inside a quoted body must not switch the gate off for that same body.
+GATE_OFF = re.compile(
+    r"(?:^|[;&|]|\bthen\b|\bdo\b)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
+    r"FORGE_LANGUAGE_GATE_OFF=1\s"
+)
+# Regions where German is quoted rather than written: fenced blocks, inline
+# code, blockquotes and the argument of a quoted string. An English body may
+# carry a German error log, a UI label or a fixture; measuring those as prose
+# denies exactly the body that is doing the right thing.
+QUOTED_REGIONS = (
+    re.compile(r"```.*?```", re.DOTALL),
+    re.compile(r"~~~.*?~~~", re.DOTALL),
+    re.compile(r"`[^`]*`"),
+    re.compile(r"^\s*>.*$", re.MULTILINE),
+    re.compile(r"^\s{4,}\S.*$", re.MULTILINE),
+    re.compile(r"[\"„»][^\"“«\n]{0,200}[\"“«]"),
+)
 
 
-def german_prose(text: str) -> tuple[int, int]:
+def prose_only(text: str) -> str:
+    for region in QUOTED_REGIONS:
+        text = region.sub(" ", text)
+    return text
+
+
+def german_prose(text: str) -> tuple[int, float]:
     """(distinct markers, share of words that are markers) for a body."""
-    words = [w.lower() for w in WORD.findall(text)]
+    words = [w.lower() for w in WORD.findall(prose_only(text))]
     if not words:
         return 0, 0.0
     hits = [w for w in words if w in GERMAN_MARKERS]
@@ -222,7 +267,7 @@ def forge_body_not_english(cmd: str) -> str | None:
     # The escape hatch is read off the command, not the environment: the hook
     # runs as its own process, so a `VAR=1 gh …` prefix never reaches it as an
     # environment variable. Same convention as the attribution gate.
-    if not FORGE_BODY.search(cmd) or "FORGE_LANGUAGE_GATE_OFF=1" in cmd:
+    if not FORGE_BODY.search(cmd) or GATE_OFF.search(cmd):
         return None
     for name, text in _forge_bodies(cmd):
         distinct, share = german_prose(text)
