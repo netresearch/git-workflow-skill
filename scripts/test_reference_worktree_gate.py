@@ -40,6 +40,39 @@ def main() -> int:
         branch = os.path.join(proj, "feat-x")
 
         cases = [
+            # Branch moves in the reference checkout: the same damage one step
+            # before the write, and the reason 48 of them happened in one
+            # session on a machine where only prose forbade it.
+            (
+                "new branch in the reference worktree",
+                True,
+                "git chec" + "kout -b feature/x",
+                ref,
+            ),
+            (
+                "switch to another branch there",
+                True,
+                "git swi" + "tch feature/x",
+                ref,
+            ),
+            (
+                "returning it to main is the point",
+                False,
+                "git chec" + "kout main",
+                ref,
+            ),
+            (
+                "restoring a file is not a branch move",
+                False,
+                "git chec" + "kout -- src/a.py",
+                ref,
+            ),
+            (
+                "a branch move in its own worktree is fine",
+                False,
+                "git swi" + "tch other",
+                branch,
+            ),
             (
                 "commit in the reference worktree",
                 True,
