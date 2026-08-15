@@ -172,6 +172,14 @@ class ForgeBodyLanguageGate(unittest.TestCase):
         out = run_hook("gh pr comment 3 -R o/r --body 'Fixed in abc1234.'")
         self.assertNotEqual("deny", decision(out))
 
+    def test_override_prefix_lets_a_german_body_through(self) -> None:
+        # The hook is its own process, so the override has to be read off the
+        # command text; an environment lookup would never see the prefix.
+        out = run_hook(
+            f"FORGE_LANGUAGE_GATE_OFF=1 gh pr create --title x --body '{self.GERMAN}'"
+        )
+        self.assertNotEqual("deny", decision(out))
+
     def test_commit_message_is_not_a_forge_body(self) -> None:
         # Commit messages are out of scope for this gate; only forge bodies.
         out = run_hook(f"git commit -m 'feat: x\n\n{self.GERMAN}'")

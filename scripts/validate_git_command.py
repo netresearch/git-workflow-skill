@@ -219,7 +219,10 @@ def forge_body_not_english(cmd: str) -> str | None:
     fixture, a UI label or an error message, and that must not read as German
     prose. Both thresholds have to trip together.
     """
-    if not FORGE_BODY.search(cmd):
+    # The escape hatch is read off the command, not the environment: the hook
+    # runs as its own process, so a `VAR=1 gh …` prefix never reaches it as an
+    # environment variable. Same convention as the attribution gate.
+    if not FORGE_BODY.search(cmd) or "FORGE_LANGUAGE_GATE_OFF=1" in cmd:
         return None
     for name, text in _forge_bodies(cmd):
         distinct, share = german_prose(text)
@@ -233,8 +236,8 @@ def forge_body_not_english(cmd: str) -> str | None:
                 "in English — the conversation language does not travel with "
                 "the artifact. Quoting a German string (a fixture, a UI label, "
                 "an error message) inside an English body is fine and does not "
-                "trip this. Set FORGE_LANGUAGE_GATE_OFF=1 for a repository "
-                "whose own language is German."
+                "trip this. Prefix the command with FORGE_LANGUAGE_GATE_OFF=1 "
+                "for a repository whose own language is German."
             )
     return None
 
@@ -600,13 +603,12 @@ def main():
     # style would be noise.
     gates = [
         forge_body_hard_wrapped,
+        forge_body_not_english,
         reply_path_without_pr,
         handrolled_pr_poll,
         merge_readiness_without_pr_status,
         unresolvable_sha,
     ]
-    if not os.environ.get("FORGE_LANGUAGE_GATE_OFF"):
-        gates.insert(1, forge_body_not_english)
     for gate in gates:
         reason = gate(command)
         if reason:
