@@ -211,7 +211,7 @@ def forge_body_hard_wrapped(cmd: str) -> str | None:
 # and a marker that fires on English is worse here than a missing one, because
 # this gate denies rather than nudges.
 # "mit" is absent although it is a German word: it is also the licence every
-# skill repository names, 18 times in one 60k-word English corpus. A marker
+# skill repository names, 18 times in one 63k-word English corpus. A marker
 # that fires on English prose is worse than a missing one, because this gate
 # denies rather than nudges. Same reasoning excludes "das", "von" and "hat",
 # which appear as DAS, von Neumann and HAT.

@@ -243,3 +243,34 @@ builds a throwaway layout and checks that a commit in `main/` denies while
 | `Write\|Edit` matcher without file-path extraction | Hook runs on wrong files | `jq -r '.tool_input.file_path'` |
 | Blocking hooks that hit flaky services | One GitHub-API outage blocks all merges | Soft-fail: warn instead of deny for infra-dependent gates |
 | Per-hook large shell scripts inline in JSON | Unreadable, un-testable | Keep inline ≤3 lines; call external script for more |
+| An exception the gate reads from the environment | The hook is its own process; a `VAR=1 cmd` prefix never reaches it, so the documented way out is inert | Read it off the command text, anchored as a leading assignment, and copy the mechanism from the gate already shipping in that hook |
+| A deny text whose promises nothing tests | The message is the contract; an untested promise is usually the case the gate gets wrong | One test per clause of the message — see below |
+| A gate built from an incident that covers one command shape | An incident is plural; the shape you remember is rarely the only one it used | Extract every command shape from the transcript and assert the predicate on each |
+
+### The deny message is a specification
+
+Whatever a denial says is what its author will be held to, and the exception a message
+carves out is the case most likely to be wrong — it is the one the implementation had to
+think about separately. Turn each clause into a test before shipping the gate.
+
+The forge-body language gate is the worked example. Its message makes four claims, and
+the first version of the gate honoured two of them:
+
+| Clause of the message | Test |
+|---|---|
+| a German body is denied | body of German prose → `deny` |
+| quoting a German string inside an English body "is fine and does not trip this" | English body with a German stack trace in a fenced block → not `deny` |
+| `FORGE_LANGUAGE_GATE_OFF=1` in front of the command exempts a German repository | the documented command verbatim → not `deny` |
+| the exemption is a prefix, not a mention | the same string inside a body → still `deny` |
+
+Rows two and three failed when they were first written: the gate denied exactly the body
+its message called fine, and the exemption was read from the environment, where a Bash
+prefix can never arrive. Both were found by writing the tests from the message rather
+than from the implementation.
+
+A gate that denies also needs its threshold calibrated against the widest negative corpus
+it will meet, not against the documents that motivated it. In that gate a German
+function-word marker list contained `mit`, which is the licence every skill repository
+names — 18 occurrences in a 63k-word English corpus assembled from the fleet's own
+reference files. A false deny blocks legitimate work, so in a denying gate a marker that
+fires on the negative corpus is worse than a missing one.

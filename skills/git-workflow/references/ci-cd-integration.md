@@ -67,6 +67,32 @@ Because the exit code cannot distinguish "watched and passed" from "never
 found the run", assert the run exists before watching it, or re-read the
 check's state afterwards rather than trusting the watcher's return.
 
+### Ask which step failed before reading any log
+
+The jobs API names it in one call, and the name is usually enough to reproduce
+the failure locally:
+
+```bash
+gh api repos/$R/actions/jobs/$JOB \
+  --jq '.steps[] | select(.conclusion=="failure") | .name'
+```
+
+Reaching for the log first costs several rounds that return nothing. On a job
+using `step-security/harden-runner`, its audit stream (`module=armour`, one line
+per protected inode) floods every keyword filter, so `--log-failed | tail`,
+`--log | grep -iE 'error|fail'` and a range starting at the validator's own
+summary all came back with runner chatter, `tar` invocations and a green
+`Errors: 0` — while the actual failure was a step called `Python lint`. Four
+calls, no information; the fifth, above, answered immediately.
+
+Then reproduce that step's command rather than guessing from its name. **A
+repo's pre-commit set is not its CI lint set**: in that case `pre-commit run
+--files …` was clean and `ruff check scripts/` reproduced the failure on the
+first try. Two habits follow — run the linter the CI step runs, by name, before
+committing; and never pipe `pre-commit` output through `tail` or filter out the
+hook-name lines, because `files were modified by this hook` is a failed run, not
+noise.
+
 ### The step output of a failed job comes from the RUN's log archive
 
 `gh api repos/$R/actions/jobs/$JOB/logs` and `gh run view --job $JOB --log`

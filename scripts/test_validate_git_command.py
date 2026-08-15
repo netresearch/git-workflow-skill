@@ -16,6 +16,10 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from validate_git_command import german_prose
+
 HOOK = Path(__file__).with_name("validate_git_command.py")
 
 
@@ -240,6 +244,33 @@ class ForgeBodyLanguageGate(unittest.TestCase):
         os.unlink(path)
         # No traceback, and the other gates in the file still got their turn.
         self.assertNotIn("Traceback", out)
+
+    def test_no_english_reference_file_in_the_fleet_is_denied(self) -> None:
+        """The calibration corpus, as an assertion rather than a code comment.
+
+        The marker list is a heuristic, and the only thing that keeps it honest
+        is a negative corpus wider than the documents that motivated it: `mit`
+        had to go because it is the licence every skill repository names. This
+        feeds the skill's own English reference files through the gate and
+        requires that none of them denies.
+        """
+        here = Path(__file__).resolve().parent.parent
+        corpus = sorted((here / "skills").glob("*/references/*.md"))
+        self.assertGreater(len(corpus), 3, "corpus too small to be evidence")
+        denied = []
+        for path in corpus:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            distinct, share = german_prose(text)
+            if distinct >= 6 and share >= 0.08:
+                denied.append(f"{path.name} ({distinct} markers, {share:.0%})")
+        self.assertEqual([], denied, "English reference prose must not trip the gate")
+
+    def test_the_gate_still_fires_on_german_of_the_same_length(self) -> None:
+        # Guards the other direction: a corpus test that passes because the
+        # thresholds became unreachable would prove nothing.
+        distinct, share = german_prose(self.GERMAN * 8)
+        self.assertGreaterEqual(distinct, 6)
+        self.assertGreaterEqual(share, 0.08)
 
     def test_commit_message_is_not_a_forge_body(self) -> None:
         # Commit messages are out of scope for this gate; only forge bodies.

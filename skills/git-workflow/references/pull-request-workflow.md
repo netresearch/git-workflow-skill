@@ -300,6 +300,21 @@ coverage driver" replaces a false statement with a true but empty one: the body
 is the delta against the target, and something that does not change has no row
 in it.
 
+**The other trigger is a push that answers review findings, and it fires within
+the hour.** Elapsed time is the obvious cause of drift; a review is the frequent
+one. The body was written to describe the first version of the change, the
+review found that version wrong, and the fix replaced the approach the body
+still explains. Seen on one PR the same day it opened: the body documented an
+escape hatch read from the environment that the head commit had already
+replaced with one read off the command line — the mechanism was gone, the
+explanation was not.
+
+Re-derive the body after every push that answers a review, not only after a
+rebase, and **re-count every number it states**. Figures are copied forward
+faster than prose: the same PR ended up claiming a "63k-word corpus" while the
+code comment beside the measurement said 60k, for a corpus of 62,749 words.
+Two figures for one set means at least one of them was never measured.
+
 ### When you already have the fix, lead with it
 
 Issue templates order evidence before solution — they are written for reports
