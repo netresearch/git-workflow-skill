@@ -119,5 +119,64 @@ class ExistingChecks(unittest.TestCase):
         self.assertEqual("", run_hook("ls -la"))
 
 
+class ForgeBodyLanguageGate(unittest.TestCase):
+    """A forge body is read by whoever finds the repository, not by its author.
+
+    The repositories are English, so a German body excludes every reader who
+    does not share the author's chat language — and the chat language is where
+    it comes from: an agent that has been conversing in German carries it into
+    the PR without noticing. Prose said so already and did not hold.
+    """
+
+    GERMAN = (
+        "Der Review hat den ersten Stand nicht durchgehen lassen. Drei der vier "
+        "Zählmuster sind woertliches Markup, also lassen ein hinzugefuegtes "
+        "Attribut oder ein Umbruch sie auf beiden Seiten auf null fallen, und "
+        "der Vergleich besteht dann. Das ist jetzt behoben und nachgemessen."
+    )
+    ENGLISH = (
+        "The review did not let the first version through. Three of the four "
+        "count patterns are literal markup, so an added attribute or a reflow "
+        "drops them to zero on both pages at once and the comparison passes. "
+        "That is fixed now and measured."
+    )
+
+    def test_german_body_is_denied(self) -> None:
+        out = run_hook(f"gh pr create --title x --body '{self.GERMAN}'")
+        self.assertEqual("deny", decision(out))
+
+    def test_denial_names_the_language_rule(self) -> None:
+        out = run_hook(f"gh pr create --title x --body '{self.GERMAN}'")
+        self.assertIn("English", out)
+
+    def test_english_body_passes(self) -> None:
+        out = run_hook(f"gh pr create --title x --body '{self.ENGLISH}'")
+        self.assertNotEqual("deny", decision(out))
+
+    def test_german_review_comment_is_denied(self) -> None:
+        out = run_hook(f"gh pr comment 3 -R o/r --body '{self.GERMAN}'")
+        self.assertEqual("deny", decision(out))
+
+    def test_english_body_naming_german_identifiers_passes(self) -> None:
+        # An English body may quote German strings — a test fixture, a UI label,
+        # an error message. Those must not read as a German body.
+        body = (
+            "The seed fixture contains the label 'Nicht gefunden' and the error "
+            "'Der Wert ist ungueltig', both asserted verbatim in the test. This "
+            "PR only changes the encoding used when they are written to disk."
+        )
+        out = run_hook(f"gh pr create --title x --body '{body}'")
+        self.assertNotEqual("deny", decision(out))
+
+    def test_short_english_reply_passes(self) -> None:
+        out = run_hook("gh pr comment 3 -R o/r --body 'Fixed in abc1234.'")
+        self.assertNotEqual("deny", decision(out))
+
+    def test_commit_message_is_not_a_forge_body(self) -> None:
+        # Commit messages are out of scope for this gate; only forge bodies.
+        out = run_hook(f"git commit -m 'feat: x\n\n{self.GERMAN}'")
+        self.assertNotEqual("deny", decision(out))
+
+
 if __name__ == "__main__":
     unittest.main()

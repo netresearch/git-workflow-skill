@@ -149,10 +149,9 @@ def hard_wrapped(text: str) -> int:
     return hits
 
 
-def forge_body_hard_wrapped(cmd: str) -> str | None:
-    if not FORGE_BODY.search(cmd):
-        return None
-    bodies = []
+def _forge_bodies(cmd: str) -> list[tuple[str, str]]:
+    """Every body this command would post, as (label, text)."""
+    bodies: list[tuple[str, str]] = []
     for m in BODY_FILE.finditer(cmd):
         p = m.group(1).strip("'\"")
         try:
@@ -169,7 +168,13 @@ def forge_body_hard_wrapped(cmd: str) -> str | None:
             pass
     for m in BODY_INLINE.finditer(cmd):
         bodies.append(("--body", m.group(2)))
-    for name, text in bodies:
+    return bodies
+
+
+def forge_body_hard_wrapped(cmd: str) -> str | None:
+    if not FORGE_BODY.search(cmd):
+        return None
+    for name, text in _forge_bodies(cmd):
         n = hard_wrapped(text)
         if n >= 3:
             return (
@@ -181,6 +186,55 @@ def forge_body_hard_wrapped(cmd: str) -> str | None:
                 "survive verbatim, unlike a CHANGELOG where markdown reflows. "
                 "Tables, lists and fenced code keep their own line structure. "
                 "(Commit messages are the exception and stay wrapped at ~72.)"
+            )
+    return None
+
+
+# Function words that carry German prose and are not English words. "die",
+# "man", "war", "so" and "in" are deliberately absent: they are English too,
+# and a marker that fires on English is worse here than a missing one, because
+# this gate denies rather than nudges.
+GERMAN_MARKERS = frozenset(
+    """und nicht wird werden wurde wurden eine einen einem einer der dem den des
+    das auch sich fuer für ueber über durch damit nach noch schon dann aber oder
+    mit von zum zur dass weil wenn ohne jetzt muss soll sind ist kann haben hat
+    keine kein diese dieser dieses beim sowie bereits immer sehr zwei drei""".split()
+)
+WORD = re.compile(r"[A-Za-zÄÖÜäöüß]+")
+
+
+def german_prose(text: str) -> tuple[int, int]:
+    """(distinct markers, share of words that are markers) for a body."""
+    words = [w.lower() for w in WORD.findall(text)]
+    if not words:
+        return 0, 0.0
+    hits = [w for w in words if w in GERMAN_MARKERS]
+    return len(set(hits)), len(hits) / len(words)
+
+
+def forge_body_not_english(cmd: str) -> str | None:
+    """Deny a forge body written in the chat language rather than the repo's.
+
+    The share matters as much as the count: an English body may quote a German
+    fixture, a UI label or an error message, and that must not read as German
+    prose. Both thresholds have to trip together.
+    """
+    if not FORGE_BODY.search(cmd):
+        return None
+    for name, text in _forge_bodies(cmd):
+        distinct, share = german_prose(text)
+        if distinct >= 6 and share >= 0.08:
+            return (
+                f"{name} looks like German prose ({distinct} distinct German "
+                f"function words, {share:.0%} of all words). Everything on the "
+                "forge is English: PR and issue bodies, review comments, "
+                "release notes and labels are read by whoever finds the "
+                "repository, not only by the person the chat is with. Write it "
+                "in English — the conversation language does not travel with "
+                "the artifact. Quoting a German string (a fixture, a UI label, "
+                "an error message) inside an English body is fine and does not "
+                "trip this. Set FORGE_LANGUAGE_GATE_OFF=1 for a repository "
+                "whose own language is German."
             )
     return None
 
@@ -544,13 +598,16 @@ def main():
     # Gates that refuse the call outright. Checked before the advisory
     # warnings because a denied command never runs, so warning about its
     # style would be noise.
-    for gate in (
+    gates = [
         forge_body_hard_wrapped,
         reply_path_without_pr,
         handrolled_pr_poll,
         merge_readiness_without_pr_status,
         unresolvable_sha,
-    ):
+    ]
+    if not os.environ.get("FORGE_LANGUAGE_GATE_OFF"):
+        gates.insert(1, forge_body_not_english)
+    for gate in gates:
         reason = gate(command)
         if reason:
             deny(reason)
