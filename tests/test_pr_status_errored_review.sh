@@ -56,9 +56,22 @@ cat "$STUB_DIR/graphql.json"
 STUB
     chmod +x "$STUB_DIR/gh"
     python3 - "$STUB_DIR/graphql.json" "$@" <<'PY'
-import sys, json
+import sys, json, os
 out, bodies = sys.argv[1], sys.argv[2:]
 head = "deadbeefcafe"
+# Env overrides so the signature/settled ladder branches are testable:
+#   MERGE_STATE (default CLEAN), SIGNED (default 1),
+#   PENDING_CHECK=1 adds an IN_PROGRESS check run (checks_settled -> false).
+merge_state = os.environ.get("MERGE_STATE", "CLEAN")
+signed = os.environ.get("SIGNED", "1") == "1"
+review_decision = os.environ.get("REVIEW_DECISION") or None
+checks = [{"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS",
+           "status": "COMPLETED", "detailsUrl": "u",
+           "startedAt": "2026-01-01T00:00:00Z"}]
+if os.environ.get("PENDING_CHECK", "0") == "1":
+    checks.append({"__typename": "CheckRun", "name": "slow", "conclusion": None,
+                   "status": "IN_PROGRESS", "detailsUrl": "u",
+                   "startedAt": "2026-01-01T00:00:00Z"})
 reviews = [{"author": {"login": "copilot-pull-request-reviewer"},
             "state": "COMMENTED", "commit": {"oid": head}, "body": b}
            for b in bodies]
@@ -67,7 +80,7 @@ json.dump({"data": {"repository": {
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
         "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
-        "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "reviewDecision": None,
+        "mergeable": "MERGEABLE", "mergeStateStatus": merge_state, "reviewDecision": review_decision,
         "author": {"login": "someone"},
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
         "isCrossRepository": False,
@@ -75,12 +88,9 @@ json.dump({"data": {"repository": {
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
         "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
-            "state": "SUCCESS", "contexts": {"nodes": [
-                {"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS",
-                 "status": "COMPLETED", "detailsUrl": "u",
-                 "startedAt": "2026-01-01T00:00:00Z"}]}}}}]},
+            "state": "SUCCESS", "contexts": {"nodes": checks}}}}]},
         "allCommits": {"nodes": [{"commit": {"oid": head,
-                                             "signature": {"isValid": True}}}]},
+                                             "signature": {"isValid": signed}}}]},
     }}}}, open(out, "w"))
 PY
 }
@@ -429,6 +439,83 @@ make_stub_reviews \
   "a-human|APPROVED|fixed" \
   "a-human|CHANGES_REQUESTED|found something else"
 check "reviews_on_head[a-human]" "APPROVED+CHANGES_REQUESTED" "$(run_flag '"reviews_on_head"."a-human"')"
+
+
+# --- Signature gate (#187): BLOCKED + unsigned + all green must name the ---
+# --- signature, even when a quota-errored Copilot row sits on the head    ---
+echo "case S1: BLOCKED + unsigned + quota error row — fix-signatures outranks request-review"
+MERGE_STATE=BLOCKED SIGNED=0 make_stub "$ERR_QUOTA"
+check "next.action" "fix-signatures" "$(run_next)"
+if status | jq -e '.next.why | test("classic branch protection")' >/dev/null; then
+    echo "  ok   why names the invisible classic protection"
+else
+    echo "  FAIL why does not name classic branch protection"
+    fail=1
+fi
+
+echo "case S2: BLOCKED + signed — the signature gate must stay quiet"
+MERGE_STATE=BLOCKED SIGNED=1 make_stub "$ERR_QUOTA"
+check "next.action" "request-review" "$(run_next)"
+
+echo "case S3: CLEAN + unsigned — no signature rule visible, merge stays open"
+MERGE_STATE=CLEAN SIGNED=0 make_stub "$REAL_REVIEW"
+check "next.action" "merge" "$(run_next)"
+
+echo "case S4: BLOCKED + unsigned + REVIEW_REQUIRED — review cause outranks the signature guess"
+MERGE_STATE=BLOCKED SIGNED=0 REVIEW_DECISION=REVIEW_REQUIRED make_stub "$ERR_QUOTA"
+if [ "$(run_next)" = "fix-signatures" ]; then
+    echo "  FAIL fired fix-signatures although a required review explains the BLOCKED"
+    fail=1
+else
+    echo "  ok   signature branch stays quiet when reviewDecision explains BLOCKED"
+fi
+
+# --- Watch settle-gate (#186): request-review with unsettled CI must WAIT ---
+watch() { PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 1 --watch --interval 1 --max-wait 2; }
+echo "case W1: watch + pending check + no review — holds until timeout, no ACTIONABLE"
+PENDING_CHECK=1 make_stub
+out=$(watch || true)
+case "$out" in
+    *"ACTIONABLE: request-review"*)
+        echo "  FAIL watch emitted request-review while CI was unsettled"; fail=1 ;;
+    *TIMEOUT*)
+        echo "  ok   watch held (timeout) instead of firing early" ;;
+    *)  echo "  FAIL unexpected watch output: $(printf '%s' "$out" | head -2)"; fail=1 ;;
+esac
+
+echo "case W2: watch + settled + no review — returns immediately"
+make_stub
+out=$(watch || true)
+case "$out" in
+    *"ACTIONABLE: request-review"*) echo "  ok   immediate return on settled CI" ;;
+    *) echo "  FAIL expected immediate ACTIONABLE: request-review"; fail=1 ;;
+esac
+
+echo "case W3: watch + pending check + QUOTA error — quota exemption still returns immediately"
+PENDING_CHECK=1 make_stub "$ERR_QUOTA"
+# Assert the discriminating signal: the exemption path's unique ACTIONABLE
+# prefix AND no TIMEOUT. The bare quota phrase also appears in every
+# "waiting:" line's why-text, so matching it passes vacuously when the
+# exemption is broken and the watch holds to timeout (found by mutation d).
+out=$(watch || true)
+case "$out" in
+    *"ACTIONABLE: request-review (UNSATISFIABLE"*)
+        case "$out" in
+            *TIMEOUT*) echo "  FAIL exemption fired only at timeout"; fail=1 ;;
+            *) echo "  ok   quota dead-end returns immediately despite unsettled CI" ;;
+        esac ;;
+    *) echo "  FAIL quota exemption did not fire (no UNSATISFIABLE ACTIONABLE line)"; fail=1 ;;
+esac
+
+echo "case W4: watch + BLOCKED + unsigned + settled — fix-signatures is an actionable event"
+MERGE_STATE=BLOCKED SIGNED=0 make_stub "$REAL_REVIEW"
+out=$(watch || true)
+case "$out" in
+    *"ACTIONABLE: fix-signatures"*) echo "  ok   watch returns immediately on the signature gate" ;;
+    *TIMEOUT*) echo "  FAIL watch held to timeout on its own headline scenario"; fail=1 ;;
+    *) echo "  FAIL unexpected watch output"; fail=1 ;;
+esac
+
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"

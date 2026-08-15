@@ -408,6 +408,38 @@ evaluate() {
                     else "" end)
                  + " — the queue merges it once its own checks pass; enqueueing"
                  + " again only restarts them")}
+         # A required-signatures gate can live in CLASSIC branch protection,
+         # which neither the rulesets endpoint nor a non-admin protection
+         # query can see: mergeState sits at BLOCKED while every visible gate
+         # is green. When a branch commit is unsigned, that invisible gate is
+         # the prime suspect — and it must outrank the advisory review
+         # branches below, which otherwise mask it (observed: a
+         # `gh pr update-branch --rebase` re-wrote the head UNSIGNED and the
+         # PR reported request-review while the real blocker was the
+         # signature; #187). Guarded on checks_settled and zero failures so
+         # it only fires when nothing visible explains the BLOCKED.
+         # reviewDecision is consulted first: BLOCKED caused by a required
+         # human review (REVIEW_REQUIRED / CHANGES_REQUESTED) reaches this
+         # spot too, and authors who simply do not sign commits would get a
+         # history-rewriting rebase command for a review problem.
+         elif (($s.unsigned|length) > 0
+               and $s.mergeState == "BLOCKED"
+               and ($s.reviewDecision != "REVIEW_REQUIRED")
+               and ($s.reviewDecision != "CHANGES_REQUESTED")
+               and $s.checks_settled
+               and (($s.checks.failing|length) == 0)
+               and $s.unresolved_threads == 0) then
+           {action:"fix-signatures",
+            why:("\($s.unsigned|length) commit(s) on this branch carry no valid signature — \($s.unsigned|join(", "))"
+                 + " — and mergeState is BLOCKED with every visible gate green."
+                 + " A signature requirement in classic branch protection is"
+                 + " invisible to the rulesets endpoint and to non-admin"
+                 + " queries — fix the signatures before chasing review state."
+                 + " Note: gh pr update-branch re-writes the head UNSIGNED;"
+                 + " rebase locally instead"),
+            # No single quotes in here: the whole jq program lives in a
+            # single-quoted shell string (same trap as the sibling cmd below).
+            cmd:"git rebase --exec \"git commit --amend --no-edit -S\" $(git merge-base HEAD origin/\($s.base)) ; git push --force-with-lease"}
          # `|` binds looser than `and`, so the negation needs its own parens:
          # `a and b|not` parses as `(a and b)|not` and inverts the whole test.
          # has_copilot_review_on_head must be false too: the error row stays on
@@ -643,12 +675,20 @@ while :; do
   fi
   case "$act" in
     request-review)
+      # request-review while CI has not settled is not actionable yet — the
+      # ladder itself stamps "do not enqueue on this reading" onto the why.
+      # Keep waiting: a failing check fires the branch above, and once the
+      # checks settle this returns on the review state (#186). The quota
+      # dead-end is exempt — waiting cannot clear it, return immediately.
+      if [ "$(jq -r '.checks_settled' <<<"$s")" != "true" ] \
+         && [ "$(jq -r '.copilot_quota_hit // false' <<<"$s")" != "true" ]; then
+        :
       # A request-review whose cause is an exhausted review bot is a standing
       # condition, not an event: waiting cannot clear a quota ceiling, so every
       # re-arm of --watch returns instantly with the same line. Saying so is
       # what stops an operator re-arming it three times before switching to
       # `gh pr checks --watch`, which watches something that does move.
-      if [ "$(jq -r '.copilot_quota_hit // false' <<<"$s")" = "true" ]; then
+      elif [ "$(jq -r '.copilot_quota_hit // false' <<<"$s")" = "true" ]; then
         echo "ACTIONABLE: request-review (UNSATISFIABLE — Copilot is OUT OF REVIEW QUOTA" \
              "for the month; this will NOT change until the monthly reset, on this or any" \
              "other PR. Do not re-arm this watch and do not re-request — review the diff" \
@@ -662,8 +702,12 @@ while :; do
       else
         echo "ACTIONABLE: request-review"
       fi
-      emit "$s"; exit 0 ;;
-    fix-ci|triage-ci|resolve-threads|rebase|resolve-conflicts|merge|blocked|none)
+      # Unsettled-CI hold: emit nothing, fall through to the wait line.
+      if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ] \
+         || [ "$(jq -r '.copilot_quota_hit // false' <<<"$s")" = "true" ]; then
+        emit "$s"; exit 0
+      fi ;;
+    fix-ci|triage-ci|resolve-threads|rebase|resolve-conflicts|merge|blocked|none|fix-signatures)
       echo "ACTIONABLE: $act"
       emit "$s"; exit 0 ;;
   esac
