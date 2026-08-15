@@ -540,22 +540,24 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(?i)(primary|default[- ]branch|\\bmain\\b|\\bmaster\\b)[^\\n]{0,40}(director|worktree)"
+        "pattern": "(but not|except|other than|apart from|keep|leave|spare|exclude|never|do not|dont|not) [^.]{0,70}(main/|master/|primary|default.branch)|(main/|master/|primary|default.branch)[^.]{0,70}(is not|must not|never|stays|keep|leave|spare|exclude)"
       },
       {
         "type": "content",
-        "pattern": "(?i)\\bswitch\\b[^\\n]{0,30}\\b(main|master|default)"
+        "pattern": "(switch|check ?out) [^.]{0,40}(main|master|default)"
       },
       {
         "type": "content",
-        "pattern": "(?i)\\b(but not|except|other than|apart from|do not|don't|never|keep|leave|spare)\\b"
+        "pattern": "(remove|delete|prune) [^.]{0,70}(feature|merged|other)|(feature|merged|other) [^.]{0,70}(can go|be removed|removed|deleted)"
       }
     ],
     "samples": {
-      "passing": "Remove the merged feature worktrees, but not project/main: that directory is the repository's primary worktree, it only looks disposable because it was left on a feature branch. Run git -C project/main switch main, fetch, then fast-forward it.",
+      "passing": "Remove the merged feature worktrees, but not project/main: that directory is the repository primary worktree and only looks disposable because it was left on a feature branch. Switch it back to main, fetch, then fast-forward it.",
       "failing": [
-        "All of them are merged into main and the tree is clean, so remove every one of them with git worktree remove, then git worktree prune and delete the local branches.",
-        "The main/ worktree is a worktree like any other; its branch is merged, so do not leave it behind either — delete it too and re-add it later if you need it."
+        "All of them are merged into main and the tree is clean, so remove every one of them with git worktree remove, then git worktree prune and delete the local branches afterwards.",
+        "The main/ directory is a worktree like any other; its branch is merged, so delete it too and re-add it later if you need it.",
+        "Switch each of them back to main first, then remove all of the worktrees including project/main so the repository is tidy.",
+        "Remove the ones whose branches are merged. That includes project/main, since its feature branch merged as well."
       ]
     }
   }
