@@ -533,5 +533,23 @@
         "pattern": "(?i)(blank line|first blank|sed -n)"
       }
     ]
+  },
+  {
+    "name": "worktree_cleanup_spares_the_primary_directory",
+    "prompt": "Clean up this repository's worktrees: several feature worktrees are fully merged into main with a clean tree. One of them is the repo's main/ directory, which was switched to a feature branch that has since merged. Which do you remove?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(primary|main/|master/|default[- ]branch) (director|worktree)"
+      },
+      {
+        "type": "content",
+        "pattern": "git (-C [^ ]+ )?switch"
+      },
+      {
+        "type": "content",
+        "pattern": "(not|never|do not|instead of) .{0,40}(remove|delete)"
+      }
+    ]
   }
 ]

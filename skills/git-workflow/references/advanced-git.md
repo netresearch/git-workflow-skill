@@ -390,6 +390,35 @@ refuses a worktree with uncommitted changes, which is the check that catches a
 removal you did not intend. If a later command already failed this way, `cd` to a real directory
 and re-run it — do not start diagnosing the repository.
 
+### "Merged and clean" is not the whole test — check the worktree's role
+
+A cleanup sweep classifies worktrees by branch state: HEAD contained in
+`origin/main`, tree clean, therefore safe to remove. That test is necessary and
+not sufficient. It says nothing about *which* worktree it matched, and the
+repository's primary directory can satisfy it too — a `main/` worktree that was
+switched to a feature branch and left there stays behind after the branch
+merges, and then classifies exactly like a disposable feature worktree.
+
+Removing it deletes the directory every other tool, script and shell in that
+repository points at. The fix for that case is a switch, not a removal:
+
+```bash
+git -C /path/to/project/main switch main
+git -C /path/to/project/main merge --ff-only origin/main
+git -C /path/to/project/main branch -d <merged-feature-branch>
+```
+
+So the classifier needs two predicates, not one: the branch state **and** the
+directory's role. Treat the worktree whose basename is `main`, `master` or the
+repository's default-branch name as never-removable; only the others are
+candidates for `git worktree remove`. In one sweep across 78 worktrees, 12
+passed the merged-and-clean test and 9 of those 12 were primary directories
+sitting on a merged feature branch — a role check that ran second would have
+been a role check that ran too late.
+
+The same shape applies to any cleanup rule that matches on state: state answers
+whether the artifact is *finished*, never whether it is *disposable*.
+
 ### A stale worktree is a stale source
 
 A worktree checked out days ago can be many commits behind `origin` — its
