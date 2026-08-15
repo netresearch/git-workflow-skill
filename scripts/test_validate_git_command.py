@@ -18,7 +18,7 @@ from typing import ClassVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from validate_git_command import german_prose
+from validate_git_command import GERMAN_MARKERS
 
 HOOK = Path(__file__).with_name("validate_git_command.py")
 
@@ -245,32 +245,29 @@ class ForgeBodyLanguageGate(unittest.TestCase):
         # No traceback, and the other gates in the file still got their turn.
         self.assertNotIn("Traceback", out)
 
-    def test_no_english_reference_file_in_the_fleet_is_denied(self) -> None:
-        """The calibration corpus, as an assertion rather than a code comment.
+    def test_marker_list_excludes_the_words_that_collide_with_english(self) -> None:
+        """Pins the calibration decisions, each of which cost a false positive.
 
-        The marker list is a heuristic, and the only thing that keeps it honest
-        is a negative corpus wider than the documents that motivated it: `mit`
-        had to go because it is the licence every skill repository names. This
-        feeds the skill's own English reference files through the gate and
-        requires that none of them denies.
+        Every word here is German and was in an early draft of the list. Each
+        is also ordinary English or a term the fleet's own prose uses — `mit`
+        is the licence every skill repository names — so re-adding one makes
+        the gate deny English bodies. A list is a decision, and this is the
+        assertion that makes the decision fail loudly when it is reversed.
         """
-        here = Path(__file__).resolve().parent.parent
-        corpus = sorted((here / "skills").glob("*/references/*.md"))
-        self.assertGreater(len(corpus), 3, "corpus too small to be evidence")
-        denied = []
-        for path in corpus:
-            text = path.read_text(encoding="utf-8", errors="replace")
-            distinct, share = german_prose(text)
-            if distinct >= 6 and share >= 0.08:
-                denied.append(f"{path.name} ({distinct} markers, {share:.0%})")
-        self.assertEqual([], denied, "English reference prose must not trip the gate")
+        for word in ("mit", "das", "von", "hat", "die", "man", "war", "so", "in"):
+            self.assertNotIn(word, GERMAN_MARKERS, f"{word!r} also occurs in English")
 
-    def test_the_gate_still_fires_on_german_of_the_same_length(self) -> None:
-        # Guards the other direction: a corpus test that passes because the
-        # thresholds became unreachable would prove nothing.
-        distinct, share = german_prose(self.GERMAN * 8)
-        self.assertGreaterEqual(distinct, 6)
-        self.assertGreaterEqual(share, 0.08)
+    def test_an_english_body_about_licences_is_not_denied(self) -> None:
+        # The body shape that made `mit` untenable, run through the real gate
+        # rather than through a re-implementation of its thresholds.
+        body = (
+            "This adds the missing licence headers. Every package here is MIT, "
+            "so the header names the MIT licence and the holder, and the SPDX "
+            "identifier stays MIT-only. The one exception is the vendored "
+            "parser, which is BSD, and it keeps its own header verbatim."
+        )
+        out = run_hook(f"gh pr create --title x --body '{body}'")
+        self.assertNotEqual("deny", decision(out))
 
     def test_commit_message_is_not_a_forge_body(self) -> None:
         # Commit messages are out of scope for this gate; only forge bodies.

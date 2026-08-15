@@ -77,21 +77,34 @@ gh api repos/$R/actions/jobs/$JOB \
   --jq '.steps[] | select(.conclusion=="failure") | .name'
 ```
 
-Reaching for the log first costs several rounds that return nothing. On a job
-using `step-security/harden-runner`, its audit stream (`module=armour`, one line
-per protected inode) floods every keyword filter, so `--log-failed | tail`,
-`--log | grep -iE 'error|fail'` and a range starting at the validator's own
-summary all came back with runner chatter, `tar` invocations and a green
-`Errors: 0` — while the actual failure was a step called `Python lint`. Four
-calls, no information; the fifth, above, answered immediately.
+Reaching for the log first costs rounds that return nothing, because the
+failing step's output is often not in what you get back (see the next section)
+and every keyword filter then matches the surrounding noise instead —
+provisioning, `tar` invocations, a `harden-runner` audit stream, and in one case
+a validator's own green `Errors: 0` summary. Four such calls produced no
+information about a failure whose step was called `Python lint`; the API call
+above answered on the first try.
 
-Then reproduce that step's command rather than guessing from its name. **A
-repo's pre-commit set is not its CI lint set**: in that case `pre-commit run
---files …` was clean and `ruff check scripts/` reproduced the failure on the
-first try. Two habits follow — run the linter the CI step runs, by name, before
-committing; and never pipe `pre-commit` output through `tail` or filter out the
-hook-name lines, because `files were modified by this hook` is a failed run, not
-noise.
+### A green pre-commit run is not a green CI lint step
+
+Two distinct reasons, and the second is the one that is easy to miss.
+
+**The run was not green.** `pre-commit` reports a reformatting hook as a
+failure, and the report is easy to discard: `pre-commit run --files … | grep -vE
+'Skipped|Passed' | tail -4` printed `- files were modified by this hook` and `2
+files reformatted`, which was read as success. Never filter or truncate
+`pre-commit` output — `files were modified by this hook` is a failed run, and
+the hook names are how you tell which.
+
+**The versions differ.** Even a genuinely green run proves only what the
+*pinned* version thinks. `.pre-commit-config.yaml` pins
+`astral-sh/ruff-pre-commit` by `rev`, while the CI step pins its own
+(`uvx ruff@0.16.0 check`). Measured on the same file: ruff 0.15.14, the
+pre-commit pin, reported `All checks passed!` while ruff 0.16.0, the CI pin,
+failed it on `SIM905`. The rule was newer than the hook. So keep the two pins in
+parity and let dependency updates move them together; when they disagree, the
+CI's version is the one that decides, and running the linter merely "by name" is
+not enough.
 
 ### The step output of a failed job comes from the RUN's log archive
 

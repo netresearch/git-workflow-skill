@@ -249,28 +249,30 @@ builds a throwaway layout and checks that a commit in `main/` denies while
 
 ### The deny message is a specification
 
-Whatever a denial says is what its author will be held to, and the exception a message
-carves out is the case most likely to be wrong — it is the one the implementation had to
-think about separately. Turn each clause into a test before shipping the gate.
+Whatever a denial says is what its author will be held to, and the exception
+a message carves out is the case most likely to be wrong — it is the one the
+implementation had to think about separately. Turn each clause into a test
+before shipping the gate.
 
-The forge-body language gate is the worked example. Its message makes four claims, and
-the first version of the gate honoured two of them:
+The forge-body language gate is the worked example. Its first message made
+three claims, and the gate honoured one of them:
 
-| Clause of the message | Test |
-|---|---|
-| a German body is denied | body of German prose → `deny` |
-| quoting a German string inside an English body "is fine and does not trip this" | English body with a German stack trace in a fenced block → not `deny` |
-| `FORGE_LANGUAGE_GATE_OFF=1` in front of the command exempts a German repository | the documented command verbatim → not `deny` |
-| the exemption is a prefix, not a mention | the same string inside a body → still `deny` |
+| Clause of the message | Test | First version |
+|---|---|---|
+| a German body is denied | German prose → `deny` | held |
+| quoting a German string inside an English body "is fine" | English body with a German stack trace → not `deny` | denied it |
+| `FORGE_LANGUAGE_GATE_OFF=1` exempts a German repository | the documented command verbatim → not `deny` | inert: read from the environment, which a Bash prefix never reaches |
 
-Rows two and three failed when they were first written: the gate denied exactly the body
-its message called fine, and the exemption was read from the environment, where a Bash
-prefix can never arrive. Both were found by writing the tests from the message rather
-than from the implementation.
+Both failures were found by writing the tests from the message rather than
+from the implementation. A fourth clause — that the exemption is a prefix and
+not a mention — entered the message only with the fix, which is itself the
+pattern: sharpening a promise is how the missing case gets named, so
+re-derive the tests whenever the message changes.
 
-A gate that denies also needs its threshold calibrated against the widest negative corpus
-it will meet, not against the documents that motivated it. In that gate a German
-function-word marker list contained `mit`, which is the licence every skill repository
-names — 18 occurrences in a 63k-word English corpus assembled from the fleet's own
-reference files. A false deny blocks legitimate work, so in a denying gate a marker that
-fires on the negative corpus is worse than a missing one.
+A gate that denies also needs its threshold calibrated against a negative
+corpus wider than the documents that motivated it. In that gate a German
+function-word marker list contained `mit`, which is the licence every skill
+repository names. A false deny blocks legitimate work, so in a denying gate a
+marker that fires on the negative corpus is worse than a missing one — and
+the calibration belongs in a test rather than a comment, because a marker
+list is a decision and a comment cannot fail when the decision is reversed.
