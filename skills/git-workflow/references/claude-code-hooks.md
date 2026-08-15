@@ -243,3 +243,36 @@ builds a throwaway layout and checks that a commit in `main/` denies while
 | `Write\|Edit` matcher without file-path extraction | Hook runs on wrong files | `jq -r '.tool_input.file_path'` |
 | Blocking hooks that hit flaky services | One GitHub-API outage blocks all merges | Soft-fail: warn instead of deny for infra-dependent gates |
 | Per-hook large shell scripts inline in JSON | Unreadable, un-testable | Keep inline ≤3 lines; call external script for more |
+| An exception the gate reads from the environment | The hook is its own process; a `VAR=1 cmd` prefix never reaches it, so the documented way out is inert | Read it off the command text, anchored as a leading assignment, and copy the mechanism from the gate already shipping in that hook |
+| A deny text whose promises nothing tests | The message is the contract; an untested promise is usually the case the gate gets wrong | One test per clause of the message — see below |
+| A gate built from an incident that covers one command shape | An incident is plural; the shape you remember is rarely the only one it used | Extract every command shape from the transcript and assert the predicate on each |
+
+### The deny message is a specification
+
+Whatever a denial says is what its author will be held to, and the exception
+a message carves out is the case most likely to be wrong — it is the one the
+implementation had to think about separately. Turn each clause into a test
+before shipping the gate.
+
+The forge-body language gate is the worked example. Its first message made
+three claims, and the gate honoured one of them:
+
+| Clause of the message | Test | First version |
+|---|---|---|
+| a German body is denied | German prose → `deny` | held |
+| quoting a German string inside an English body "is fine" | English body with a German stack trace → not `deny` | denied it |
+| `FORGE_LANGUAGE_GATE_OFF=1` exempts a German repository | the documented command verbatim → not `deny` | inert: read from the environment, which a Bash prefix never reaches |
+
+Both failures were found by writing the tests from the message rather than
+from the implementation. A fourth clause — that the exemption is a prefix and
+not a mention — entered the message only with the fix, which is itself the
+pattern: sharpening a promise is how the missing case gets named, so
+re-derive the tests whenever the message changes.
+
+A gate that denies also needs its threshold calibrated against a negative
+corpus wider than the documents that motivated it. In that gate a German
+function-word marker list contained `mit`, which is the licence every skill
+repository names. A false deny blocks legitimate work, so in a denying gate a
+marker that fires on the negative corpus is worse than a missing one — and
+the calibration belongs in a test rather than a comment, because a marker
+list is a decision and a comment cannot fail when the decision is reversed.

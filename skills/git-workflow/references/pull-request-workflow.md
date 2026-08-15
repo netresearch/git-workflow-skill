@@ -281,7 +281,7 @@ Build the before/after table *before* writing the summary sentence. Filling in
 the rows is what catches the case you assumed was untouched; writing the
 sentence first only records the assumption.
 
-### A long-lived PR body describes the branch it had, not the branch it has
+### A PR body describes the branch it had, not the branch it has
 
 A body written months ago documents a state the branch has since left. Every
 rebase, revert and upstream merge invalidates part of it, and nothing in the
@@ -299,6 +299,23 @@ When a change is gone, **delete its section**. Rewording it to "X stays the
 coverage driver" replaces a false statement with a true but empty one: the body
 is the delta against the target, and something that does not change has no row
 in it.
+
+**Elapsed time is the obvious cause; a review is the frequent one, and it fires
+within the hour.** The body was written to describe the first version of the
+change, the review found that version wrong, and the fix replaced the approach
+the body still explains. Seen on one PR the same day it opened: the body
+documented an escape hatch read from the environment that the head commit had
+already replaced with one read off the command line — the mechanism was gone,
+the explanation was not.
+
+Re-derive the body after every push that answers a review, not only after a
+rebase, and **re-measure every number it states rather than copying it
+forward**. Figures survive edits that invalidate them: the same PR claimed a
+"63k-word corpus" while the code comment beside the measurement said 60k. Both
+had been measured — of different corpora, weeks apart in reading order and
+minutes apart in writing — which is exactly why the disagreement is worth
+catching. Two figures for one quantity means at least one is answering a
+question you are no longer asking.
 
 ### When you already have the fix, lead with it
 

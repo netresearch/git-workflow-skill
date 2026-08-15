@@ -16,6 +16,10 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from validate_git_command import GERMAN_MARKERS
+
 HOOK = Path(__file__).with_name("validate_git_command.py")
 
 
@@ -240,6 +244,30 @@ class ForgeBodyLanguageGate(unittest.TestCase):
         os.unlink(path)
         # No traceback, and the other gates in the file still got their turn.
         self.assertNotIn("Traceback", out)
+
+    def test_marker_list_excludes_the_words_that_collide_with_english(self) -> None:
+        """Pins the calibration decisions, each of which cost a false positive.
+
+        Every word here is German and was in an early draft of the list. Each
+        is also ordinary English or a term the fleet's own prose uses — `mit`
+        is the licence every skill repository names — so re-adding one makes
+        the gate deny English bodies. A list is a decision, and this is the
+        assertion that makes the decision fail loudly when it is reversed.
+        """
+        for word in ("mit", "das", "von", "hat", "die", "man", "war", "so", "in"):
+            self.assertNotIn(word, GERMAN_MARKERS, f"{word!r} also occurs in English")
+
+    def test_an_english_body_about_licences_is_not_denied(self) -> None:
+        # The body shape that made `mit` untenable, run through the real gate
+        # rather than through a re-implementation of its thresholds.
+        body = (
+            "This adds the missing licence headers. Every package here is MIT, "
+            "so the header names the MIT licence and the holder, and the SPDX "
+            "identifier stays MIT-only. The one exception is the vendored "
+            "parser, which is BSD, and it keeps its own header verbatim."
+        )
+        out = run_hook(f"gh pr create --title x --body '{body}'")
+        self.assertNotEqual("deny", decision(out))
 
     def test_commit_message_is_not_a_forge_body(self) -> None:
         # Commit messages are out of scope for this gate; only forge bodies.

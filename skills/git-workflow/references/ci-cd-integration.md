@@ -67,6 +67,45 @@ Because the exit code cannot distinguish "watched and passed" from "never
 found the run", assert the run exists before watching it, or re-read the
 check's state afterwards rather than trusting the watcher's return.
 
+### Ask which step failed before reading any log
+
+The jobs API names it in one call, and the name is usually enough to reproduce
+the failure locally:
+
+```bash
+gh api repos/$R/actions/jobs/$JOB \
+  --jq '.steps[] | select(.conclusion=="failure") | .name'
+```
+
+Reaching for the log first costs rounds that return nothing, because the
+failing step's output is often not in what you get back (see the next section)
+and every keyword filter then matches the surrounding noise instead —
+provisioning, `tar` invocations, a `harden-runner` audit stream, and in one case
+a validator's own green `Errors: 0` summary. Four such calls produced no
+information about a failure whose step was called `Python lint`; the API call
+above answered on the first try.
+
+### A green pre-commit run is not a green CI lint step
+
+Two distinct reasons, and the second is the one that is easy to miss.
+
+**The run was not green.** `pre-commit` reports a reformatting hook as a
+failure, and the report is easy to discard: `pre-commit run --files … | grep -vE
+'Skipped|Passed' | tail -4` printed `- files were modified by this hook` and `2
+files reformatted`, which was read as success. Never filter or truncate
+`pre-commit` output — `files were modified by this hook` is a failed run, and
+the hook names are how you tell which.
+
+**The versions differ.** Even a genuinely green run proves only what the
+*pinned* version thinks. `.pre-commit-config.yaml` pins
+`astral-sh/ruff-pre-commit` by `rev`, while the CI step pins its own
+(`uvx ruff@0.16.0 check`). Measured on the same file: ruff 0.15.14, the
+pre-commit pin, reported `All checks passed!` while ruff 0.16.0, the CI pin,
+failed it on `SIM905`. The rule was newer than the hook. So keep the two pins in
+parity and let dependency updates move them together; when they disagree, the
+CI's version is the one that decides, and running the linter merely "by name" is
+not enough.
+
 ### The step output of a failed job comes from the RUN's log archive
 
 `gh api repos/$R/actions/jobs/$JOB/logs` and `gh run view --job $JOB --log`
