@@ -365,6 +365,38 @@ minutes apart in writing — which is exactly why the disagreement is worth
 catching. Two figures for one quantity means at least one is answering a
 question you are no longer asking.
 
+### Write the body in its own tool call, after the push
+
+A body that cites a commit can only be written once that commit is on the
+remote, and the hash belongs in it by lookup — `git rev-parse --short HEAD` or
+`git log -1 --format=%h` — never typed from memory. A reader who follows a
+wrong hash finds nothing, and the claim it supported becomes unverifiable.
+
+That ordering has a second, sharper reason: **a denied command loses every side
+effect it contained.** Bundling the push, a heredoc that writes the body file,
+and `gh pr edit --body-file` into one shell invocation means a gate that rejects
+any part of it rejects all of it — and the parts that already ran do not roll
+back. Observed: the push landed, the heredoc never ran because the same call was
+rejected for naming a not-yet-pushed hash, and the following command failed with
+`no such file or directory` — a confusing error two steps downstream of the
+actual refusal.
+
+```bash
+# ✅ Three calls, each with one job
+git push
+git rev-parse --short HEAD          # take the hash from here
+# …write body.md…
+gh pr edit 123 --body-file body.md
+
+# ❌ One call: the gate rejects the whole thing, the push already happened,
+#    and the body file that the next step needs was never created
+git push && cat > body.md <<'EOF' … EOF && gh pr edit 123 --body-file body.md
+```
+
+The general rule: never bundle a file write with a push or an API call. Keep
+state-changing steps separable, so a refusal costs you the step and not the
+scaffolding around it.
+
 ### When you already have the fix, lead with it
 
 Issue templates order evidence before solution — they are written for reports
