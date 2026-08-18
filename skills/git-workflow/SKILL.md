@@ -76,7 +76,7 @@ Before merging: threads resolved, CI green (incl. annotations), rebased, signed,
 # Gate state, next action:
 ./scripts/pr-status.sh [-R owner/repo] [PR] [--json] [--watch]
 # Merge; refuses when the gate is shut:
-./scripts/pr-merge.sh [-R owner/repo] [PR] [--dry-run]
+./scripts/pr-merge.sh [-R owner/repo] [PR] [--dry-run|--self-reviewed]
 ```
 
 ---

@@ -66,6 +66,11 @@ STUB
 import sys, json, os
 out, bodies = sys.argv[1], sys.argv[2:]
 head = "deadbeefcafe"
+# COMMENTS_JSON: issue comments on the PR, as [{"author": ..., "body": ...}] —
+# the surface the Self-review attestation (#203) is read from.
+comments = [{"author": {"login": c["author"]}, "body": c["body"],
+             "url": "https://example.test/c"}
+            for c in json.loads(os.environ.get("COMMENTS_JSON", "[]"))]
 # Env overrides so the signature/settled ladder branches are testable:
 #   MERGE_STATE (default CLEAN), SIGNED (default 1),
 #   PENDING_CHECK=1 adds an IN_PROGRESS check run (checks_settled -> false).
@@ -82,6 +87,8 @@ if os.environ.get("PENDING_CHECK", "0") == "1":
 reviews = [{"author": {"login": "copilot-pull-request-reviewer"},
             "state": "COMMENTED", "commit": {"oid": head}, "body": b}
            for b in bodies]
+requests = [{"requestedReviewer": {"login": r}}
+            for r in json.loads(os.environ.get("REVIEW_REQUESTS_JSON", "[]"))]
 json.dump({"data": {"repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
@@ -91,8 +98,9 @@ json.dump({"data": {"repository": {
         "author": {"login": "someone"},
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
         "isCrossRepository": False,
+        "comments": {"nodes": comments},
         "reviews": {"nodes": reviews},
-        "reviewRequests": {"nodes": []},
+        "reviewRequests": {"nodes": requests},
         "reviewThreads": {"nodes": []},
         "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
             "state": "SUCCESS", "contexts": {"nodes": checks}}}}]},
@@ -276,6 +284,7 @@ check "copilot_quota_hit"   "true"           "$(run_flag copilot_quota_hit)"
 check "copilot_error_count" "1"              "$(run_flag copilot_error_count)"
 check "next.action"         "request-review" "$(run_next)"
 check "next.cmd absent"     "null"           "$(run_flag 'next.cmd')"
+check "next.reason"         "bot-review-unsatisfiable" "$(run_flag 'next.reason')"
 if status | jq -e '.next.why | test("MONTHLY")' >/dev/null; then
     echo "  ok   why states the quota is monthly and will not recover"
 else
@@ -676,6 +685,105 @@ case "$out" in
     *) echo "  FAIL quota line did not fire on settled CI"; fail=1 ;;
 esac
 
+
+# --- Self-review attestation (#203): an explicit author assertion may satisfy
+# --- a review demand ONLY where the tool itself calls that demand
+# --- unsatisfiable (quota wall, or two failed bot reviews on this head).
+SR_MARKER='[{"author": "someone", "body": "Self-review: deadbeefcafe\n\nreviewed by the author, bot unavailable"}]'
+
+echo "case SR1: quota marker + author Self-review comment — gate opens, why names it"
+COMMENTS_JSON="$SR_MARKER" make_stub
+plant_marker
+check "self_review_on_head" "true"  "$(run_flag self_review_on_head)"
+check "next.action"         "merge" "$(run_next)"
+if status | jq -e '.next.why | test("Self-review attestation")' >/dev/null; then
+    echo "  ok   why names the attestation the merge rests on"
+else
+    echo "  FAIL why does not name the attestation"
+    fail=1
+fi
+
+echo "case SR2: same comment by a NON-author — attestation not accepted"
+COMMENTS_JSON='[{"author": "somebody-else", "body": "Self-review: deadbeefcafe"}]' make_stub
+plant_marker
+check "self_review_on_head" "false"          "$(run_flag self_review_on_head)"
+check "next.action"         "request-review" "$(run_next)"
+
+echo "case SR3: author comment with a STALE sha — dies with the push, as documented"
+COMMENTS_JSON='[{"author": "someone", "body": "Self-review: 0ldc0mm1t"}]' make_stub
+plant_marker
+check "self_review_on_head" "false"          "$(run_flag self_review_on_head)"
+check "next.action"         "request-review" "$(run_next)"
+
+echo "case SR4: attestation present but NO quota wall — a live review path wins"
+COMMENTS_JSON="$SR_MARKER" make_stub
+check "self_review_on_head" "true"           "$(run_flag self_review_on_head)"
+check "next.action"         "request-review" "$(run_next)"
+case "$(run_flag 'next.cmd')" in
+    *"repos/o/r/pulls/1/requested_reviewers"*)
+        echo "  ok   the re-request command is still offered — the attestation changed nothing" ;;
+    *)  echo "  FAIL the attestation suppressed a live review path"
+        fail=1 ;;
+esac
+check "next.reason absent on the live path" "null" "$(run_flag 'next.reason')"
+
+echo "case SR5: two failed bot reviews + attestation — the two-strikes leg opens too"
+COMMENTS_JSON="$SR_MARKER" make_stub "$ERR_GENERIC" "$ERR_GENERIC"
+check "copilot_error_count" "2"     "$(run_flag copilot_error_count)"
+check "next.action"         "merge" "$(run_next)"
+
+echo "case SR6: prose comment without the marker line — not an attestation (case 8 stays)"
+COMMENTS_JSON='[{"author": "someone", "body": "Reviewed this myself, the bot was unavailable."}]' make_stub
+plant_marker
+check "self_review_on_head" "false"          "$(run_flag self_review_on_head)"
+check "next.action"         "request-review" "$(run_next)"
+
+echo "case SR7: quota why advertises the mechanism WITHOUT the accepting sequence"
+make_stub
+plant_marker
+if status | jq -e '.next.why | test("Self-review: <head-sha>")' >/dev/null; then
+    echo "  ok   the quota advice names the marker via a placeholder"
+else
+    echo "  FAIL the quota advice does not describe the marker"
+    fail=1
+fi
+if status | jq -e '.next.why | test("deadbeefcafe")' >/dev/null; then
+    echo "  ok   the advice still names the sha to use"
+else
+    echo "  FAIL the advice lost the sha"
+    fail=1
+fi
+# The paste-safety property this wording exists for: the advice itself, pasted
+# into a comment at ANY line wrap, must never contain the accepting sequence.
+if status | jq -e '.next.why | test("Self-review: deadbeef")' >/dev/null; then
+    echo "  FAIL the advice contains the accepting sequence — a paste could mint an attestation"
+    fail=1
+else
+    echo "  ok   the accepting sequence never appears in the advice"
+fi
+check "next.reason" "bot-review-unsatisfiable" "$(run_flag 'next.reason')"
+
+echo "case SR8: marker mid-body — the newline leg of the regex"
+COMMENTS_JSON='[{"author": "someone", "body": "prelude line\nSelf-review: deadbeefcafe"}]' make_stub
+plant_marker
+check "self_review_on_head" "true"  "$(run_flag self_review_on_head)"
+check "next.action"         "merge" "$(run_next)"
+
+echo "case SR9: blockquoted marker — a quoted paste does not mint an attestation"
+COMMENTS_JSON='[{"author": "someone", "body": "> Self-review: deadbeefcafe"}]' make_stub
+plant_marker
+check "self_review_on_head" "false"          "$(run_flag self_review_on_head)"
+check "next.action"         "request-review" "$(run_next)"
+
+echo "case SR10: pending Copilot request outranks the attestation"
+COMMENTS_JSON="$SR_MARKER" REVIEW_REQUESTS_JSON='["copilot-pull-request-reviewer[bot]"]' make_stub
+plant_marker
+check "next.action" "await-review" "$(run_next)"
+
+echo "case SR11: CHANGES_REQUESTED + attestation + quota — a human NO is a live review"
+COMMENTS_JSON="$SR_MARKER" REVIEW_DECISION=CHANGES_REQUESTED make_stub
+plant_marker
+check "next.action" "request-review" "$(run_next)"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
