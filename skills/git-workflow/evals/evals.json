@@ -560,5 +560,19 @@
         "Remove the ones whose branches are merged. That includes project/main, since its feature branch merged as well."
       ]
     }
+  },
+  {
+    "name": "review_pr_reads_standing_reviews_first",
+    "prompt": "Review pull request #42 in this repository and post your findings as review comments",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(get_reviews|existing review|prior review|standing review|review threads?)"
+      },
+      {
+        "type": "content",
+        "pattern": "(diff|changed files)"
+      }
+    ]
   }
 ]

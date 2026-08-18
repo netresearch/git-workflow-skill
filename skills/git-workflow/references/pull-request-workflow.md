@@ -396,6 +396,42 @@ rather than reordering them.
 
 Stop. Re-read the task. Did the user say "squash"? If not, use `--merge` or `--rebase` (with the signed-commits caveat). The correction "no squash! atomic commits!" is a repeat interruption — prevent it by defaulting to merge-commit.
 
+## Reviewing a PR: Read the Standing Review State First
+
+Before composing review findings — your own or a subagent's — fetch the PR's
+existing reviews and review threads in the same batch as the diff
+(`gh pr view --json reviews` plus the unresolved-thread GraphQL query, or MCP
+`pull_request_read: get_reviews` / `get_review_comments`). It costs no extra
+round-trip, and the diff alone is not the review context:
+
+- **Dedupe against standing feedback.** A finding another reviewer already
+  raised gets referenced or skipped, not re-posted as new. Reposting reads as
+  noise to the contributor and hides which comment is the actionable one.
+- **A moved head may BE the response to a prior review.** When the latest
+  commits were pushed after a CHANGES_REQUESTED review, new findings are often
+  regressions introduced by exactly the changes that review demanded — which
+  reframes severity and tone, and the connection is invisible from the diff
+  alone.
+- **The merge gate is the standing blocking review, not your new comment.** An
+  open CHANGES_REQUESTED review keeps blocking after its points are addressed;
+  the next action is that reviewer dismissing or re-reviewing, and a review
+  posted without knowing that mis-states what happens next.
+
+Observed (usercentrics-widgets#143): a four-comment review posted straight from
+the diff duplicated one point of the repo owner's own standing CHANGES_REQUESTED
+review and missed that the head under review was the contributor's response to
+it — the "new" case-sensitivity finding was a regression introduced by that
+review's requested guards, and the real next step (re-review of the standing
+blocker) surfaced only after posting.
+
+### Subagent findings: verify line anchors against the diff you fetched
+
+Inline comments anchor to diff positions. A file:line pair reported by a review
+subagent is a claim, not a coordinate — recompute it from the hunk headers
+before posting (observed: a reported `:185` pointed at a context `}`; the
+finding's code sat at 184). A wrong anchor lands the comment on an unrelated
+line or fails the review submission outright.
+
 ## Review Thread Resolution (SHA Citation Required)
 
 **Never reply with "Addressed" or "Fixed" without citing the resolving commit SHA.** Review threads are resolved on GitHub's side, not by agent assertion.
