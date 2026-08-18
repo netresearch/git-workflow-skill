@@ -187,13 +187,19 @@ pr-merge.sh -R owner/repo 123 --self-reviewed
 ```
 
 posts a PR comment whose body carries the line `Self-review: <head-sha>` (as
-the PR author — the flag refuses any other authenticated user), then re-reads
-the gate and merges. `pr-status.sh` reads the attestation back from the last
-50 comments and honours it **only** where the demanded review is one it
-itself calls unsatisfiable — the quota wall, or two failed bot reviews on the
-head. With a live review path the attestation changes nothing, a non-author
-comment never counts, and the next push invalidates it because the sha stops
-matching. This is an explicit operator assertion the tool reads back, not a
+the PR author — the flag refuses any other authenticated user; hand-written
+markers need at least the first 12 sha chars, since an 8-char prefix is
+grindable by vanity-sha tools), then re-reads the gate and merges.
+`pr-status.sh` reads the attestation back from the last 100 comments and
+honours it **only** where the refusing branch stamped
+`next.reason: bot-review-unsatisfiable` — the quota wall, or two failed bot
+reviews on the head; the flag keys on that reason, never on the account-global
+quota state, so a satisfiable refusal (say, classic `require_last_push_approval`)
+can never receive a false "unsatisfiable" attestation. With a live review path
+the attestation changes nothing, a non-author comment never counts, a human
+`CHANGES_REQUESTED` or a host-required approval keeps it inert, `--dry-run`
+previews the comment without posting it, and the next push invalidates the
+attestation because the sha stops matching. This is an explicit operator assertion the tool reads back, not a
 state it claims to observe — the same reason the old "review-yourself"
 *action* was removed. The attestation comment is permanent PR history: post
 it only when the diff was actually reviewed, and say what was looked at in

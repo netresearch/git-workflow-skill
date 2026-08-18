@@ -57,7 +57,7 @@
 # When the wall stands, the documented fallback (review the diff yourself,
 # note it in the PR, decide) can be put on the record so the merge gate reads
 # it back: a PR comment BY THE PR AUTHOR containing the line
-# `Self-review: <head-sha>` (first 8 chars suffice). The ladder honours it
+# `Self-review: <head-sha>` (at least the first 12 chars). The ladder honours it
 # ONLY while the demanded bot review is unsatisfiable — quota wall, or two
 # failed reviews on this head — and the attestation dies with the next push,
 # because the sha stops matching. `pr-merge.sh --self-reviewed` posts the
@@ -193,7 +193,7 @@ collect() {
         # The last page, not the first: a Self-review attestation (see the
         # header) is posted at the end of a conversation, and an old page
         # would go blind on exactly the PRs long enough to need one.
-        comments(last:50){ nodes{ author{login} body url } }
+        comments(last:100){ nodes{ author{login} body url } }
         reviews(last:50){ nodes{ author{login} state commit{oid} body } }
         reviewRequests(first:20){ nodes{ requestedReviewer{
           ... on User{login} ... on Bot{login} ... on Team{slug} } } }
@@ -281,8 +281,12 @@ evaluate() {
     # the attestation may satisfy the review gate is decided in the ladder,
     # and only where the demanded review is one an exhausted Copilot quota
     # makes unsatisfiable — with a live review path it changes nothing.
+    # At least the first 12 chars of the head sha (48 bits): an 8-char prefix
+    # is a 32-bit binding that vanity-sha grinders defeat in minutes, which
+    # would let anyone with push access keep an attestation alive across an
+    # unreviewed push. pr-merge posts the full 40-char oid.
     | ([$p.comments.nodes[]? | select(.author.login == $author)
-        | select((.body // "") | test("(^|\\n)Self-review: " + $head[0:8]))]) as $self_review_comments
+        | select((.body // "") | test("(^|\\n)Self-review: " + $head[0:12]))]) as $self_review_comments
     | (($self_review_comments | length) > 0) as $self_review_on_head
     # A review by the PR author is not a review. Replying to a thread registers
     # as COMMENTED by the author, which would otherwise satisfy the gate.
@@ -486,8 +490,16 @@ evaluate() {
     # reads "review the diff yourself and decide on that". Anywhere else a
     # live review path exists and the attestation is ignored, so it can never
     # shortcut a review that could still happen.
+    # reviewDecision guards: a human CHANGES_REQUESTED is a live review saying
+    # no, and REVIEW_REQUIRED means the HOST demands an approval the
+    # attestation could never satisfy — in both states the attestation stays
+    # inert so the ladder keeps reporting the honest review state instead of
+    # falling through to a merge attempt (CHANGES_REQUESTED with no open
+    # thread leaves mergeState CLEAN) or to "investigate".
     | ($s.self_review_on_head
-       and ($s.copilot_quota_exhausted or $copilot_exhausted)) as $self_attested
+       and ($s.copilot_quota_exhausted or $copilot_exhausted)
+       and ($s.reviewDecision != "CHANGES_REQUESTED")
+       and ($s.reviewDecision != "REVIEW_REQUIRED")) as $self_attested
     # Hoisted so BOTH exhausted variants can append it. The two branches below
     # serve disjoint repo populations — with the copilot_code_review ruleset
     # active, has_copilot_review_on_head implies has_review_on_head, so the
@@ -527,9 +539,12 @@ evaluate() {
        + " the bot review was unavailable, and decide on that. Treat this notice as covering"
        + " every PR until the monthly reset."
        + " To proceed on a documented self-review, post a PR comment (as the PR author)"
-       + " containing the line: Self-review: \($s.headOid[0:8]) —"
-       + " pr-merge.sh --self-reviewed posts it and merges in one step; the attestation is"
-       + " honoured only while this wall stands and dies with the next push") as $quota_why
+       + " containing the line `Self-review: <head-sha>` with at least the first 12"
+       + " chars of \($s.headOid[0:12]) — pr-merge.sh --self-reviewed posts it and merges in"
+       + " one step; the attestation is honoured only while this wall stands and dies with"
+       + " the next push. The placeholder here is deliberate: this very advice gets pasted"
+       + " into PR comments, and a paste must never mint an attestation, so the accepting"
+       + " sequence never appears in it") as $quota_why
     | .next =
         (if $s.state != "OPEN" then
            {action:"none", why:"PR is \($s.state)"}
@@ -644,7 +659,8 @@ evaluate() {
              # recover this month, on this or any other PR. No cmd on purpose,
              # there is nothing to run.
              {action:"request-review",
-              why:($unreviewed + $quota_why + $stale_approval)}
+              why:($unreviewed + $quota_why + $stale_approval),
+              reason:"bot-review-unsatisfiable"}
             elif $copilot_exhausted then
              {action:"request-review",
               why:($unreviewed
@@ -654,7 +670,8 @@ evaluate() {
                    + " asking. Review the diff yourself, say in the PR that the bot review was"
                    + " unavailable, and decide on that. This stays request-review because the"
                    + " ruleset still has no bot review — the tool cannot see that you read the"
-                   + " diff\($stale_approval)")}
+                   + " diff\($stale_approval)"),
+              reason:"bot-review-unsatisfiable"}
             else
              {action:"request-review",
               why:($unreviewed
@@ -683,7 +700,8 @@ evaluate() {
            # POST command the quota had already made impossible.
            (if $s.copilot_quota_exhausted then
               {action:"request-review",
-               why:($unreviewed + $quota_why + $stale_approval)}
+               why:($unreviewed + $quota_why + $stale_approval),
+              reason:"bot-review-unsatisfiable"}
             else
               {action:"request-review", why:("copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate"
                     + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported — do not enqueue on this reading)" end)),
@@ -706,14 +724,16 @@ evaluate() {
                # is what proves the wall — the generic gate serves the repos
                # without the ruleset, and its cmd re-requests the same bot.
                {action:"request-review",
-                why:($unreviewed + $quota_why + $stale_approval)}
+                why:($unreviewed + $quota_why + $stale_approval),
+              reason:"bot-review-unsatisfiable"}
              elif $copilot_exhausted then
                {action:"request-review",
                 why:("\($no_review). "
                      + "Copilot failed \($s.copilot_error_count)x on it, so its rows carry an error"
                      + " rather than a review. Do not keep re-requesting: an outage may clear, a"
                      + " quota ceiling does not clear by asking. Review the diff yourself and"
-                     + " decide on that\($stale_approval)")}
+                     + " decide on that\($stale_approval)"),
+                reason:"bot-review-unsatisfiable"}
               else
                {action:"request-review",
                 why:($no_review + $stale_approval),

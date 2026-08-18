@@ -91,16 +91,21 @@ read_status
 # leaves the flag without effect.
 if [ "$SELF_REVIEWED" = "1" ] && [ "$ACTION" = "request-review" ]; then
   SR_FIELDS=$(printf '%s' "$STATUS" | jq -er '
-    [ ((.copilot_quota_exhausted // false)|tostring),
-      ((.copilot_error_count // 0)|tostring),
+    [ (.next.reason // "-"),
       ((.self_review_on_head // false)|tostring),
       (.headOid // ""), (.author // "")
     ] | @tsv') || die "pr-status.sh returned unexpected JSON"
-  IFS=$'\t' read -r SR_QUOTA SR_ERRORS SR_HAVE SR_HEAD SR_AUTHOR <<EOF
+  IFS=$'\t' read -r SR_REASON SR_HAVE SR_HEAD SR_AUTHOR <<EOF
 $SR_FIELDS
 EOF
-  if [ "$SR_QUOTA" != "true" ] && [ "$SR_ERRORS" -lt 2 ]; then
-    die "--self-reviewed refused: the demanded review is not unsatisfiable (no quota wall, bot failures on this head: $SR_ERRORS) — a live review path exists, use it"
+  # Keyed on the reason the REFUSING BRANCH stamped, never re-derived from the
+  # account-global quota state: a request-review can also come from e.g. the
+  # classic require_last_push_approval gate — a satisfiable human approval —
+  # and with the monthly quota marker set on this machine a global test would
+  # post a factually false "unsatisfiable" attestation into permanent PR
+  # history there.
+  if [ "$SR_REASON" != "bot-review-unsatisfiable" ]; then
+    die "--self-reviewed refused: this request-review is not the unsatisfiable-bot-review case (reason: $SR_REASON) — a live review path exists, use it"
   fi
   VIEWER=$(gh api user --jq .login 2>/dev/null) || die "--self-reviewed: could not resolve the authenticated gh user"
   if [ "$VIEWER" != "$SR_AUTHOR" ]; then
@@ -108,9 +113,15 @@ EOF
   fi
   if [ "$SR_HAVE" != "true" ]; then
     BODY=$(printf 'Self-review: %s\n\nThe review this pull request demands is unsatisfiable (Copilot quota wall or repeated bot failures on this head). Per the documented fallback, the diff on this head was reviewed by the PR author; this comment is the on-the-record attestation the merge gate reads back. It stops matching on the next push.' "$SR_HEAD")
+    if [ "$DRY" = "1" ]; then
+      # A dry run must not flip persistent gate state: the attestation comment
+      # IS the gate-opening write, so it is previewed, never posted.
+      printf 'pr-merge: dry-run — would post the Self-review attestation for %s on %s#%s, re-read the gate and merge\n' "${SR_HEAD:0:12}" "$REPO" "$PR"
+      exit 0
+    fi
     gh pr comment "$PR" --repo "$REPO" --body "$BODY" >/dev/null \
       || die "--self-reviewed: posting the attestation comment failed"
-    printf 'pr-merge: posted Self-review attestation for %s on %s#%s\n' "${SR_HEAD:0:8}" "$REPO" "$PR" >&2
+    printf 'pr-merge: posted Self-review attestation for %s on %s#%s\n' "${SR_HEAD:0:12}" "$REPO" "$PR" >&2
   fi
   read_status
 fi

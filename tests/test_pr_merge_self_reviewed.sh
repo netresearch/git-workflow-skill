@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# --self-reviewed (#203): pr-merge may clear exactly one refusal — a review
-# demand the gate itself calls unsatisfiable — by posting the on-the-record
-# `Self-review: <head-sha>` attestation as the PR author and asking again.
-# Everything else must stay as strict as without the flag.
+# --self-reviewed (#203): pr-merge may clear exactly one refusal — a
+# request-review whose refusing branch stamped reason=bot-review-unsatisfiable
+# — by posting the on-the-record `Self-review: <head-sha>` attestation as the
+# PR author and asking again. Everything else must stay as strict as without
+# the flag, and a dry run must never perform the gate-opening write.
 #
 # Runs against a stubbed pr-status.sh (sequenced: first call answers
 # status.1.json, later calls status.2.json) and a stubbed `gh`, so it needs no
@@ -40,18 +41,22 @@ says_not() { # says_not <name> <pattern> <haystack>
 
 HEAD_OID="deadbeefcafe0000"
 
-# status fixture builder. Args: <file> <action> <quota> <errors> <have_marker>
+# status fixture builder. Args: <file> <action> <reason|-> <have_marker>
+# The top-level quota fields are set TRUE on purpose in every fixture: the
+# flag must key on next.reason alone, and a fixture where the global state
+# and the branch reason disagree is exactly the false-attestation trap.
 make_status_json() {
-    local why="clean"
+    local why="clean" reason_line=""
     [ "$2" = "merge" ] || why="no review on the current head — do not merge unreviewed"
+    [ "$3" = "-" ] || reason_line="\"reason\": \"$3\","
     cat > "$STUB_DIR/$1" <<JSON
 {
   "repo": "o/r", "number": 559, "queue_active": false,
   "merge_methods": ["merge", "rebase"],
   "headOid": "$HEAD_OID", "author": "the-author",
-  "copilot_quota_exhausted": $3, "copilot_error_count": $4,
-  "self_review_on_head": $5,
-  "next": {"action": "$2", "why": "$why", "method": "--merge"}
+  "copilot_quota_exhausted": true, "copilot_error_count": 2,
+  "self_review_on_head": $4,
+  "next": {"action": "$2", $reason_line "why": "$why", "method": "--merge"}
 }
 JSON
 }
@@ -73,9 +78,9 @@ STATUS
     : > "$STUB_DIR/status.calls"
 }
 
-# gh stub: logs every call, answers `api user` with $VIEWER_LOGIN, records the
-# body of `pr comment`, lets `pr merge` succeed, and answers the outcome poll
-# with MERGED.
+# gh stub: logs every call, answers `api user` with the viewer file, records
+# the body of `pr comment`, lets `pr merge` succeed, and answers the outcome
+# poll with MERGED.
 make_gh() {
     cat > "$STUB_DIR/gh" <<STUB
 #!/usr/bin/env bash
@@ -113,15 +118,15 @@ set_viewer_raw() { printf '%s\n' "$1" > "$STUB_DIR/viewer.json"; }
 
 run() { PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 "$@" 2>"$STUB_DIR/err"; }
 
-echo "case 1: quota refusal + --self-reviewed — posts the attestation, then merges"
+echo "case 1: unsatisfiable refusal + --self-reviewed — posts the attestation, then merges"
 make_status_stub; make_gh; set_viewer_raw "the-author"
-make_status_json status.1.json request-review true 0 false
-make_status_json status.2.json merge          true 0 true
+make_status_json status.1.json request-review bot-review-unsatisfiable false
+make_status_json status.2.json merge          -                        true
 out=$(run --self-reviewed); rc=$?
 err=$(cat "$STUB_DIR/err")
 check "exit code" "0" "$rc"
 says  "merged"                 "559 merged (--merge)" "$out"
-says  "announced the posting"  "posted Self-review attestation for deadbeef" "$err"
+says  "announced the posting"  "posted Self-review attestation for deadbeefcafe" "$err"
 if grep -q '^pr comment$' "$STUB_DIR/calls.log"; then
     echo "  ok   a comment was posted"
 else
@@ -130,9 +135,12 @@ fi
 body=$(cat "$STUB_DIR/comment.body" 2>/dev/null || echo "")
 says "comment carries the marker line" "Self-review: $HEAD_OID" "$body"
 
-echo "case 2: --self-reviewed refused when the demand is NOT unsatisfiable"
+echo "case 2: request-review WITHOUT the unsatisfiable reason — refused, no false attestation"
+# Global quota fields are true in the fixture (see make_status_json): a flag
+# keyed on them instead of next.reason would post a factually false
+# attestation onto e.g. a classic require_last_push_approval refusal.
 make_status_stub; make_gh; set_viewer_raw "the-author"
-make_status_json status.1.json request-review false 0 false
+make_status_json status.1.json request-review - false
 out=$(run --self-reviewed); rc=$?
 err=$(cat "$STUB_DIR/err")
 check "exit code" "2" "$rc"
@@ -145,7 +153,7 @@ fi
 
 echo "case 3: --self-reviewed refused for a non-author caller"
 make_status_stub; make_gh; set_viewer_raw "somebody-else"
-make_status_json status.1.json request-review true 0 false
+make_status_json status.1.json request-review bot-review-unsatisfiable false
 out=$(run --self-reviewed); rc=$?
 err=$(cat "$STUB_DIR/err")
 check "exit code" "2" "$rc"
@@ -159,8 +167,8 @@ fi
 
 echo "case 4: attestation already on the head — no second comment, merges"
 make_status_stub; make_gh; set_viewer_raw "the-author"
-make_status_json status.1.json request-review true 0 true
-make_status_json status.2.json merge          true 0 true
+make_status_json status.1.json request-review bot-review-unsatisfiable true
+make_status_json status.2.json merge          -                        true
 out=$(run --self-reviewed); rc=$?
 check "exit code" "0" "$rc"
 if grep -q '^pr comment$' "$STUB_DIR/calls.log"; then
@@ -171,20 +179,44 @@ fi
 
 echo "case 5: WITHOUT the flag the refusal is unchanged (exit 1)"
 make_status_stub; make_gh; set_viewer_raw "the-author"
-make_status_json status.1.json request-review true 0 false
+make_status_json status.1.json request-review bot-review-unsatisfiable false
 out=$(run); rc=$?
 err=$(cat "$STUB_DIR/err")
 check "exit code" "1" "$rc"
 says  "plain refusal" "not merging o/r#559 — request-review" "$err"
 says_not "no attestation posting" "posted Self-review attestation" "$err"
 
-echo "case 6: two-strikes (no quota) + flag — accepted, merges"
+echo "case 6: --dry-run --self-reviewed — the gate-opening write is previewed, never posted"
 make_status_stub; make_gh; set_viewer_raw "the-author"
-make_status_json status.1.json request-review false 2 false
-make_status_json status.2.json merge          false 2 true
-out=$(run --self-reviewed); rc=$?
+make_status_json status.1.json request-review bot-review-unsatisfiable false
+make_status_json status.2.json merge          -                        true
+out=$(run --self-reviewed --dry-run); rc=$?
 check "exit code" "0" "$rc"
-says  "merged" "559 merged (--merge)" "$out"
+says  "previews the posting" "dry-run — would post the Self-review attestation" "$out"
+if grep -q '^pr comment$' "$STUB_DIR/calls.log"; then
+    echo "  FAIL dry-run posted the attestation comment"; fail=1
+else
+    echo "  ok   dry-run performed no write"
+fi
+if grep -q '^pr merge$' "$STUB_DIR/calls.log"; then
+    echo "  FAIL dry-run ran the merge"; fail=1
+else
+    echo "  ok   dry-run ran no merge"
+fi
+
+echo "case 7: attestation posted but the second read still refuses — exit 1, no merge"
+make_status_stub; make_gh; set_viewer_raw "the-author"
+make_status_json status.1.json request-review bot-review-unsatisfiable false
+make_status_json status.2.json request-review bot-review-unsatisfiable true
+out=$(run --self-reviewed); rc=$?
+err=$(cat "$STUB_DIR/err")
+check "exit code" "1" "$rc"
+says  "refusal after re-read" "not merging o/r#559 — request-review" "$err"
+if grep -q '^pr merge$' "$STUB_DIR/calls.log"; then
+    echo "  FAIL merged although the re-read refused"; fail=1
+else
+    echo "  ok   no merge on a refusing re-read"
+fi
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
