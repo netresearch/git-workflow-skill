@@ -89,6 +89,15 @@ soon as a check fails, a thread needs an answer, a review is missing, or the
 required checks conclude. **Start fixing what is already red instead of
 waiting for green checks you do not need.**
 
+The first-event rule has one blind spot: an action already set at invocation
+that retrying cannot clear — a `request-review` held open by an exhausted
+Copilot quota — makes every re-arm return the same line within a second
+(#165). Once you have seen that action and decided not to take it, re-arm
+with `--watch --ignore-action <action>` (repeatable): the watch holds through
+it, still returns on every other actionable event, and answers
+`SETTLED: only ignored action remains` (exit 0) once the checks settle with
+nothing else left.
+
 ### Never merge an unreviewed PR
 
 If `pr-status.sh` reports `reviews: NONE on current head`, do not merge.
