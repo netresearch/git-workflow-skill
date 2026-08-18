@@ -129,6 +129,27 @@ ejections and one line — `[ERROR] Undefined constant …PHPUnitSetList::PHPUNI
 — that named the cause outright. The job-level calls had been tried first and
 showed nothing but setup.
 
+**While the run is still in progress, the archive does not exist yet** —
+`gh run view --log` answers `run … is still in progress; logs will be
+available when it is complete`, and so does the run-archive endpoint. A job
+that has already FAILED inside that running run is still readable through the
+job endpoint, with two traps: `gh api` refuses a body containing terminal
+escape sequences unless told otherwise, and the body arrives ANSI-colored:
+
+```bash
+gh api "repos/$R/actions/jobs/$JOB/logs" --allow-escape-sequences \
+  | sed 's/\x1b\[[0-9;]*m//g'
+```
+
+Without the flag the only output is
+`the response contains terminal escape sequences; pass --allow-escape-sequences
+to output it anyway` — one line, exit 0, easy to mistake for an empty log.
+Measured on 2026-08-18 (a matrix leg had failed while the rest of the run was
+still executing): the job-level body carried the full PHPUnit failure, so "job
+logs show only preamble" (above) is a per-job lottery, not a law — try the job
+endpoint first while the run lives, fall back to the run archive once it is
+complete.
+
 Note the archive is per *run*, so for a queue ejection you need the
 `gh-readonly-queue/*` run, not the pull request's own:
 
