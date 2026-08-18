@@ -19,11 +19,26 @@
 #   pr-status.sh -R owner/repo 123
 #   pr-status.sh --json               # machine-readable, no prose
 #   pr-status.sh --watch              # return on the FIRST actionable event
+#   pr-status.sh --watch --ignore-action request-review
+#                                     # hold through a standing action you have
+#                                     # decided not to take (repeatable)
 #
 # --watch deliberately does not wait for every check to finish. It returns as
 # soon as something can be worked on: a failing check, a new annotation, or all
 # required checks concluded. Waiting for `pending == 0` means learning nothing
 # until the slowest matrix job ends, long after the first failure was visible.
+#
+# --ignore-action exists for the standing state the first-event rule cannot
+# serve (#165): when `.next.action` is already actionable at invocation and
+# retrying cannot clear it — a request-review made unsatisfiable by an
+# exhausted Copilot quota — every re-arm of --watch returns the same line
+# within a second, and the watch cannot be used to wait for anything else.
+# Naming that action holds the watch through it: the watch still returns on
+# every OTHER actionable event, and once the checks settle while NEXT still
+# names the ignored action it returns `SETTLED: NEXT is still the ignored
+# action` (exit 0) instead of idling into the timeout. A new check failure
+# still returns, except when the ignored action IS the CI action
+# (fix-ci/triage-ci).
 #
 # Copilot review quota
 #
@@ -67,11 +82,19 @@
 # object drift apart, in either direction.
 set -uo pipefail
 
-REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600
+REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
+
+# Every action the watch loop returns on. --ignore-action accepts exactly
+# these: any other value could never have fired the loop, so accepting one
+# would let a typo behave as if the flag were absent.
+ACTIONABLE="fix-ci triage-ci resolve-threads request-review rebase resolve-conflicts merge blocked none fix-signatures"
 
 die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
 
 need() { [ $# -ge 2 ] && [ -n "${2:-}" ] || die "$1 requires a value"; }
+
+in_list() { case " $1 " in *" $2 "*) return 0 ;; *) return 1 ;; esac; }
+is_ignored() { in_list "$IGNORE" "$1"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -80,6 +103,15 @@ while [ $# -gt 0 ]; do
     --watch)    WATCH=1; shift ;;
     --interval) need "$@"; INTERVAL="$2"; shift 2 ;;
     --max-wait) need "$@"; MAXWAIT="$2"; shift 2 ;;
+    --ignore-action) need "$@"
+                     # Whitespace first: "fix-ci triage-ci" happens to be a
+                     # substring of ACTIONABLE and would slip past in_list.
+                     case "$2" in (*[[:space:]]*)
+                       die "--ignore-action: one action per flag (got '$2')" ;;
+                     esac
+                     in_list "$ACTIONABLE" "$2" \
+                       || die "--ignore-action: unknown action '$2' (one of: $ACTIONABLE)"
+                     IGNORE="$IGNORE $2"; shift 2 ;;
     # Prints the whole leading comment block rather than a fixed line range:
     # a hard-coded range silently truncates --help the moment the header
     # grows, which is how a documented contract stops being visible.
@@ -88,6 +120,10 @@ while [ $# -gt 0 ]; do
     *)  PR="$1"; shift ;;
   esac
 done
+
+if [ -n "$IGNORE" ] && [ "$WATCH" = "0" ]; then
+  die "--ignore-action is only meaningful with --watch"
+fi
 
 command -v gh  >/dev/null || die "gh not found"
 command -v jq  >/dev/null || die "jq not found"
@@ -749,49 +785,65 @@ while :; do
   act=$(jq -r '.next.action' <<<"$s")
   fails=$(jq -r '.checks.failing|join(",")' <<<"$s")
 
-  if [ -n "$fails" ] && [ "$fails" != "$seen_fail" ]; then
+  # The ignore test sits on this exit too, but ONLY when the standing action
+  # the caller declined IS the CI action (fix-ci/triage-ci) — then its failing
+  # checks are part of the state the caller already saw, not a fresh event.
+  # Any other ignored action must not eat a failure: resolve-conflicts and
+  # rebase outrank fix-ci in the NEXT ladder, so a red check can appear while
+  # the action still names the ignored non-CI blocker.
+  if [ -n "$fails" ] && [ "$fails" != "$seen_fail" ] \
+     && ! { is_ignored "$act" && in_list "fix-ci triage-ci" "$act"; }; then
     seen_fail="$fails"
     echo "ACTIONABLE: check failed -> $fails"
     emit "$s"; exit 0
   fi
-  case "$act" in
-    request-review)
-      # request-review while CI has not settled is not actionable yet — the
-      # ladder itself stamps "do not enqueue on this reading" onto the why.
-      # Keep waiting: a failing check fires the branch above, and once the
-      # checks settle this returns on the review state (#186). The quota
-      # dead-end is exempt — waiting cannot clear it, return immediately.
-      if [ "$(jq -r '.checks_settled' <<<"$s")" != "true" ] \
-         && [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" != "true" ]; then
-        :
-      # A request-review whose cause is an exhausted review bot is a standing
-      # condition, not an event: waiting cannot clear a quota ceiling, so every
-      # re-arm of --watch returns instantly with the same line. Saying so is
-      # what stops an operator re-arming it three times before switching to
-      # `gh pr checks --watch`, which watches something that does move.
-      elif [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" = "true" ]; then
-        echo "ACTIONABLE: request-review (UNSATISFIABLE — Copilot is OUT OF REVIEW QUOTA" \
-             "for the month; this will NOT change until the monthly reset, on this or any" \
-             "other PR. Do not re-arm this watch and do not re-request — review the diff" \
-             "yourself and decide. To watch something that moves:" \
-             "gh pr checks $(jq -r '.number' <<<"$s") --repo $(jq -r '.repo' <<<"$s") --watch)"
-      elif [ "$(jq -r '.copilot_error_count // 0' <<<"$s")" -ge 2 ]; then
-        echo "ACTIONABLE: request-review (UNSATISFIABLE — the review bot has failed" \
-             "$(jq -r '.copilot_error_count' <<<"$s")x on this head; re-arming this watch" \
-             "returns immediately. Review the diff yourself, or watch the checks instead:" \
-             "gh pr checks $(jq -r '.number' <<<"$s") --repo $(jq -r '.repo' <<<"$s") --watch)"
-      else
-        echo "ACTIONABLE: request-review"
-      fi
-      # Unsettled-CI hold: emit nothing, fall through to the wait line.
-      if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ] \
-         || [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" = "true" ]; then
-        emit "$s"; exit 0
-      fi ;;
-    fix-ci|triage-ci|resolve-threads|rebase|resolve-conflicts|merge|blocked|none|fix-signatures)
-      echo "ACTIONABLE: $act"
-      emit "$s"; exit 0 ;;
-  esac
+  if is_ignored "$act"; then
+    # A standing action the caller has already seen and declined (#165): never
+    # return on it. Once the checks settle, nothing about it will change
+    # either — say so instead of idling into the timeout. The message claims
+    # exactly what was checked: NEXT (the highest-priority action) is still
+    # the ignored one — lower-ranked work may well remain in the snapshot.
+    if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ]; then
+      echo "SETTLED: NEXT is still the ignored action -> $act"
+      emit "$s"; exit 0
+    fi
+  elif [ "$act" = "request-review" ]; then
+    # request-review while CI has not settled is not actionable yet — the
+    # ladder itself stamps "do not enqueue on this reading" onto the why.
+    # Keep waiting: a failing check fires the branch above, and once the
+    # checks settle this returns on the review state (#186). The quota
+    # dead-end is exempt — waiting cannot clear it, return immediately.
+    if [ "$(jq -r '.checks_settled' <<<"$s")" != "true" ] \
+       && [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" != "true" ]; then
+      :
+    # A request-review whose cause is an exhausted review bot is a standing
+    # condition, not an event: waiting cannot clear a quota ceiling, so every
+    # re-arm of --watch returns instantly with the same line. Saying so —
+    # and naming the flag that holds through it — is what stops an operator
+    # re-arming it three times before giving up on the tool.
+    elif [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" = "true" ]; then
+      echo "ACTIONABLE: request-review (UNSATISFIABLE — Copilot is OUT OF REVIEW QUOTA" \
+           "for the month; this will NOT change until the monthly reset, on this or any" \
+           "other PR. Do not re-request — review the diff yourself and decide. To wait" \
+           "for the checks instead, re-arm with:" \
+           "pr-status.sh -R $(jq -r '.repo' <<<"$s") $(jq -r '.number' <<<"$s") --watch --ignore-action request-review)"
+    elif [ "$(jq -r '.copilot_error_count // 0' <<<"$s")" -ge 2 ]; then
+      echo "ACTIONABLE: request-review (UNSATISFIABLE — the review bot has failed" \
+           "$(jq -r '.copilot_error_count' <<<"$s")x on this head; re-arming this watch" \
+           "returns immediately. Review the diff yourself, or wait for the checks:" \
+           "pr-status.sh -R $(jq -r '.repo' <<<"$s") $(jq -r '.number' <<<"$s") --watch --ignore-action request-review)"
+    else
+      echo "ACTIONABLE: request-review"
+    fi
+    # Unsettled-CI hold: emit nothing, fall through to the wait line.
+    if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ] \
+       || [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" = "true" ]; then
+      emit "$s"; exit 0
+    fi
+  elif in_list "$ACTIONABLE" "$act"; then
+    echo "ACTIONABLE: $act"
+    emit "$s"; exit 0
+  fi
 
   now=$(date +%s)
   if [ $((now - start)) -ge "$MAXWAIT" ]; then
