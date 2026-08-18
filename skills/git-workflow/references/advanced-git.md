@@ -185,6 +185,36 @@ git merge --no-ff cherry-pick-fixes
 
 ## Stashing
 
+### A probe command is read-only
+
+Comparing two revisions, checking what a script used to do, reproducing a bug
+against an older build — that work is exploratory, and it must not move the
+working tree. Never put `git stash`, `git reset`, `git checkout --` or
+`git restore` inside a command whose purpose is to find something out.
+
+The failure is silent, which is what makes it worth a rule. A probe that
+stashes uncommitted work looks exactly like a probe that found nothing: the
+command prints its output, the tree is quietly a different tree, and the next
+edit lands on top of a state nobody chose. Recovery is `git stash pop`, but
+only if you notice.
+
+Extract the other revision instead of moving to it:
+
+```bash
+# ✅ Compare against another revision without touching the tree
+git show origin/main:path/to/script.sh > /tmp/old-script.sh
+bash /tmp/old-script.sh --check
+
+# ✅ A whole old tree, still without moving
+git worktree add /tmp/old-tree origin/main
+
+# ❌ Wrong — mutates the working tree in the middle of an inspection
+old=$(cd src && git stash -q; ./script.sh; true)
+```
+
+If a probe genuinely needs a clean tree, commit first (see the sibling rules on
+selective revert and selective commit) — do not stash your way there.
+
 ### Basic Stash Operations
 
 ```bash
