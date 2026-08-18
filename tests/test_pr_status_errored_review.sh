@@ -620,20 +620,21 @@ case "$out" in
     *) echo "  FAIL expected immediate ACTIONABLE: request-review"; fail=1 ;;
 esac
 
-echo "case W3: watch + pending check + QUOTA error — quota exemption still returns immediately"
+echo "case W3: watch + pending check + QUOTA error — holds for CI, no premature return"
 PENDING_CHECK=1 make_stub "$ERR_QUOTA"
-# Assert the discriminating signal: the exemption path's unique ACTIONABLE
-# prefix AND no TIMEOUT. The bare quota phrase also appears in every
-# "waiting:" line's why-text, so matching it passes vacuously when the
-# exemption is broken and the watch holds to timeout (found by mutation d).
+# Contract since 2026-08-18: the quota dead-end no longer exempts the watch
+# from the CI hold. Waiting cannot clear the quota, but the pending checks
+# are the thing that still moves — an immediate return here forced a manual
+# `gh pr checks --watch` re-arm after every push (observed twice in one
+# session). The UNSATISFIABLE line may only appear once CI has settled, so
+# with a permanently-pending stub the watch must run into TIMEOUT without it.
 out=$(watch || true)
 case "$out" in
     *"ACTIONABLE: request-review (UNSATISFIABLE"*)
-        case "$out" in
-            *TIMEOUT*) echo "  FAIL exemption fired only at timeout"; fail=1 ;;
-            *) echo "  ok   quota dead-end returns immediately despite unsettled CI" ;;
-        esac ;;
-    *) echo "  FAIL quota exemption did not fire (no UNSATISFIABLE ACTIONABLE line)"; fail=1 ;;
+        echo "  FAIL quota line fired while CI was unsettled"; fail=1 ;;
+    *TIMEOUT*)
+        echo "  ok   quota dead-end holds for unsettled CI (timeout)" ;;
+    *)  echo "  FAIL unexpected watch output: $(printf '%s' "$out" | head -2)"; fail=1 ;;
 esac
 
 echo "case W4: watch + BLOCKED + unsigned + settled — fix-signatures is an actionable event"
@@ -645,20 +646,34 @@ case "$out" in
     *) echo "  FAIL unexpected watch output"; fail=1 ;;
 esac
 
-# Same exemption as W3, reached through the marker instead of an error body:
-# waiting cannot clear a wall proven on another PR either, so a watch armed on
-# a PR with no Copilot row of its own must not hold to timeout.
-echo "case W5: watch + pending check + MARKER — exemption fires without an error row"
+# Same hold as W3, reached through the marker instead of an error body: a
+# remembered wall changes nothing about the pending checks, so the watch
+# keeps waiting for them too.
+echo "case W5: watch + pending check + MARKER — holds for CI like W3"
 PENDING_CHECK=1 make_stub
 plant_marker
 out=$(watch || true)
 case "$out" in
     *"ACTIONABLE: request-review (UNSATISFIABLE"*)
+        echo "  FAIL marker quota line fired while CI was unsettled"; fail=1 ;;
+    *TIMEOUT*)
+        echo "  ok   remembered quota holds for unsettled CI (timeout)" ;;
+    *)  echo "  FAIL unexpected watch output: $(printf '%s' "$out" | head -2)"; fail=1 ;;
+esac
+
+# The immediate return the old W3/W5 asserted still exists — one step later.
+# Once CI is settled the quota dead-end IS the final state: a re-arm comes
+# straight back with the same line, which is what its message warns about.
+echo "case W6: watch + settled + QUOTA error — UNSATISFIABLE returns immediately"
+make_stub "$ERR_QUOTA"
+out=$(watch || true)
+case "$out" in
+    *"ACTIONABLE: request-review (UNSATISFIABLE"*)
         case "$out" in
-            *TIMEOUT*) echo "  FAIL exemption fired only at timeout"; fail=1 ;;
-            *) echo "  ok   remembered quota returns immediately despite unsettled CI" ;;
+            *TIMEOUT*) echo "  FAIL quota line fired only at timeout"; fail=1 ;;
+            *) echo "  ok   settled CI + quota returns immediately" ;;
         esac ;;
-    *) echo "  FAIL marker exemption did not fire (no UNSATISFIABLE ACTIONABLE line)"; fail=1 ;;
+    *) echo "  FAIL quota line did not fire on settled CI"; fail=1 ;;
 esac
 
 

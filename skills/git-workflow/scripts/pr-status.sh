@@ -863,9 +863,11 @@ while :; do
     # ladder itself stamps "do not enqueue on this reading" onto the why.
     # Keep waiting: a failing check fires the branch above, and once the
     # checks settle this returns on the review state (#186). The quota
-    # dead-end is exempt — waiting cannot clear it, return immediately.
-    if [ "$(jq -r '.checks_settled' <<<"$s")" != "true" ] \
-       && [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" != "true" ]; then
+    # dead-end holds here too: waiting cannot clear the quota, but the
+    # checks are the thing that still moves, and returning early hands the
+    # operator a manual re-arm for every push (observed twice on
+    # 2026-08-18). It returns below once CI settles.
+    if [ "$(jq -r '.checks_settled' <<<"$s")" != "true" ]; then
       :
     # A request-review whose cause is an exhausted review bot is a standing
     # condition, not an event: waiting cannot clear a quota ceiling, so every
@@ -875,8 +877,9 @@ while :; do
     elif [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" = "true" ]; then
       echo "ACTIONABLE: request-review (UNSATISFIABLE — Copilot is OUT OF REVIEW QUOTA" \
            "for the month; this will NOT change until the monthly reset, on this or any" \
-           "other PR. Do not re-request — review the diff yourself and decide. To wait" \
-           "for the checks instead, re-arm with:" \
+           "other PR. Checks are settled — do not re-request and do not re-arm, a" \
+           "re-arm returns immediately with this same line. Review the diff yourself" \
+           "and decide; to hold through this standing action for other reasons:" \
            "pr-status.sh -R $(jq -r '.repo' <<<"$s") $(jq -r '.number' <<<"$s") --watch --ignore-action request-review)"
     elif [ "$(jq -r '.copilot_error_count // 0' <<<"$s")" -ge 2 ]; then
       echo "ACTIONABLE: request-review (UNSATISFIABLE — the review bot has failed" \
@@ -887,8 +890,10 @@ while :; do
       echo "ACTIONABLE: request-review"
     fi
     # Unsettled-CI hold: emit nothing, fall through to the wait line.
-    if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ] \
-       || [ "$(jq -r '.copilot_quota_exhausted // false' <<<"$s")" = "true" ]; then
+    # The quota dead-end returns only here, WITH the checks settled — a
+    # re-arm on a settled PR still comes straight back with the same
+    # UNSATISFIABLE line, which is what its message says.
+    if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ]; then
       emit "$s"; exit 0
     fi
   elif in_list "$ACTIONABLE" "$act"; then
