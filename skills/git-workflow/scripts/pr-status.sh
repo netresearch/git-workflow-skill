@@ -34,10 +34,11 @@
 # exhausted Copilot quota — every re-arm of --watch returns the same line
 # within a second, and the watch cannot be used to wait for anything else.
 # Naming that action holds the watch through it: the watch still returns on
-# every OTHER actionable event, and once the checks settle with only the
-# ignored action left it returns `SETTLED: only ignored action remains`
-# (exit 0) instead of idling into the timeout. A new check failure still
-# returns, except when the ignored action IS the CI action (fix-ci/triage-ci).
+# every OTHER actionable event, and once the checks settle while NEXT still
+# names the ignored action it returns `SETTLED: NEXT is still the ignored
+# action` (exit 0) instead of idling into the timeout. A new check failure
+# still returns, except when the ignored action IS the CI action
+# (fix-ci/triage-ci).
 #
 # Copilot review quota
 #
@@ -103,6 +104,11 @@ while [ $# -gt 0 ]; do
     --interval) need "$@"; INTERVAL="$2"; shift 2 ;;
     --max-wait) need "$@"; MAXWAIT="$2"; shift 2 ;;
     --ignore-action) need "$@"
+                     # Whitespace first: "fix-ci triage-ci" happens to be a
+                     # substring of ACTIONABLE and would slip past in_list.
+                     case "$2" in (*[[:space:]]*)
+                       die "--ignore-action: one action per flag (got '$2')" ;;
+                     esac
                      in_list "$ACTIONABLE" "$2" \
                        || die "--ignore-action: unknown action '$2' (one of: $ACTIONABLE)"
                      IGNORE="$IGNORE $2"; shift 2 ;;
@@ -779,10 +785,14 @@ while :; do
   act=$(jq -r '.next.action' <<<"$s")
   fails=$(jq -r '.checks.failing|join(",")' <<<"$s")
 
-  # The ignore test sits on this exit too: when the standing action the caller
-  # declined IS the CI action (fix-ci/triage-ci), its failing checks are part
-  # of the state the caller already saw, not a fresh event.
-  if [ -n "$fails" ] && [ "$fails" != "$seen_fail" ] && ! is_ignored "$act"; then
+  # The ignore test sits on this exit too, but ONLY when the standing action
+  # the caller declined IS the CI action (fix-ci/triage-ci) — then its failing
+  # checks are part of the state the caller already saw, not a fresh event.
+  # Any other ignored action must not eat a failure: resolve-conflicts and
+  # rebase outrank fix-ci in the NEXT ladder, so a red check can appear while
+  # the action still names the ignored non-CI blocker.
+  if [ -n "$fails" ] && [ "$fails" != "$seen_fail" ] \
+     && ! { is_ignored "$act" && in_list "fix-ci triage-ci" "$act"; }; then
     seen_fail="$fails"
     echo "ACTIONABLE: check failed -> $fails"
     emit "$s"; exit 0
@@ -790,9 +800,11 @@ while :; do
   if is_ignored "$act"; then
     # A standing action the caller has already seen and declined (#165): never
     # return on it. Once the checks settle, nothing about it will change
-    # either — say so instead of idling into the timeout.
+    # either — say so instead of idling into the timeout. The message claims
+    # exactly what was checked: NEXT (the highest-priority action) is still
+    # the ignored one — lower-ranked work may well remain in the snapshot.
     if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ]; then
-      echo "SETTLED: only ignored action remains -> $act"
+      echo "SETTLED: NEXT is still the ignored action -> $act"
       emit "$s"; exit 0
     fi
   elif [ "$act" = "request-review" ]; then

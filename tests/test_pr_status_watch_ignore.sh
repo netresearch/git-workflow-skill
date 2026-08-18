@@ -49,6 +49,8 @@ clear_marker() { rm -rf "$XDG_CACHE_HOME/pr-status"; }
 # Stub `gh`: rules endpoint answers a copilot_code_review ruleset, graphql
 # answers a payload with one errored (quota) Copilot review on the head.
 #   PENDING_CHECK=1 make_stub — adds an IN_PROGRESS check (checks_settled false)
+#   FAIL_CHECK=1 make_stub    — adds a COMPLETED/FAILURE check
+#   MERGEABLE=CONFLICTING make_stub — merge conflict (NEXT: resolve-conflicts)
 make_stub() {
     clear_marker
     printf '%s\n' '[{"type":"copilot_code_review","parameters":{}}]' > "$STUB_DIR/rules.json"
@@ -73,6 +75,11 @@ if os.environ.get("PENDING_CHECK", "0") == "1":
     checks.append({"__typename": "CheckRun", "name": "slow", "conclusion": None,
                    "status": "IN_PROGRESS", "detailsUrl": "u",
                    "startedAt": "2026-01-01T00:00:00Z"})
+if os.environ.get("FAIL_CHECK", "0") == "1":
+    checks.append({"__typename": "CheckRun", "name": "broken", "conclusion": "FAILURE",
+                   "status": "COMPLETED", "detailsUrl": "u",
+                   "startedAt": "2026-01-01T00:00:00Z"})
+mergeable = os.environ.get("MERGEABLE", "MERGEABLE")
 reviews = [{"author": {"login": "copilot-pull-request-reviewer"},
             "state": "COMMENTED", "commit": {"oid": head}, "body": body}]
 json.dump({"data": {"repository": {
@@ -80,7 +87,7 @@ json.dump({"data": {"repository": {
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
         "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
-        "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "reviewDecision": None,
+        "mergeable": mergeable, "mergeStateStatus": "CLEAN", "reviewDecision": None,
         "author": {"login": "someone"},
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
         "isCrossRepository": False,
@@ -107,7 +114,7 @@ echo "case: same state, --ignore-action request-review -> SETTLED, not ACTIONABL
 make_stub
 rc=0; out=$(watch --ignore-action request-review) || rc=$?
 check         "exits 0"                 "0" "$rc"
-check_contains "reports SETTLED"        "SETTLED: only ignored action remains -> request-review" "$out"
+check_contains "reports SETTLED"        "SETTLED: NEXT is still the ignored action -> request-review" "$out"
 check_absent  "no ACTIONABLE return"    "ACTIONABLE" "$out"
 
 echo "case: quota-dead request-review, checks PENDING, ignored -> holds until timeout"
@@ -118,10 +125,36 @@ check_contains "reports TIMEOUT"        "TIMEOUT" "$out"
 check_absent  "no ACTIONABLE return"    "ACTIONABLE" "$out"
 check_absent  "no premature SETTLED"    "SETTLED" "$out"
 
+echo "case: ignored request-review still returns on a new check failure"
+FAIL_CHECK=1 make_stub
+rc=0; out=$(watch --ignore-action request-review) || rc=$?
+check         "exits 0"                 "0" "$rc"
+check_contains "returns on the failure" "ACTIONABLE: check failed -> " "$out"
+check_absent  "no SETTLED"              "SETTLED" "$out"
+
+echo "case: ignored CI action swallows its own failing checks -> SETTLED"
+FAIL_CHECK=1 make_stub
+rc=0; out=$(watch --ignore-action triage-ci) || rc=$?
+check         "exits 0"                 "0" "$rc"
+check_contains "reports SETTLED"        "SETTLED: NEXT is still the ignored action -> triage-ci" "$out"
+check_absent  "no ACTIONABLE return"    "ACTIONABLE" "$out"
+
+echo "case: ignored NON-CI action must not eat a check failure (conflict + red check)"
+FAIL_CHECK=1 MERGEABLE=CONFLICTING make_stub
+rc=0; out=$(watch --ignore-action resolve-conflicts) || rc=$?
+check         "exits 0"                 "0" "$rc"
+check_contains "returns on the failure" "ACTIONABLE: check failed -> " "$out"
+check_absent  "no SETTLED"              "SETTLED" "$out"
+
 echo "case: --ignore-action validates its value"
 rc=0; out=$(watch --ignore-action definitely-not-an-action 2>&1) || rc=$?
 check         "exits 2"                 "2" "$rc"
 check_contains "names the bad value"    "unknown action 'definitely-not-an-action'" "$out"
+
+echo "case: --ignore-action takes one action per flag"
+rc=0; out=$(watch --ignore-action "fix-ci triage-ci" 2>&1) || rc=$?
+check         "exits 2"                 "2" "$rc"
+check_contains "rejects the pair"       "one action per flag" "$out"
 
 echo "case: --ignore-action without --watch is refused"
 rc=0; out=$(PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 1 --ignore-action merge 2>&1) || rc=$?

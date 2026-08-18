@@ -95,8 +95,8 @@ Copilot quota — makes every re-arm return the same line within a second
 (#165). Once you have seen that action and decided not to take it, re-arm
 with `--watch --ignore-action <action>` (repeatable): the watch holds through
 it, still returns on every other actionable event, and answers
-`SETTLED: only ignored action remains` (exit 0) once the checks settle with
-nothing else left.
+`SETTLED: NEXT is still the ignored action` (exit 0) once the checks settle
+with the ignored action still on top.
 
 ### Never merge an unreviewed PR
 
