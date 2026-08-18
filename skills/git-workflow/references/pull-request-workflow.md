@@ -152,6 +152,43 @@ command. The month is in the **filename**, so the marker stops applying at the
 reset rather than being aged out; delete the file to undo a verdict recorded in
 error.
 
+The quota wall has a second, earlier face: the `requested_reviewers` POST
+itself can be **silently dropped** — HTTP 200, but the response's
+`requested_reviewers` array is empty and a read-back seconds later still shows
+no pending request, with no errored review anywhere yet. That empty read-back
+right after the POST is the earliest quota tell there is; it looks like "the
+bot will pick it up asynchronously" and is not (five requests across four repos
+were swallowed this way on 2026-08-18 before a later errored review named the
+quota). Read `requested_reviewers` back after the **first** request of a
+session; empty means stop requesting — everywhere — and go straight to the
+self-review path above.
+
+## A Rebase Conflict Can Mean the PR Is Superseded
+
+When `NEXT: rebase` turns into a conflict, look at **what the main side of the
+hunk contains** before resolving anything. If main's side already implements
+what the PR implements — the same feature, ported independently or landed via a
+sibling PR — the conflict is not a merge problem, it is the discovery that the
+PR is superseded. This is the normal fate of a fix PR that sat for days while
+the incident it came from was also worked elsewhere.
+
+The reflexive resolution — keep the PR's side, it is what you came to merge —
+is exactly wrong here: main's version has usually moved on (hardening, an extra
+call, review feedback the PR never saw), and preferring the PR side silently
+**reverts** that. Observed 2026-08-18 on `netresearch/jira-skill` #194: main's
+copy of the identical stdin feature had a mention-gate call integrated
+(`check_mentions_cli`); taking the PR's hunk would have merged green and
+dropped the gate.
+
+What to do instead: diff the PR's intent against current main and keep only the
+delta main lacks (`git reset --hard origin/main`, re-apply just that delta,
+reword the commit) — or close the PR outright if nothing remains. Either way,
+update the PR title and body to describe what it now is; a re-scoped PR wearing
+its old description misleads its reviewer. And when reviewing a PR that is more
+than a couple of days old, check `mergeable`/`mergeStateStatus` first — a
+`CONFLICTING` docs-or-fix PR is a "has this landed already?" prompt before it
+is a content-review task.
+
 ## Check the Default Branch Before Operating
 
 Not every repo uses `main` — older repos often use `master`, and some use
