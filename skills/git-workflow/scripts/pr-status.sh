@@ -9,9 +9,12 @@
 # the rulesets endpoint was queried exactly once, and `copilot_code_review`
 # blocked four merges by surprise.
 #
-# Two API calls: one GraphQL document for the PR, its checks, reviews, threads
-# and the repository's merge configuration; one REST call for the effective
-# branch rules (which is the only place rulesets show up).
+# Two API calls on the green path: one GraphQL document for the PR, its
+# checks, reviews, threads and the repository's merge configuration; one REST
+# call for the effective branch rules (which is the only place rulesets show
+# up). A review-blocked PR costs a third, admin-only call for classic branch
+# protection, whose review gates (require_last_push_approval, approval count,
+# code-owner reviews) no other endpoint exposes.
 #
 # Usage:
 #   pr-status.sh                      # PR for the current branch
@@ -69,6 +72,7 @@
 #   requested_reviewers
 #   merge_methods auto_merge_allowed queue_active queue_entry
 #   rulesets rules_fetched required_contexts undispatched unsigned
+#   classic_protection
 #   next
 #
 # `checks` is {total,pass,fail,pending,skip,...} and `next` is
@@ -204,9 +208,10 @@ collect() {
 # would discard the status flag.
 
 evaluate() {
-  local gql="$1" rules="$2" ok="$3" marker="$4"
+  local gql="$1" rules="$2" ok="$3" marker="$4" prot="${5:-null}"
   jq -n --argjson g "$gql" --argjson r "$rules" --argjson ok "$ok" \
-        --argjson marker "$marker" --arg marker_path "$QUOTA_MARKER" '
+        --argjson marker "$marker" --arg marker_path "$QUOTA_MARKER" \
+        --argjson prot "$prot" '
     # Defined once and used by BOTH the error list and the $head_reviews filter.
     # Two hand-kept copies would have to stay byte-identical: loosening one to
     # match a third error body and not the other puts the row back into
@@ -356,6 +361,19 @@ evaluate() {
                                and ($checks|length) > 0)
                          else null end),
         rulesets: $ruletypes,
+        # Review gates from CLASSIC branch protection, which the rules
+        # endpoint never shows (require_last_push_approval, approval count,
+        # code-owner reviews). Admin-only endpoint, fetched lazily and only
+        # when the PR looks review-blocked — null means "not fetched or not
+        # visible", never "no classic protection".
+        classic_protection: (if $prot == null or ($prot | type) != "object"
+                             then null
+                             else ($prot.required_pull_request_reviews // null
+                                   | if . == null then null else {
+                                       approvals_required: (.required_approving_review_count // 0),
+                                       last_push_approval: (.require_last_push_approval // false),
+                                       code_owner_reviews: (.require_code_owner_reviews // false)
+                                     } end) end),
         # Every distinct state per author, not just the last one. `add` over
         # map({login: state}) overwrites, so a reviewer who approves and then
         # replies to a thread displayed as COMMENTED and the approval vanished
@@ -537,6 +555,21 @@ evaluate() {
             # No single quotes in here: the whole jq program lives in a
             # single-quoted shell string (same trap as the sibling cmd below).
             cmd:"git rebase --exec \"git commit --amend --no-edit -S\" $(git merge-base HEAD origin/\($s.base)) ; git push --force-with-lease"}
+         # An approval that does not count: classic protection with
+         # require_last_push_approval discounts an approval from whoever
+         # pushed last, so reviewDecision sits at REVIEW_REQUIRED with an
+         # APPROVED row on the head and nothing visible names the reason
+         # (go-cron#399: this gate surfaced only after every other gate was
+         # green, because it lives in the admin-only classic endpoint the
+         # rules query cannot see). classic_protection is null for
+         # non-admin callers, so the branch never fires on guesswork.
+         elif ($s.classic_protection != null
+               and $s.classic_protection.last_push_approval
+               and $s.reviewDecision == "REVIEW_REQUIRED"
+               and $s.has_review_on_head
+               and ([$s.reviews_on_head[] | select(test("APPROVED"))] | length) > 0) then
+           {action:"request-review",
+            why:("classic branch protection sets require_last_push_approval — the APPROVED on \($s.headOid[0:8]) does not count if the approver made the most recent push. Someone OTHER than the last pusher must approve; alternatively the author pushes again and a previous approver re-approves")}
          # `|` binds looser than `and`, so the negation needs its own parens:
          # `a and b|not` parses as `(a and b)|not` and inverts the whole test.
          # has_copilot_review_on_head must be false too: the error row stays on
@@ -721,6 +754,9 @@ render() {
     (if .checks.stale > 0 then "  stale       : \(.checks.stale) cancelled row(s) from a superseded run, ignored" else empty end),
     (if (.checks.failing_required|length) > 0 then "  ^ REQUIRED  : \(.checks.failing_required|join(", "))" else empty end),
     "  rulesets    : \(if (.rulesets|length)>0 then (.rulesets|join(", ")) else "none" end)",
+    (if .classic_protection then
+       "  classic     : approvals>=\(.classic_protection.approvals_required)\(if .classic_protection.last_push_approval then ", last-push-approval" else "" end)\(if .classic_protection.code_owner_reviews then ", code-owner-reviews" else "" end) (classic branch protection — invisible to the rulesets endpoint)"
+     else empty end),
     "  reviews     : \(if .has_review_on_head then (.reviews_on_head|to_entries|map("\(.key)=\(.value)")|join(", ")) else "NONE on current head" end)  decision=\(if .reviewDecision=="" then "-" else .reviewDecision end)",
     "  threads     : \(.unresolved_threads) unresolved",
     "  merge       : methods=[\(.merge_methods|join(","))] auto=\(.auto_merge_allowed) queue=\(.queue_active)",
@@ -757,7 +793,22 @@ snapshot() {
   local enc r ok out
   enc=$(printf '%s' "$base" | jq -sRr @uri)
   if r=$(gh api "repos/$REPO/rules/branches/$enc" 2>/dev/null); then ok=1; else ok=0; r='[]'; fi
-  out=$(evaluate "$g" "$r" "$ok" "$(quota_marker_seen)")
+
+  # Classic branch protection holds review gates the rules endpoint never
+  # shows (require_last_push_approval, approval count, code-owner reviews;
+  # go-cron#399 sat review-blocked with every visible gate green because of
+  # one). Admin-only endpoint: a 403/404 leaves it null and the ladder says
+  # nothing. Fetched lazily — only when the PR is BLOCKED or a review is
+  # demanded — so the common green path keeps its two API calls.
+  local prot='null' st2 rd
+  st2=$(jq -r '.data.repository.pullRequest.mergeStateStatus // ""' <<<"$g")
+  rd=$(jq -r '.data.repository.pullRequest.reviewDecision // ""' <<<"$g")
+  if [ "$st2" = "BLOCKED" ] || [ "$rd" = "REVIEW_REQUIRED" ] || [ "$rd" = "CHANGES_REQUESTED" ]; then
+    local pr_raw
+    if pr_raw=$(gh api "repos/$REPO/branches/$enc/protection" 2>/dev/null); then prot="$pr_raw"; fi
+  fi
+
+  out=$(evaluate "$g" "$r" "$ok" "$(quota_marker_seen)" "$prot")
   # Written from the EVIDENCE field, never from the verdict: with
   # copilot_quota_exhausted the marker would re-assert itself, and the PR named
   # inside it would be whichever one read the file rather than the one that

@@ -28,7 +28,9 @@ bash "$GW/scripts/pr-status.sh" -R owner/repo 123 --json # for scripts and merge
 bash "$GW/scripts/pr-status.sh" -R owner/repo 123 --watch
 ```
 
-Two API calls, and the output ends in a computed `NEXT:` — rebase, fix-ci,
+Two API calls (a third, admin-only, when the PR is review-blocked — it reads
+classic branch protection, whose review gates like `require_last_push_approval`
+are invisible to the rules endpoint), and the output ends in a computed `NEXT:` — rebase, fix-ci,
 triage-ci, resolve-threads, request-review, wait, or merge (with the method
 this repo actually allows and a warning when a merge queue is active). The
 JSON form carries each unresolved thread's `threadId` *and* `commentId`, which
