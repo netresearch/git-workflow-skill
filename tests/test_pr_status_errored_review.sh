@@ -66,6 +66,11 @@ STUB
 import sys, json, os
 out, bodies = sys.argv[1], sys.argv[2:]
 head = "deadbeefcafe"
+# COMMENTS_JSON: issue comments on the PR, as [{"author": ..., "body": ...}] —
+# the surface the Self-review attestation (#203) is read from.
+comments = [{"author": {"login": c["author"]}, "body": c["body"],
+             "url": "https://example.test/c"}
+            for c in json.loads(os.environ.get("COMMENTS_JSON", "[]"))]
 # Env overrides so the signature/settled ladder branches are testable:
 #   MERGE_STATE (default CLEAN), SIGNED (default 1),
 #   PENDING_CHECK=1 adds an IN_PROGRESS check run (checks_settled -> false).
@@ -91,6 +96,7 @@ json.dump({"data": {"repository": {
         "author": {"login": "someone"},
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
         "isCrossRepository": False,
+        "comments": {"nodes": comments},
         "reviews": {"nodes": reviews},
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
@@ -676,6 +682,67 @@ case "$out" in
     *) echo "  FAIL quota line did not fire on settled CI"; fail=1 ;;
 esac
 
+
+# --- Self-review attestation (#203): an explicit author assertion may satisfy
+# --- a review demand ONLY where the tool itself calls that demand
+# --- unsatisfiable (quota wall, or two failed bot reviews on this head).
+SR_MARKER='[{"author": "someone", "body": "Self-review: deadbeef\n\nreviewed by the author, bot unavailable"}]'
+
+echo "case SR1: quota marker + author Self-review comment — gate opens, why names it"
+COMMENTS_JSON="$SR_MARKER" make_stub
+plant_marker
+check "self_review_on_head" "true"  "$(run_flag self_review_on_head)"
+check "next.action"         "merge" "$(run_next)"
+if status | jq -e '.next.why | test("Self-review attestation")' >/dev/null; then
+    echo "  ok   why names the attestation the merge rests on"
+else
+    echo "  FAIL why does not name the attestation"
+    fail=1
+fi
+
+echo "case SR2: same comment by a NON-author — attestation not accepted"
+COMMENTS_JSON='[{"author": "somebody-else", "body": "Self-review: deadbeef"}]' make_stub
+plant_marker
+check "self_review_on_head" "false"          "$(run_flag self_review_on_head)"
+check "next.action"         "request-review" "$(run_next)"
+
+echo "case SR3: author comment with a STALE sha — dies with the push, as documented"
+COMMENTS_JSON='[{"author": "someone", "body": "Self-review: 0ldc0mm1t"}]' make_stub
+plant_marker
+check "self_review_on_head" "false"          "$(run_flag self_review_on_head)"
+check "next.action"         "request-review" "$(run_next)"
+
+echo "case SR4: attestation present but NO quota wall — a live review path wins"
+COMMENTS_JSON="$SR_MARKER" make_stub
+check "self_review_on_head" "true"           "$(run_flag self_review_on_head)"
+check "next.action"         "request-review" "$(run_next)"
+case "$(run_flag 'next.cmd')" in
+    *"repos/o/r/pulls/1/requested_reviewers"*)
+        echo "  ok   the re-request command is still offered — the attestation changed nothing" ;;
+    *)  echo "  FAIL the attestation suppressed a live review path"
+        fail=1 ;;
+esac
+
+echo "case SR5: two failed bot reviews + attestation — the two-strikes leg opens too"
+COMMENTS_JSON="$SR_MARKER" make_stub "$ERR_GENERIC" "$ERR_GENERIC"
+check "copilot_error_count" "2"     "$(run_flag copilot_error_count)"
+check "next.action"         "merge" "$(run_next)"
+
+echo "case SR6: prose comment without the marker line — not an attestation (case 8 stays)"
+COMMENTS_JSON='[{"author": "someone", "body": "Reviewed this myself, the bot was unavailable."}]' make_stub
+plant_marker
+check "self_review_on_head" "false"          "$(run_flag self_review_on_head)"
+check "next.action"         "request-review" "$(run_next)"
+
+echo "case SR7: quota why advertises the attestation mechanism"
+make_stub
+plant_marker
+if status | jq -e '.next.why | test("Self-review: deadbeef")' >/dev/null; then
+    echo "  ok   the quota advice names the exact marker line to post"
+else
+    echo "  FAIL the quota advice does not name the marker line"
+    fail=1
+fi
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"

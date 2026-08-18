@@ -174,6 +174,31 @@ quota). Read `requested_reviewers` back after the **first** request of a
 session; empty means stop requesting — everywhere — and go straight to the
 self-review path above.
 
+### Putting the self-review on the record (#203)
+
+"Review it yourself and say so in the PR" used to end outside the tooling: the
+review-note comment satisfied the policy while `pr-merge.sh` still refused the
+merge, so the merge ran as raw `gh pr merge` — three times in one sweep, past
+the very script that exists to be the safe path. The fallback is now a
+first-class input:
+
+```bash
+pr-merge.sh -R owner/repo 123 --self-reviewed
+```
+
+posts a PR comment whose body carries the line `Self-review: <head-sha>` (as
+the PR author — the flag refuses any other authenticated user), then re-reads
+the gate and merges. `pr-status.sh` reads the attestation back from the last
+50 comments and honours it **only** where the demanded review is one it
+itself calls unsatisfiable — the quota wall, or two failed bot reviews on the
+head. With a live review path the attestation changes nothing, a non-author
+comment never counts, and the next push invalidates it because the sha stops
+matching. This is an explicit operator assertion the tool reads back, not a
+state it claims to observe — the same reason the old "review-yourself"
+*action* was removed. The attestation comment is permanent PR history: post
+it only when the diff was actually reviewed, and say what was looked at in
+the review-note comment beside it.
+
 ## A Rebase Conflict Can Mean the PR Is Superseded
 
 When `NEXT: rebase` turns into a conflict, look at **what the main side of the
