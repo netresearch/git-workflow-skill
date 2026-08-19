@@ -574,5 +574,377 @@
         "pattern": "(diff|changed files)"
       }
     ]
+  },
+  {
+    "name": "write_breaking_change_commit_api_removal",
+    "prompt": "Write a conventional commit message for removing the deprecated /api/v1 endpoints.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(feat!|fix!|BREAKING[ -]CHANGE)"
+      },
+      {
+        "type": "content",
+        "pattern": "(migration|migrate|replacement|/api/v2)"
+      }
+    ]
+  },
+  {
+    "name": "resolve_review_threads_graphql",
+    "prompt": "How do I programmatically reply to and resolve PR review threads using the gh CLI?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "resolveReviewThread"
+      },
+      {
+        "type": "content",
+        "pattern": "(addPullRequestReviewThreadReply|gh api graphql)"
+      }
+    ]
+  },
+  {
+    "name": "signed_commits_rebase_blocked",
+    "prompt": "gh pr merge --rebase fails with 'Base branch requires signed commits'. How do I merge this PR?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "--ff-only"
+      },
+      {
+        "type": "content",
+        "pattern": "(cannot sign|does not sign|re-?sign|signature)"
+      }
+    ]
+  },
+  {
+    "name": "latest_badge_on_older_branch",
+    "prompt": "When I release v11.0.17 after v13.5.0, the Latest badge moves to v11. How to prevent?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "--latest=false"
+      },
+      {
+        "type": "content",
+        "pattern": "gh release edit"
+      }
+    ]
+  },
+  {
+    "name": "git_bisect_run_automated",
+    "prompt": "Tests pass on v1.0 but fail on HEAD. How do I automate finding the breaking commit?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "git bisect run"
+      },
+      {
+        "type": "content",
+        "pattern": "git bisect (start|good|bad)"
+      }
+    ]
+  },
+  {
+    "name": "cherry_pick_security_backport",
+    "prompt": "How do I backport a security fix from main to the release/2.x branch?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "cherry-pick"
+      },
+      {
+        "type": "content",
+        "pattern": "-x\\b"
+      }
+    ]
+  },
+  {
+    "name": "pr_merge_lifecycle_end_to_end",
+    "prompt": "Walk me through the complete PR merge lifecycle from CI verification to post-merge cleanup.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(gh pr checks|status.*check)"
+      },
+      {
+        "type": "content",
+        "pattern": "(thread|conversation).*(resolv|unresolved)"
+      },
+      {
+        "type": "content",
+        "pattern": "(annotation|delete-branch|branch cleanup)"
+      }
+    ]
+  },
+  {
+    "name": "branch_protection_two_reviews_signed",
+    "prompt": "Set up branch protection for main requiring 2 reviews, CI checks, and signed commits.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "required_approving_review"
+      },
+      {
+        "type": "content",
+        "pattern": "(required_status_checks|required_signatures)"
+      }
+    ]
+  },
+  {
+    "name": "git_absorb_instead_of_interactive_rebase",
+    "prompt": "I need to fix code in 3 different commits from review feedback. How do I avoid messy interactive rebase?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "git.absorb"
+      },
+      {
+        "type": "content",
+        "pattern": "(autosquash|--autosquash|fixup)"
+      }
+    ]
+  },
+  {
+    "name": "worktree_review_without_stashing",
+    "prompt": "How do I review a PR without stashing my current work?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "git worktree"
+      },
+      {
+        "type": "content",
+        "pattern": "(separate|second) (working )?(directory|tree|checkout)"
+      }
+    ]
+  },
+  {
+    "name": "pr_body_needs_captured_before_after",
+    "prompt": "I changed the wording of an error message in our CLI. Write the pull request description.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(before.*after|old.*new).*(output|transcript)"
+      },
+      {
+        "type": "content",
+        "pattern": "git checkout .*(base|main)"
+      }
+    ]
+  },
+  {
+    "name": "unchanged_claim_needs_the_same_proof",
+    "prompt": "My commit message says the fallback branch keeps its existing wording. Anything to check before I push?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(claim|assert).*(proof|evidence|verif)"
+      },
+      {
+        "type": "content",
+        "pattern": "(exercise|run|trigger).*(fallback|path)"
+      }
+    ]
+  },
+  {
+    "name": "gitlab_capability_read_the_flag_not_the_history",
+    "prompt": "On this self-managed GitLab the last 20 merge requests all came from in-repo branches and I see no forks. Can outsiders contribute?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "forking_access_level"
+      },
+      {
+        "type": "content",
+        "pattern": "(issues_enabled|merge_requests_enabled)"
+      },
+      {
+        "type": "content",
+        "pattern": "(authenticated|token|-L\\b)"
+      }
+    ]
+  },
+  {
+    "name": "issue_template_keeps_its_order",
+    "prompt": "I found the root cause of a bug in an upstream project and have a three-line patch. File the issue using their template.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(Summary|summary section)"
+      },
+      {
+        "type": "content",
+        "pattern": "(keep|preserve|intact).*(template|section)"
+      }
+    ]
+  },
+  {
+    "name": "green_job_is_not_a_green_test_report",
+    "prompt": "The pipeline on my merge request is green. Is it safe to merge?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(test report|failed_count|junit)"
+      },
+      {
+        "type": "content",
+        "pattern": "(allow_failure|required)"
+      }
+    ]
+  },
+  {
+    "name": "clean_merge_can_drop_entries",
+    "prompt": "I merged a long-running upstream branch into my feature branch. All conflicts are resolved and the tests still pass. Anything left to check?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(no conflict marker|without a conflict|clean(ly)? (auto-?)?merge)"
+      },
+      {
+        "type": "content",
+        "pattern": "(composer\\.json|package\\.json|manifest)"
+      }
+    ]
+  },
+  {
+    "name": "conflict_resolution_reads_the_body",
+    "prompt": "Six merge conflicts all look the same: upstream made a minimal nullability fix to a signature my branch already rewrote further. Can I resolve them all by taking my side?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(each|per).*(function|body|hunk)"
+      },
+      {
+        "type": "content",
+        "pattern": "(surrounding|rest of the|outside the conflict|each (hunk|file|case))"
+      }
+    ]
+  },
+  {
+    "name": "verbatim_material_is_not_edited",
+    "prompt": "A reviewer points out a spelling mistake in my pull request: an example transcript says 'occured'. Fix it?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(verbatim|captured|transcript|actual output)"
+      },
+      {
+        "type": "content",
+        "pattern": "(evidence|approximation|reproduc)"
+      }
+    ]
+  },
+  {
+    "name": "review_fix_traced_through_the_callers",
+    "prompt": "A reviewer says the test setup should not build its clock from time(). I'll replace it with a fixed timestamp on that line.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(fixture|surrounding|caller|rest of)"
+      },
+      {
+        "type": "content",
+        "pattern": "(expired|inconsistent|both|together)"
+      }
+    ]
+  },
+  {
+    "name": "enqueued_pr_still_reads_clean",
+    "prompt": "I queued my PR for merge ten minutes ago. The status check now says mergeState CLEAN, every check green, no open threads, NEXT: merge. Should I run the merge again?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "mergeQueueEntry"
+      },
+      {
+        "type": "content",
+        "pattern": "(position|estimatedTimeToMerge|state)"
+      }
+    ]
+  },
+  {
+    "name": "queued_is_not_running",
+    "prompt": "My PR has been waiting on CI for forty minutes and the status tool says the required checks are still running. Should I enqueue it for merge so it goes in as soon as they finish?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "queued"
+      },
+      {
+        "type": "content",
+        "pattern": "(in_progress|runner|capacity)"
+      }
+    ]
+  },
+  {
+    "name": "blocked_by_an_unsigned_commit",
+    "prompt": "My PR is mergeStateStatus BLOCKED. Every check passes, no review thread is open, the ruleset needs zero approvals and every required context is present. What is holding it?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(unsigned|required_signatures|signature)"
+      },
+      {
+        "type": "content",
+        "pattern": "(one commit|any commit|somewhere on the branch|per-commit)"
+      }
+    ]
+  },
+  {
+    "name": "dequeued_silently_look_at_the_queue_branch",
+    "prompt": "My PR entered the merge queue and left it 85 seconds later. It is still OPEN, mergeStateStatus is CLEAN, there is no bot comment and no failing check on the PR. Why was it dequeued?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "gh-readonly-queue"
+      },
+      {
+        "type": "content",
+        "pattern": "(queue branch|dequeu|invisible|PR-scoped)"
+      }
+    ]
+  },
+  {
+    "name": "is_that_red_check_required",
+    "prompt": "A check on my PR is red and the PR is BLOCKED. Should I fix the red check first?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "isRequired"
+      },
+      {
+        "type": "content",
+        "pattern": "(graphql|rollup|required context)"
+      }
+    ]
+  },
+  {
+    "name": "ten_prs_one_integration_branch",
+    "prompt": "I have ten independent PRs, all green, on a repo with a merge queue. They all touch CHANGELOG.md so each merge conflicts the next. How do I get them in?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(integration branch|single branch|one branch)"
+      },
+      {
+        "type": "content",
+        "pattern": "(CHANGELOG|accumulator|resolve once)"
+      }
+    ]
+  },
+  {
+    "name": "and_chain_commits_after_a_failed_resolver",
+    "prompt": "My resolver script exits 1 when it finds a conflict it cannot handle. I run it and then `git add -A && git commit` in the same command. Is that safe?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(&&|exit (status|code)|non-?zero)"
+      },
+      {
+        "type": "content",
+        "pattern": "(conflict marker|<<<<<<<|gate|pre-commit)"
+      }
+    ]
   }
 ]
