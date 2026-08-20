@@ -2681,6 +2681,74 @@ git push --force-with-lease origin <source-branch>
 Re-run the preflight afterwards: the rebase produces a new head SHA, so the
 pipeline result you looked at no longer applies.
 
+## Upstream and Community PRs: the Maintainer Is Watching Every Push
+
+In your own repository, churn is private until someone looks. In a foreign
+repository it is the contribution. A maintainer sees each force-push, each body
+rewrite and each comment as it happens, and a PR that changes shape three times
+costs them the attention they were going to spend reviewing it.
+
+### A maintainer's question is a question
+
+The single most expensive mistake in this shape: a maintainer asks whether
+something *should* also happen, and you build it.
+
+> *"`SKIP_LINKS` affects every `listContents()` call, not just the index lookup.
+> Should `FileCollector` also check `listSkippedLinks()` and warn when
+> non-empty?"*
+
+That was read as an instruction. The answer produced roughly 250 lines of
+diagnostics, a logger threaded into a collector, a path-traversal guard and a
+second directory walk — all of which were deleted two hours later when the
+right answer turned out to be "remove the half-wired diagnostic instead of
+wiring it everywhere". The maintainer had spotted an inconsistency, not
+specified a feature.
+
+Answer the question first, in a comment, with the evidence. Build only what the
+answer turns out to require. If a proposal is worth building, say what it would
+involve and let the maintainer choose — the reply costs one comment, the build
+costs a review cycle for both of you.
+
+### Land the minimal fix, propose the rest separately
+
+The fix that closes the reported bug and the improvement you noticed while
+reading the code are two contributions. Shipping them together means the bug
+fix waits for agreement on the improvement.
+
+The same branch above finished as two changed lines and one regression test.
+Everything else became its own issue and its own pull request, and each could
+then be accepted or rejected on its own merits. Split at the point where a
+maintainer could plausibly say "yes to this, no to that".
+
+### Batch the noise
+
+Three consecutive comments answering one review are three notifications and one
+readable answer. A body rewritten after every push is a diff nobody can follow.
+
+- Answer a review in **one** comment, after the work, not as you go.
+- Rewrite the body **once**, when the branch has its final shape.
+- Prefer one force-push over four: finish the local sequence, verify it, then push.
+- When you do rewrite history on a PR under review, say in a comment what
+  changed and why the previous discussion still applies — or no longer does.
+
+### Do not repeat in the PR what the issue already says
+
+If a PR references an issue that catalogues everything out of scope, the PR
+body does not need that catalogue. It needs what this diff does, why it is
+safe, how it was verified, and one line pointing at the issue. Restating the
+issue is filler that pushes the reviewable part below the fold.
+
+### Read the repository before the first artifact
+
+Not the README — the parts that encode rules no prose mentions. See
+`scripts/repo-contribution-preflight.sh`, which returns them in one call:
+contribution docs and the pages they link, issue and PR templates, the CI
+matrix that actually runs, `.gitattributes` export rules, and the pinned tool
+versions the pipeline uses.
+
+Discovering `CONTRIBUTING.rst` after three artifacts are already public means
+retrofitting them in view of the people you are contributing to.
+
 ## Full PR Lifecycle Checklist
 
 Complete end-to-end workflow for merging a PR, from CI verification through post-merge cleanup.
