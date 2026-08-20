@@ -7,6 +7,7 @@ Checks conventional commits, branch naming, and common mistakes.
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -568,6 +569,77 @@ GIT_MEASURING_READ = re.compile(
 CD_BEFORE = re.compile(r"(?:^|[|&;\n])\s*cd\s+\S")
 
 
+# --- blanket `git add` (promoted from a harness-local hook, 2026-08-20) ------
+# `git add -A` / `git add .` / `--all` stages every untracked, non-ignored file
+# in the tree. Named paths are the rule (CLAUDE.md, Git / PR / release); the
+# rule was written down and still violated: a var/ DI-container cache — 40k
+# lines across four files — rode into a commit and had to be amended and
+# force-pushed out again. The gate is state-aware and narrow: it looks at the
+# repository the command names (or the payload's cwd), and denies only when
+# untracked, non-ignored files exist — a clean tree and a named path pass.
+
+_GIT_ADD = re.compile(
+    r"(?:^|[\s;&|(])git\s+(?:-C\s+(?P<dir>\S+)\s+)?(?:-\S+\s+)*add\b(?P<rest>[^;&|\n]*)"
+)
+_WHOLE_TREE = {".", "./", ":/", "*", "'*'", '"*"', ":(top)"}
+
+
+def _untracked_files(repo_dir: str) -> list[str] | None:
+    """Untracked, non-ignored paths, or None when git could not be asked."""
+    try:
+        p = subprocess.run(
+            ["git", "-C", repo_dir, "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if p.returncode != 0:
+        return None
+    return [line[3:] for line in p.stdout.splitlines() if line.startswith("?? ")]
+
+
+def blanket_git_add(cmd: str, cwd: str = "", untracked=_untracked_files) -> str | None:
+    """Deny `git add -A|--all|.` while untracked, non-ignored files exist."""
+    cmd = QUOTED_HEREDOC.sub(" ", cmd or "")
+    if "DESTRUCTIVE_GIT_GATE_OFF=1" in cmd:
+        return None
+    for m in _GIT_ADD.finditer(cmd):
+        rest = m.group("rest")
+        try:
+            tokens = shlex.split(rest)
+        except ValueError:
+            tokens = rest.split()
+        options = [t for t in tokens if t.startswith("-")]
+        operands = [t for t in tokens if not t.startswith("-")]
+        blanket = any(
+            o in {"-A", "--all", "--no-ignore-removal"} for o in options
+        ) or any(o in _WHOLE_TREE for o in operands)
+        if not blanket:
+            continue
+        repo_dir = m.group("dir") or cwd or os.getcwd()
+        if not os.path.isdir(repo_dir):
+            continue
+        strays = untracked(repo_dir)
+        if not strays:
+            continue
+        shown = "\n".join(f"  {line}" for line in strays[:12])
+        if len(strays) > 12:
+            shown += f"\n  … and {len(strays) - 12} more"
+        return (
+            "This would stage every untracked file in the tree, not only your change:\n\n"
+            f"  {m.group(0).strip()}\n\n"
+            f"Untracked, non-ignored files it would sweep in:\n\n{shown}\n\n"
+            "Name the paths you changed (`git add <file> <file>`), or ignore/remove the "
+            "strays first. A blanket add once carried 40k lines of DI-container cache into "
+            "a commit that then had to be amended and force-pushed (2026-08-20). If sweeping "
+            "them in really is the point, prefix the command with DESTRUCTIVE_GIT_GATE_OFF=1."
+        )
+    return None
+
+
 def git_read_without_named_dir(cmd: str) -> str | None:
     """Warn when a git measurement does not say which directory it measures."""
     m = GIT_MEASURING_READ.search(cmd or "")
@@ -689,6 +761,7 @@ def main():
         data = json.loads(input_data)
         command = read_command(data)
     except (json.JSONDecodeError, TypeError):
+        data = {}
         command = input_data
 
     if not command:
@@ -710,6 +783,12 @@ def main():
         if reason:
             deny(reason)
             return
+    # State-aware gate: needs the repository the command runs in.
+    cwd = data.get("cwd", "") if isinstance(data, dict) else ""
+    reason = blanket_git_add(command, cwd if isinstance(cwd, str) else "")
+    if reason:
+        deny(reason)
+        return
 
     # Advisory: the command is usually right, and only its author knows whether
     # the inherited directory or the poll shape was intended.

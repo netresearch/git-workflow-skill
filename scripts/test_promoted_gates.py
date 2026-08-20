@@ -68,6 +68,86 @@ class RunPoll(unittest.TestCase):
         self.assertEqual("", run_hook("gh run list --limit 5"))
 
 
+class BlanketGitAdd(unittest.TestCase):
+    """`git add -A` / `.` with untracked files lying around is denied; named paths pass."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self.repo = tempfile.mkdtemp()
+        subprocess.run(["git", "-C", self.repo, "init", "-q"], check=True)
+        Path(self.repo, "tracked.txt").write_text("a\n")
+        subprocess.run(["git", "-C", self.repo, "add", "tracked.txt"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                self.repo,
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "init",
+            ],
+            check=True,
+        )
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.repo, ignore_errors=True)
+
+    def _run(self, command: str) -> str:
+        result = subprocess.run(
+            [sys.executable, str(HOOK)],
+            input=json.dumps(
+                {
+                    "tool_name": "Bash",
+                    "tool_input": {"command": command},
+                    "cwd": self.repo,
+                }
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.stdout
+
+    def test_add_all_with_an_untracked_file_is_denied(self) -> None:
+        Path(self.repo, "stray.txt").write_text("junk\n")
+        out = self._run("git add -A && git commit -m x")
+        self.assertEqual("deny", decision(out))
+        self.assertIn("stray.txt", out)
+
+    def test_add_dot_with_an_untracked_file_is_denied(self) -> None:
+        Path(self.repo, "var").mkdir()
+        Path(self.repo, "var", "cache.json").write_text("{}")
+        self.assertEqual("deny", decision(self._run("git add .")))
+
+    def test_add_all_on_a_clean_tree_passes(self) -> None:
+        self.assertNotEqual("deny", decision(self._run("git add -A")))
+
+    def test_add_all_with_only_tracked_edits_passes(self) -> None:
+        Path(self.repo, "tracked.txt").write_text("b\n")
+        self.assertNotEqual("deny", decision(self._run("git add -A")))
+
+    def test_named_path_beside_an_untracked_file_passes(self) -> None:
+        Path(self.repo, "stray.txt").write_text("junk\n")
+        self.assertNotEqual("deny", decision(self._run("git add tracked.txt")))
+
+    def test_named_directory_is_honoured(self) -> None:
+        Path(self.repo, "stray.txt").write_text("junk\n")
+        self.assertEqual("deny", decision(self._run(f"git -C {self.repo} add -A")))
+
+    def test_escape_hatch(self) -> None:
+        Path(self.repo, "stray.txt").write_text("junk\n")
+        self.assertNotEqual(
+            "deny", decision(self._run("DESTRUCTIVE_GIT_GATE_OFF=1 git add -A"))
+        )
+
+
 class GitReadDirectory(unittest.TestCase):
     """A measurement that does not say which repository it measured."""
 

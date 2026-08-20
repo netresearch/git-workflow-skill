@@ -234,6 +234,10 @@ Verify both directions before relying on it: `python3 scripts/test_reference_wor
 builds a throwaway layout and checks that a commit in `main/` denies while
 `git -C <branch> commit` and a commit in a branch worktree pass.
 
+## Recipe 8: Deny a blanket `git add` while untracked files are lying around
+
+Shipped in `scripts/validate_git_command.py` as `blanket_git_add()` (PreToolUse, Bash). `git add -A`, `git add --all` and `git add .` stage every untracked, non-ignored file in the tree; the rule "add the paths you changed by name" was written down and still violated — a `var/` DI-container cache (40k lines) rode into a commit and had to be amended and force-pushed out (2026-08-20). The gate reads the repository the command names (`git -C <dir>`) or the payload's `cwd`, asks `git status --porcelain --untracked-files=all`, and denies only when `??` entries exist, listing them. A clean tree, a tree with only tracked edits, a named path and `git add -u` pass. Escape hatch, shared with the destructive-git gate: `DESTRUCTIVE_GIT_GATE_OFF=1`. The deny message is the specification (see below): it names the files, the rule, the incident and the way out.
+
 ## Anti-Patterns
 
 | Anti-pattern | Why wrong | Fix |
