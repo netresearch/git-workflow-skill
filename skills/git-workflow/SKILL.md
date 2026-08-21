@@ -12,11 +12,9 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 
 # Git Workflow Skill
 
-## When to Use
+## Not Here
 
-- Branching, Conventional Commits; PRs: open, review, resolve threads, merge (CI gate, queues, cleanup)
-- Conflicts, rebasing a long-lived branch, splitting a PR, git hooks (incl. worktree installs)
-- **Not here**: releases (`github-release`); BLOCKED-PR diagnosis (`github-project`)
+Releases: `github-release`. BLOCKED-PR diagnosis: `github-project`.
 
 ## Critical Rules (Non-Negotiable)
 
@@ -51,10 +49,8 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 <type>[scope]: <description>
 ```
 
-**Types**: `feat` (MINOR), `fix` (PATCH), `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
-
-**Breaking change**: Add `!` after type or `BREAKING CHANGE:` in footer.
-
+`feat` MINOR, `fix` PATCH; full type list and DCO sign-off in `references/commit-conventions.md`.
+**Breaking**: `!` after type, or `BREAKING CHANGE:` in the footer.
 **Branches**: `feature/TICKET-123-description`, `release/1.2.0`
 
 ## Hook Detection
@@ -63,7 +59,7 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 ls lefthook.yml .lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null || echo "No hooks"
 ```
 
-Install: `lefthook install`, `composer install`, `npm install`, `pre-commit install`
+Install commands per framework: `references/git-hooks-setup.md`.
 
 ## PR Merge Requirements
 
@@ -77,6 +73,10 @@ Before merging: threads resolved, CI green (incl. annotations), rebased, signed,
 ./scripts/pr-status.sh [-R owner/repo] [PR] [--json] [--watch]
 # Merge; refuses when the gate is shut:
 ./scripts/pr-merge.sh [-R owner/repo] [PR] [--dry-run|--self-reviewed]
+# What a repository expects, before the first artifact:
+./scripts/repo-contribution-preflight.sh [--repo <dir>] [--section docs|templates|packaging|ci|tools]
+# Which copy is installed here (every script answers this):
+./scripts/pr-status.sh --version
 ```
 
 ---
