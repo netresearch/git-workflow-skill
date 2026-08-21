@@ -75,13 +75,24 @@ check-runs beside the first. The old ones keep their old conclusion, so a
 counter over that endpoint reports failures that no longer exist:
 
 ```
-security / SAST (Opengrep): success   22:12:34
-security / SAST (Opengrep): success   22:12:31   <- previous run, same SHA
+All security checks:           success   22:13:53
+All security checks:           failure   22:10:01   <- previous run, same SHA
+fuzz / Preflight (event gate): success   22:11:32
+fuzz / Preflight (event gate): failure   22:09:34   <- previous run, same SHA
 ```
 
 Measured on a pull request whose fuzz preflight was red until an upstream
-workflow was fixed: the reopen produced a green run, and the endpoint kept
-listing the red one, so "2 failing" was reported while nothing was failing.
+workflow was fixed, then closed and reopened. On that one commit:
+
+| Query | Failures reported |
+| --- | --- |
+| every check-run with `conclusion == "failure"` | 2 |
+| newest run per name only | 0 |
+| `gh pr checks` | 0 |
+
+Note which names duplicate: the two that had actually failed. Checks that were
+green in both runs duplicate too, but silently — so a spot check on a green
+name shows two identical entries and looks harmless.
 
 `gh run rerun` does **not** do this — it updates the existing check-run in
 place. Verified on two pull requests where a rerun turned a red check green:
