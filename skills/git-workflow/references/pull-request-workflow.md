@@ -211,6 +211,20 @@ state it claims to observe — the same reason the old "review-yourself"
 it only when the diff was actually reviewed, and say what was looked at in
 the review-note comment beside it.
 
+### Before believing a script cannot do something: ask which copy is running
+
+Every script in `scripts/` answers `--version`, and prints the resolved path beneath it:
+
+```
+$ pr-merge.sh --version
+pr-merge.sh 1.27.0
+path: /home/you/.agents/skills/git-workflow/scripts/pr-merge.sh
+```
+
+The version is read from the `SKILL.md` next to the script, never from a checkout elsewhere, so a cached copy reports the number it was packaged with. The path is there because the number alone is not enough: two installations on one machine declared the same version while shipping different scripts, and `--self-reviewed` existed in only one of them (#209). The flag was reported as missing — which reads exactly like a feature that was never built — and about a dozen PRs were merged by hand instead of through the attestation flow.
+
+So when a documented flag is rejected as unknown, that is a question about the installation before it is a question about the tool. `--version` needs no repository, no network and no `gh`: it is the one thing that must still answer when everything else is broken.
+
 ## A Rebase Conflict Can Mean the PR Is Superseded
 
 When `NEXT: rebase` turns into a conflict, look at **what the main side of the

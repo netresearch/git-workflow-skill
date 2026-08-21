@@ -97,6 +97,37 @@
 # object drift apart, in either direction.
 set -uo pipefail
 
+# --version answers "which copy am I running" without diffing installations.
+# Two installations can declare the SAME number while shipping different
+# scripts (netresearch/git-workflow-skill#209 measured exactly that, and the
+# missing flag read as a missing feature for a dozen merges). So the resolved
+# path is printed beside the version: the number says what the copy claims to
+# be, the path says which file actually answered.
+#
+# The version is read from the SKILL.md NEXT TO the script, never from a
+# checkout elsewhere -- a cached copy must report the number it was packaged
+# with, or the answer is worse than none. \042 and \047 are the quote
+# characters by octal code, so this awk program contains no quote of its own
+# to terminate the single-quoted string it lives in.
+skill_version() {
+    local here skill v
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    skill="$here/../SKILL.md"
+    v="unknown"
+    if [ -f "$skill" ]; then
+        v="$(awk '/^[ \t]*version:/ {
+                 s = $0
+                 sub(/^[ \t]*version:[ \t]*/, "", s)
+                 gsub(/[\042\047]/, "", s)
+                 gsub(/[ \t\r]+$/, "", s)
+                 if (s != "") { print s; exit }
+             }' "$skill" 2>/dev/null)" || v=""
+        [ -n "$v" ] || v="unknown"
+    fi
+    printf '%s %s\n' "$(basename "${BASH_SOURCE[0]}")" "$v"
+    printf 'path: %s/%s\n' "$here" "$(basename "${BASH_SOURCE[0]}")"
+}
+
 REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
 
 # Every action the watch loop returns on. --ignore-action accepts exactly
@@ -130,6 +161,7 @@ while [ $# -gt 0 ]; do
     # Prints the whole leading comment block rather than a fixed line range:
     # a hard-coded range silently truncates --help the moment the header
     # grows, which is how a documented contract stops being visible.
+    --version) skill_version; exit 0 ;;
     -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     -*) die "unknown flag: $1" ;;
     *)  PR="$1"; shift ;;
