@@ -67,6 +67,38 @@ Because the exit code cannot distinguish "watched and passed" from "never
 found the run", assert the run exists before watching it, or re-read the
 check's state afterwards rather than trusting the watcher's return.
 
+### `commits/<sha>/check-runs` returns one entry per run, not per check
+
+A second workflow run on the **same commit** — a closed-and-reopened pull
+request, a `workflow_dispatch`, an `on: schedule` firing — adds another set of
+check-runs beside the first. The old ones keep their old conclusion, so a
+counter over that endpoint reports failures that no longer exist:
+
+```
+security / SAST (Opengrep): success   22:12:34
+security / SAST (Opengrep): success   22:12:31   <- previous run, same SHA
+```
+
+Measured on a pull request whose fuzz preflight was red until an upstream
+workflow was fixed: the reopen produced a green run, and the endpoint kept
+listing the red one, so "2 failing" was reported while nothing was failing.
+
+`gh run rerun` does **not** do this — it updates the existing check-run in
+place. Verified on two pull requests where a rerun turned a red check green:
+one entry each, conclusion `success`.
+
+So when the question is "is this pull request green now":
+
+```bash
+# Right: gh pr checks reports the latest attempt per check
+gh pr checks "$PR" --repo "$R" --json name,bucket
+
+# If you must use the API, keep only the newest run per name
+gh api "repos/$R/commits/$SHA/check-runs?per_page=100" --paginate \
+  --jq '[.check_runs[]] | group_by(.name)
+        | map(max_by(.started_at)) | map(select(.conclusion == "failure")) | length'
+```
+
 ### Ask which step failed before reading any log
 
 The jobs API names it in one call, and the name is usually enough to reproduce
