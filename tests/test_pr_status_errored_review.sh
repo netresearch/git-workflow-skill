@@ -481,15 +481,23 @@ done
 # "nothing reviewed this head" must not be asserted there unconditionally: with a
 # valid approval ON the head, claiming otherwise tells the operator to disregard
 # a current review.
-echo "case 13: two errors + valid APPROVED ON the head — no false claims"
+echo "case 13: two errors + valid APPROVED ON the head — the approval satisfies the policy"
 make_stub_reviews \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_QUOTA" \
   "a-human|APPROVED|LGTM on the current head"
-check "has_review_on_head" "true"           "$(run_flag has_review_on_head)"
-# Pin the branch too: asserting only absences passes vacuously if this stops
-# being the branch that answers.
-check "next.action"        "request-review" "$(run_next)"
+check "has_review_on_head" "true"  "$(run_flag has_review_on_head)"
+# This case asserted request-review until #214. Correcting the WHY was only half
+# of it: the action was wrong too. The ruleset branch states its own demand as
+# the never-merge-unreviewed POLICY rather than a host gate (a Copilot review
+# does not count toward required approvals, and GitHub reports CLEAN here) — and
+# an APPROVED review on this head satisfies that policy. While it answered
+# request-review, pr-merge.sh --self-reviewed took the unsatisfiable leg and
+# wrote "the review this pull request demands is unsatisfiable" into permanent
+# PR history on seven PRs that were approved at the time.
+check "next.action"        "merge" "$(run_next)"
+# The false-attestation trigger specifically: --self-reviewed keys on this.
+check "next.reason absent" "null"  "$(run_flag 'next.reason')"
 for phrase in "no review on the current head" "sits on an older commit"; do
     if status | jq -e --arg p "$phrase" '.next.why | test($p)' >/dev/null; then
         echo "  FAIL why falsely claims: $phrase"
@@ -535,12 +543,13 @@ fi
 # Case 15 uses two distinct logins, so no key collides and it cannot catch a
 # lossy per-author projection. The SAME reviewer approving the head and then
 # commenting on it is what collapses the state.
+# merge since #214, for the same reason as case 13 — the approval is on the head.
 echo "case 16: same reviewer approves the head then comments — no false staleness"
 make_stub_reviews \
   "copilot-pull-request-reviewer|COMMENTED|$ERR_GENERIC" \
   "a-human|APPROVED|LGTM on the current head" \
   "a-human|COMMENTED|one more thought on the same head"
-check "next.action" "request-review" "$(run_next)"
+check "next.action" "merge" "$(run_next)"
 if status | jq -e '.next.why | test("sits on an older commit")' >/dev/null; then
     echo "  FAIL claims staleness for an approval that is on the head"
     fail=1
@@ -577,6 +586,35 @@ make_stub_reviews \
   "a-human|APPROVED|fixed" \
   "a-human|CHANGES_REQUESTED|found something else"
 check "reviews_on_head[a-human]" "APPROVED+CHANGES_REQUESTED" "$(run_flag '"reviews_on_head"."a-human"')"
+
+# --- #214: an approval on the head must not be reported as an unsatisfiable ---
+# --- review demand. Cases 13/16 cover the errored-row leg; this is the leg  ---
+# --- the reported PRs actually took.                                       ---
+# netresearch/t3x-nr-llm#860 and six siblings: Copilot was never asked on the
+# head at all (no error row, copilot_review_errored false), the wall was known
+# only from the month marker, and github-actions had APPROVED the head minutes
+# earlier. The marker leg answered request-review with
+# reason=bot-review-unsatisfiable, which is the exact input pr-merge.sh
+# --self-reviewed keys on to post its permanent "unsatisfiable" attestation.
+echo "case 20: quota MARKER + no copilot row + APPROVED on head — no false dead end"
+make_stub_reviews "a-human|APPROVED|LGTM on the current head"
+plant_marker
+check "copilot_quota_exhausted" "true"  "$(run_flag copilot_quota_exhausted)"
+check "copilot_review_errored"  "false" "$(run_flag copilot_review_errored)"
+check "has_review_on_head"      "true"  "$(run_flag has_review_on_head)"
+check "next.action"             "merge" "$(run_next)"
+check "next.reason absent"      "null"  "$(run_flag 'next.reason')"
+
+# The twin that must NOT move: same marker, same missing copilot row, but the
+# approval sits on an older commit. Nothing has read this head, so the dead end
+# is real and the attestation path stays open. Without this, case 20 could be
+# satisfied by deleting the marker leg outright.
+echo "case 20b: same, but the approval is STALE — the dead end is still reported"
+make_stub_reviews "a-human|APPROVED|approved before the last push|older"
+plant_marker
+check "has_review_on_head" "false"                     "$(run_flag has_review_on_head)"
+check "next.action"        "request-review"            "$(run_next)"
+check "next.reason"        "bot-review-unsatisfiable"  "$(run_flag 'next.reason')"
 
 
 # --- Signature gate (#187): BLOCKED + unsigned + all green must name the ---
