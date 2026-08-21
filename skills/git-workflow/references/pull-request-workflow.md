@@ -1154,6 +1154,34 @@ gh pr update-branch $PR --repo $OWNER/$REPO
 
 That merges the now-advanced base into B, which re-triggers CI **and** the approval workflow. Budget the full check matrix again, not a re-check.
 
+**There is a cheaper recovery, and it is the usual case.** `update-branch` is the right tool when B's *tree* has to catch up — the base advanced and B needs its content, or the two conflict. When nothing about B is stale and only the approval was dismissed by the retarget, **re-running the workflow that produced the approval restores it without a new head and without a second matrix**:
+
+```bash
+RUN=$(gh api --paginate "repos/$OWNER/$REPO/actions/runs?branch=$BRANCH&per_page=100" \
+      --jq '[.workflow_runs[]|select(.name=="<the approving workflow>")]|sort_by(.created_at)|last|.id')
+gh api "repos/$OWNER/$REPO/actions/runs/$RUN/rerun" -X POST
+```
+
+The head SHA never changes, so nothing else is dismissed and the existing green checks still count. Find the workflow name from the check-run that carries the approval (`gh api repos/$OWNER/$REPO/commits/$SHA/check-runs`), not from the review's author — the review is submitted by `github-actions[bot]` whatever produced it.
+
+Observed 2026-08-21 on netresearch/t3x-nr-llm#871: `update-branch` would have re-run 93 checks to recover one dismissed approval on a two-file documentation PR whose tree was already correct.
+
+**A trap in the diagnosis, not the fix.** `pr-merge.sh` reports the gate it knows how to name, and a dismissed approval is not one of them — on #871 it answered "Copilot is OUT OF REVIEW QUOTA" and asked for a self-review attestation that was already posted, correctly, for the current head. Both statements were true and neither was the cause. The cause is only visible in the timeline:
+
+```bash
+gh api --paginate "repos/$OWNER/$REPO/issues/$PR/timeline?per_page=100" \
+  --jq '.[]|select(.event|test("review_dismissed|reviewed|head_ref_force_pushed"))
+        |"\(.created_at)  \(.event)  \(.dismissed_review.dismissal_message // "")"'
+```
+
+```
+08:22:33  review_dismissed        approved
+08:23:10  reviewed
+10:53:59  review_dismissed        The base branch was changed.
+```
+
+Read `reviewDecision` before believing a merge tool's `NEXT:` line. `REVIEW_REQUIRED` on a PR whose checks are green and whose threads are resolved means an approval was dismissed, and the message naming a review *path* is describing the door it checked, not the one that is shut.
+
 Note the difference in *why* you reach for it. That section's caution is that `--rebase` force-updates and *can* reset approvals; here the approvals are **already** gone before you touch anything, dismissed by the retarget itself, and the update is what restores them.
 
 Two things follow when you plan a stack:
