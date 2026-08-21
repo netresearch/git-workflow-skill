@@ -75,7 +75,7 @@ while [ $# -gt 0 ]; do
         --quiet)        QUIET=1 ;;
         --repo)         shift; REPO_DIR="${1:-}" ;;
         --version) skill_version; exit 0 ;;
-        -h|--help)      sed -n '2,30p' "$0"; exit 0 ;;
+        -h|--help)      awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
         *)              echo "unknown argument: $1" >&2; exit 3 ;;
     esac
     shift

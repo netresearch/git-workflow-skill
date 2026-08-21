@@ -105,6 +105,27 @@ else
     echo "  skip no .claude-plugin/plugin.json"
 fi
 
+# --help is the sibling surface of --version: both are the script describing
+# itself, and both broke the same way. Two scripts printed their header with a
+# FIXED line range, which drifts the moment anything is inserted above the
+# code. One had grown three lines past its header and printed "set -uo
+# pipefail" as documentation; the other had fallen one line short and silently
+# dropped the last line of its own usage. A range that has to be maintained by
+# hand will drift again, so both now stop at the first non-comment line -- and
+# this asserts the property rather than the line count, which would just be a
+# second number to maintain.
+echo "case 7: no --help output contains source code"
+for s in "$SCRIPTS"/*.sh; do
+    name="$(basename "$s")"
+    # Only the scripts that HANDLE --help; the others treat it as a positional
+    # argument and answering for them would assert on unrelated behaviour.
+    grep -q -- "-h|--help" "$s" || continue
+    out="$(timeout 30 bash "$s" --help 2>&1 || true)"
+    # shellcheck disable=SC2016  # $1 is regex, matching the literal case "$1"
+    leaked="$(printf '%s\n' "$out" | grep -cE '^(set -[a-z]|[a-z_]+\(\) *\{|while \[ |case "\$1")' || true)"
+    check "$name --help leaks no source" "0" "$leaked"
+done
+
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
 else
