@@ -2740,14 +2740,13 @@ issue is filler that pushes the reviewable part below the fold.
 
 ### Read the repository before the first artifact
 
-Not the README — the parts that encode rules no prose mentions. See
-`scripts/repo-contribution-preflight.sh`, which returns them in one call:
-contribution docs and the pages they link, issue and PR templates, the CI
-matrix that actually runs, `.gitattributes` export rules, and the pinned tool
-versions the pipeline uses.
+The README **and** the parts that encode rules no prose mentions. Reading only the second half is a trap of its own: a small repository often has no `CONTRIBUTING` at all and states the entire contract in the README — target branch, sign-off, the one command CI runs, whether issues are wanted before PRs. A preflight that skips it reports "no contribution docs" about a repository that documented everything.
 
-Discovering `CONTRIBUTING.rst` after three artifacts are already public means
-retrofitting them in view of the people you are contributing to.
+`scripts/repo-contribution-preflight.sh` returns all of it in one call: contribution and community-health docs (`CONTRIBUTING`, `CODE_OF_CONDUCT`, `SUPPORT`, `GOVERNANCE`, `SECURITY`, found case-insensitively under the root, `.github/` and `docs/`) with the pages they link, the README headings that carry rules, issue and PR templates including the `PULL_REQUEST_TEMPLATE/` directory form, the CI matrix that actually runs, `.gitattributes` export rules, and the pinned tool versions the pipeline uses.
+
+Two things it deliberately does not do. It never answers "there are no rules": when a repository has no contribution docs of its own, GitHub serves the owner's `.github` repository defaults instead, and those bind identically — so the script prints the query for that fallback rather than an absence it did not check. And it does not treat a missing heading as a missing rule: a three-line README can require a sign-off in running prose.
+
+Discovering `CONTRIBUTING.rst` after three artifacts are already public means retrofitting them in view of the people you are contributing to.
 
 ## Full PR Lifecycle Checklist
 

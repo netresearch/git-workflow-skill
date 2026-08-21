@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # repo-contribution-preflight.sh — what this repository expects, before the first artifact.
 #
-# A repository's binding rules are rarely in its README. They sit in contribution
-# docs two links deep, in issue and PR templates, in .gitattributes export rules,
-# in the CI matrix, and in pinned tool versions. Each is one command; together they
-# are fifteen, which is why they get skipped and then discovered afterwards — with
-# three artifacts already public and a maintainer watching the retrofit.
+# A repository's binding rules are scattered: some in the README, some in
+# contribution docs two links deep, some in issue and PR templates, in
+# .gitattributes export rules, in the CI matrix, and in pinned tool versions.
+# Each is one command; together they are fifteen, which is why they get skipped
+# and then discovered afterwards — with three artifacts already public and a
+# maintainer watching the retrofit.
+#
+# The README is checked, not skipped. A small repository often states the whole
+# contract there — target branch, sign-off, the command CI runs — and never
+# writes a CONTRIBUTING at all. This script therefore reports the README
+# headings that carry rules, fence-aware, so a "# Contributing" line inside a
+# fenced example is not mistaken for a section.
 #
 # This returns all of it in one call. It reads; it changes nothing.
 #
@@ -26,7 +33,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --repo) REPO="${2:?--repo needs a directory}"; shift 2 ;;
         --section) SECTION="${2:?--section needs a name}"; shift 2 ;;
-        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -42,17 +49,93 @@ none()  { printf '  (none)\n'; }
 if want docs; then
     head_ "Contribution docs"
     found=0
-    for f in CONTRIBUTING.md CONTRIBUTING.rst CONTRIBUTING.txt AGENTS.md CLAUDE.md \
-             .github/CONTRIBUTING.md docs/CONTRIBUTING.md CODE_OF_CONDUCT.md; do
+    # -iname rather than a fixed list: GitHub resolves these case-insensitively,
+    # so a repository carrying contributing.md is not one carrying nothing. The
+    # community-health set is here in full (SUPPORT, GOVERNANCE, SECURITY,
+    # CODE_OF_CONDUCT) because each can carry a rule that decides whether a
+    # contribution is accepted, and each is served from .github/ or docs/ just
+    # as often as from the root.
+    while IFS= read -r f; do
         [ -f "$f" ] || continue
         found=1
-        printf '  %-32s %s lines\n' "$f" "$(grep -c "" "$f")"
+        printf '  %-34s %s lines\n' "${f#./}" "$(grep -c "" "$f")"
         # A short CONTRIBUTING is usually a signpost: surface what it points at.
         # shellcheck disable=SC2016  # backticks and $ are regex syntax here, not shell
-        grep -oE '\[[^]]+\]\([^)]+\)|<https?://[^>]+>|`[^`]+\.(md|rst)`' "$f" 2>/dev/null \
-            | head -8 | sed 's/^/      -> /'
-    done
-    [ "$found" = 1 ] || none
+        links=$(grep -oE '\[[^]]+\]\([^)]+\)|<https?://[^>]+>|`[^`]+\.(md|rst)`' "$f" 2>/dev/null)
+        [ -n "$links" ] || continue
+        printf '%s\n' "$links" | head -8 | sed 's/^/      -> /'
+        n=$(printf '%s\n' "$links" | grep -c "")
+        # Never truncate silently: a capped list reads as a complete one.
+        [ "$n" -gt 8 ] && printf '      -> (%s more link(s) not shown — read the file)\n' "$((n - 8))"
+    done < <(find . -maxdepth 3 \
+                  \( -path ./.git -o -path ./node_modules -o -path ./vendor \) -prune -o \
+                  -type f \( -iname 'CONTRIBUTING*' -o -iname 'CODE_OF_CONDUCT*' \
+                             -o -iname 'SUPPORT*'    -o -iname 'GOVERNANCE*' \
+                             -o -iname 'SECURITY*'   -o -iname 'AGENTS.md' \
+                             -o -iname 'CLAUDE.md' \) -print 2>/dev/null | sort)
+    if [ "$found" = 0 ]; then
+        # Deliberately not "(none)". GitHub serves CONTRIBUTING, CODE_OF_CONDUCT,
+        # SUPPORT, SECURITY and both template kinds from the OWNER's .github
+        # repository whenever the repository itself has none, and those defaults
+        # bind exactly like local ones. This script does not go to the network,
+        # so it names the query rather than answering it: an unchecked fallback
+        # must never be reported as an absence.
+        printf '  none IN THIS REPOSITORY — the owner default may still supply them\n'
+        owner=$(git remote get-url origin 2>/dev/null \
+                | sed -E 's#^[^:]*://[^/]+/##; s#^[^:]*:##; s#/.*$##')
+        if [ -n "$owner" ]; then
+            printf '    -> gh api repos/%s/.github/contents --jq ".[].name"\n' "$owner"
+        else
+            printf '    -> gh api repos/<owner>/.github/contents --jq ".[].name"\n'
+        fi
+    fi
+fi
+
+# --- The README, which is where a small repository states the whole contract -
+if want docs; then
+    head_ "README sections that carry rules"
+    found=0
+    while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        # Fence-aware on purpose: a heading regex is blind to code blocks, and a
+        # README demonstrating `## Contributing` inside a fenced example would
+        # otherwise be reported as having that section. Handles ATX (#) and the
+        # underline form used by RST and setext Markdown.
+        hits=$(awk '
+            function rulebearing(h) {
+                return tolower(h) ~ /contribut|pull request|merge request|code of conduct|commit|sign|coding|style|standard|develop|hacking|test|build|releas|governance|support|securit|licen[cs]e|getting started|setup|workflow|branch|patch/
+            }
+            /^[ \t]*(```|~~~)/ { fence = !fence; prev = ""; next }
+            fence { prev = $0; next }
+            /^[ \t]*#{1,6}[ \t]+/ {
+                h = $0
+                sub(/^[ \t]*#+[ \t]+/, "", h)
+                sub(/[ \t]*#*[ \t]*$/, "", h)
+                if (rulebearing(h)) printf "    %5d  %s\n", NR, h
+                prev = $0; next
+            }
+            /^[ \t]*[=~^*+#"-]{3,}[ \t]*$/ {
+                if (prev ~ /[^ \t]/) {
+                    h = prev
+                    gsub(/^[ \t]+|[ \t]+$/, "", h)
+                    if (rulebearing(h)) printf "    %5d  %s\n", NR - 1, h
+                }
+                prev = $0; next
+            }
+            { prev = $0 }
+        ' "$f")
+        [ -n "$hits" ] || continue
+        found=1
+        printf '  %s\n' "${f#./}"
+        printf '%s\n' "$hits"
+    done < <(find . -maxdepth 2 \
+                  \( -path ./.git -o -path ./node_modules -o -path ./vendor \) -prune -o \
+                  -type f -iname 'README*' -print 2>/dev/null | sort)
+    if [ "$found" = 0 ]; then
+        printf '  no rule-bearing headings in the README\n'
+        printf '    -> absence of a heading is not absence of a rule: a short README\n'
+        printf '       can state the target branch or the sign-off in running prose\n'
+    fi
 fi
 
 # --- Issue and PR templates -------------------------------------------------
@@ -66,9 +149,17 @@ if want templates; then
         # blank_issues_enabled: false means a template is mandatory.
         grep -E 'blank_issues_enabled' "$f" | sed 's/^/    /'
     done
+    # PULL_REQUEST_TEMPLATE has a DIRECTORY form for multiple templates, and
+    # both template kinds are also honoured at the root and under docs/ — a
+    # .github-only list reports "no template" for repositories that have one.
     for f in .github/ISSUE_TEMPLATE/*.yml .github/ISSUE_TEMPLATE/*.yaml \
              .github/ISSUE_TEMPLATE/*.md .github/PULL_REQUEST_TEMPLATE.md \
-             .github/pull_request_template.md .gitlab/issue_templates/* \
+             .github/pull_request_template.md .github/PULL_REQUEST_TEMPLATE/* \
+             .github/ISSUE_TEMPLATE.md .github/issue_template.md \
+             ISSUE_TEMPLATE.md PULL_REQUEST_TEMPLATE.md pull_request_template.md \
+             docs/ISSUE_TEMPLATE.md docs/PULL_REQUEST_TEMPLATE.md \
+             docs/pull_request_template.md \
+             .gitlab/issue_templates/* \
              .gitlab/merge_request_templates/*; do
         [ -f "$f" ] || continue
         case "$f" in */config.y*ml) continue ;; esac
