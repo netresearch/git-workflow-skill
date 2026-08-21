@@ -65,7 +65,7 @@ while [ $# -gt 0 ]; do
         --repo) REPO="${2:?--repo needs a directory}"; shift 2 ;;
         --section) SECTION="${2:?--section needs a name}"; shift 2 ;;
         --version) skill_version; exit 0 ;;
-        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+        -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
