@@ -195,7 +195,13 @@ honours it **only** where the refusing branch stamped
 `next.reason: bot-review-unsatisfiable` — the quota wall, or two failed bot
 reviews on the head; the flag keys on that reason, never on the account-global
 quota state, so a satisfiable refusal (say, classic `require_last_push_approval`)
-can never receive a false "unsatisfiable" attestation. With a live review path
+can never receive a false "unsatisfiable" attestation. That keying is necessary
+and was not sufficient: until #214 the refusing branch itself stamped the reason
+while an `APPROVED` review sat on the very same head, and seven approved PRs in
+one sweep got the attestation anyway. The bot branches now also require that no
+approval is on the current head — checked against the approval list rather than
+`has_review_on_head`, which a failed Copilot review satisfies by being an
+ordinary `COMMENTED` row. With a live review path
 the attestation changes nothing, a non-author comment never counts, a human
 `CHANGES_REQUESTED` or a host-required approval keeps it inert, `--dry-run`
 previews the comment without posting it, and the next push invalidates the

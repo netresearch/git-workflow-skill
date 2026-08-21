@@ -648,7 +648,22 @@ evaluate() {
          # forever. The tool cannot observe "a human read the diff", so it no
          # longer pretends to: it keeps reporting the honest state and only
          # stops handing over a retry command a quota ceiling will reject.
+         # $no_current_approval gates this branch and the two below it for the
+         # same reason the generic gate at the bottom tests has_review_on_head:
+         # the demand is the never-merge-unreviewed POLICY, as the ruleset
+         # branch says in its own why-text, and an APPROVED review on this head
+         # satisfies it. Without the guard a PR that github-actions has already
+         # approved still reports request-review, and pr-merge.sh
+         # --self-reviewed then writes "the review this pull request demands is
+         # unsatisfiable" into permanent PR history — a claim that is false
+         # while the approval sits on the same SHA (#214).
+         #
+         # Not has_review_on_head: that is true for any non-author review
+         # including a COMMENTED one, and the Copilot error rows ARE COMMENTED,
+         # so testing it would let a failed bot review satisfy the policy. The
+         # approval list is the one predicate an error row cannot answer.
          elif ($needs_copilot and $s.copilot_review_errored
+               and $no_current_approval
                and ($s.has_copilot_review_on_head | not)
                and ($self_attested | not)
                and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)) then
@@ -682,9 +697,11 @@ evaluate() {
               cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
             end)
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)
+               and $no_current_approval
                and ($s.requested_reviewers|map(test("copilot";"i"))|any)) then
            {action:"await-review", why:"Copilot review already requested for \($s.headOid[0:8]) and not delivered yet — waiting, not re-requesting"}
          elif ($needs_copilot and ($s.has_copilot_review_on_head|not)
+               and $no_current_approval
                and ($self_attested|not)) then
            # This branch outranks every CI branch below, so it is the one place
            # the CI state has to be carried along: without it NEXT reads
