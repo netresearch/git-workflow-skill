@@ -196,6 +196,29 @@ else
     fail=1
 fi
 
+# The name globs are broad by design, so nothing but the extension stops a CI
+# workflow from being claimed as a community-health document. Found by running
+# the section against the skill repository itself, which has security.yml --
+# no fixture here had a workflow, so the suite was blind to it.
+echo "case 12: .github/workflows/security.yml is a workflow, not a SECURITY doc"
+R=$(newrepo)
+mkdir -p "$R/.github/workflows"
+printf 'name: security\non: push\n' > "$R/.github/workflows/security.yml"
+docs12="$(section_of "$R" "Contribution docs")"
+if printf '%s\n' "$docs12" | grep -qE 'workflows/security\.yml'; then
+    echo "  FAIL a CI workflow was listed as a contribution document"
+    fail=1
+else
+    echo "  ok   workflow not claimed as a contribution document"
+fi
+
+# The other direction, so the filter cannot be tightened into dropping real
+# files: GitHub honours an extensionless CONTRIBUTING, and so must this.
+echo "case 13: an extensionless CONTRIBUTING is still a document"
+R=$(newrepo)
+printf 'Target develop. Sign your commits.\n' > "$R/CONTRIBUTING"
+says "extensionless CONTRIBUTING found" "$R" 'CONTRIBUTING +[0-9]+ lines'
+
 echo "case 11: --help still prints the whole header, including the README note"
 help_out="$(bash "$SCRIPT" --help 2>&1)"
 if printf '%s\n' "$help_out" | grep -qE 'README is checked, not skipped'; then

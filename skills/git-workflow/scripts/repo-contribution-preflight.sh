@@ -57,6 +57,16 @@ if want docs; then
     # as often as from the root.
     while IFS= read -r f; do
         [ -f "$f" ] || continue
+        # The name globs are deliberately broad, so the extension decides. Without
+        # this, -iname SECURITY* claims .github/workflows/security.yml as a
+        # community-health document -- found by running the section against this
+        # repository, which has exactly that workflow. An extensionless
+        # CONTRIBUTING or SECURITY is a real document and stays.
+        case "${f##*/}" in
+            *.md|*.markdown|*.rst|*.txt|*.adoc) ;;
+            *.*) continue ;;
+            *) ;;
+        esac
         found=1
         printf '  %-34s %s lines\n' "${f#./}" "$(grep -c "" "$f")"
         # A short CONTRIBUTING is usually a signpost: surface what it points at.
