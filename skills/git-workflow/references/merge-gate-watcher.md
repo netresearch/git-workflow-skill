@@ -214,6 +214,60 @@ gh api repos/$R/commits/$SHA/status      --jq '{state, total:(.statuses|length)}
 
 **Pre-existing red ≠ your regression.** If a post-merge gate (e.g. SonarCloud "Quality Gate failed" on N Security Hotspots) is red, check the *prior* base commit before owning it: `gh api repos/$R/commits/<prev-sha>/check-runs --jq '.check_runs[]?|select(.name=="<gate>")|.conclusion'`. Identical red on the parent + a diff that touched no relevant code = a pre-existing backlog to report, not a regression to fix.
 
+### A check run is named after the JOB, not the workflow
+
+Looking for a workflow by its own name in `commits/$SHA/check-runs` finds nothing, and the natural conclusion — "that run does not exist for this commit" — is wrong. The entry is there under the **job** name.
+
+Measured on `netresearch/typo3-demo`: workflow run 32536686040 is `Deploy (Update)` (`event=workflow_run`, `check_suite_id=88200944968`); its check run 96938832284 is named `deploy`. Same check suite, and the check run's `html_url` points back at `/actions/runs/32536686040/job/96938832284`. Reproduced 4/4 there and 2/2 on `netresearch/ofelia`, where `Verify Release` appears as `Verify / Verify Release`.
+
+So match on the check suite or on the job names you expect, not on the workflow name — and never infer absence from a name miss.
+
+### When you want run-level state, filter server-side with `head_sha=`
+
+The workflow run's own `status`/`conclusion` (as opposed to its jobs') lives on the runs endpoint. Do **not** reach back for a windowed list and filter it yourself — `actions/runs` takes the SHA as a query parameter and filters on the server:
+
+```bash
+[ -n "$SHA" ] || { echo "no SHA — refusing to watch"; exit 1; }
+gh api "repos/$R/actions/runs?head_sha=$SHA&per_page=50" \
+  --jq '.workflow_runs[] | "\(.name)=\(.status)/\(.conclusion // "-")"'
+```
+
+The guard on the first line is not decoration. An **empty** `$SHA` drops the filter silently and the API answers with the unfiltered list — 4506 runs on one repository measured this way, against 0 for a syntactically valid unknown SHA and 0 for outright garbage. A watcher whose SHA lookup failed then extracts some unrelated run's state and reports it as the watched commit's; the extraction is not empty, so the value guard below cannot catch it.
+
+`repos/$R/actions/runs?per_page=20` piped into a client-side `select(.head_sha==$s)` has the same window defect as `gh run list`, with one difference that makes it worse in a loop: **it works on the first tick.** The commit is recent, so it sits inside the window; twenty minutes later unrelated runs have pushed it out and every subsequent tick sees nothing. A watcher built that way reports progress, then goes quiet, and quiet is indistinguishable from "still running" — it will sit out its full budget without ever emitting. (Observed 2026-08-21; the first tick listed five runs, later ticks listed none.)
+
+### The emptiness guard must test the extracted value, not the response
+
+The natural guard is on the API call:
+
+```bash
+json="$(gh api "…" 2>/dev/null || echo '')"
+if [ -z "$json" ]; then sleep 45; continue; fi     # never fires
+```
+
+That checks the wrong thing. When the window scrolls past the commit the response is a perfectly valid `{"workflow_runs": []}` — non-empty, well-formed, and about a different set of runs. Guard on the value you actually extracted, and make a persistent extraction failure say so, because a watcher that has gone blind must not look like a watcher that is waiting:
+
+```bash
+state="$(printf '%s' "$json" | jq -r '…')"
+if [ -z "$state" ]; then
+  errors=$((errors + 1))
+  [ "$errors" = "5" ] && echo "query has returned nothing for 5 rounds — this watch is blind"
+  sleep 45; continue
+fi
+errors=0
+```
+
+### A file read right after a merge can still return the pre-merge content
+
+`contents/<path>?ref=<branch>` is served from a cache that lags the merge by seconds. A post-merge verification that reads the branch ref can therefore report the merged change as **absent** — an invented regression, produced by measuring too early rather than by anything being wrong. Address the merge commit instead, the same way the rest of this section does:
+
+```bash
+MC=$(gh api "repos/$R/pulls/$PR" --jq '.merge_commit_sha')
+gh api "repos/$R/contents/<path>?ref=$MC" --jq '.content' | base64 -d | grep -q '<marker>'
+```
+
+Observed 2026-08-21: a watcher fired "the trigger is NOT on main" the moment the PR merged; a direct read at the merge SHA a minute later showed it present, at the expected lines.
+
 ## Delete the branch/worktree only after the merge is CONFIRMED, never on watcher exit
 
 A merge-gate watcher loop can exit for reasons that are **not** "merged": the
