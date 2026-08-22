@@ -1,6 +1,6 @@
 {
   "name": "git-workflow",
-  "version": "1.28.0",
+  "version": "1.28.1",
   "description": "Git workflow best practices with commit validation hooks",
   "author": {
     "name": "Netresearch DTT GmbH",
