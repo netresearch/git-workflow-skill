@@ -1123,6 +1123,20 @@ Draft → Ready for Review → Changes Requested → Approved → Merged
          ↑_____________________|
 ```
 
+**The Draft → Ready edge only exists if the workflow listens for it.** `ready_for_review` is not in the `pull_request` default type set (`opened`, `synchronize`, `reopened`). A workflow declaring a bare `pull_request:` therefore never runs on that transition. Where such a workflow carries the auto-approval — typically a `pr-quality` job gated on `github.event.pull_request.draft == false` — the job skips while the PR is a draft and **nothing re-runs it when the draft is lifted**. The PR then sits at `reviewDecision: REVIEW_REQUIRED` with nothing red and no pending job, which reads as "waiting for a human" and is really "waiting for an event that will never come".
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+```
+
+**Diagnose it by absence, not by the red.** There is no failing check to find. Compare the auto-approve job's runs against the PR's events: if it ran once at `opened` and skipped, and no run exists for the ready transition, this is the cause — not the Copilot review quota, which is usually also true at that moment and is not why the PR is stuck.
+
+**The PR that adds the trigger does not deadlock itself.** It is tempting to conclude that opening such a fix as a draft is a trap, since lifting the draft would need the trigger the PR is still adding. For `pull_request` it is not: GitHub reads the workflow file from the **PR's merge ref**, so the `on:` block — `types:` included — comes from the branch under review and is already in force on that PR. Verified on two PRs that *introduced* their own workflow (`netresearch/ofelia#442`, `netresearch/git-workflow-skill#156`): both show a run of the new workflow at their own head SHA with `event=pull_request`.
+
+The trap is real only for `pull_request_target`, which deliberately loads the workflow from the base branch — there the new trigger takes effect for the *next* PR, not this one. Check which of the two the workflow uses before deciding the draft convention has to be set aside.
+
 ### Commands
 
 ```bash
