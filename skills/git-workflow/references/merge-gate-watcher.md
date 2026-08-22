@@ -259,7 +259,7 @@ errors=0
 
 ### A file read right after a merge can still return the pre-merge content
 
-`contents/<path>?ref=<branch>` is served from a cache that lags the merge by seconds. A post-merge verification that reads the branch ref can therefore report the merged change as **absent** — an invented regression, produced by measuring too early rather than by anything being wrong. Address the merge commit instead, the same way the rest of this section does:
+`contents/<path>?ref=<branch>` has been observed answering with pre-merge content immediately after a merge. A post-merge verification that reads the branch ref can therefore report the merged change as **absent** — an invented regression, produced by measuring too early rather than by anything being wrong. The mechanism is not established here (no attempt was made to reproduce it against a controlled merge); what is established is that the branch ref answered stale and the merge commit answered correctly. Address the merge commit, the same way the rest of this section does:
 
 ```bash
 MC=$(gh api "repos/$R/pulls/$PR" --jq '.merge_commit_sha')
