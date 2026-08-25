@@ -1120,7 +1120,17 @@ Match the repo's commit conventions exactly: Conventional Commits type and scope
 
 ```
 Draft → Ready for Review → Changes Requested → Approved → Merged
-         ↑_____________________|
+  ↑______________|↑_____________________|
+```
+
+**Draft is a state the PR returns to, not one it only starts in.** Opening every PR with `--draft` is the well-known half. The half that gets missed: when work resumes on a PR that is already "ready for review" — a rebase, a round of review fixes, another commit of any kind — convert it back *before the first push*, with `gh pr ready --undo <n>` (`glab mr update <iid> --draft`). Mark it ready again as a separate step, once the checks are green and the user has asked for it.
+
+The reason is what "ready for review" tells everyone else. It is a standing request for a maintainer's time against a specific head, and mid-work heads do not deserve it: between the first fix commit and the last one, the PR advertises for review a state you already know is incomplete — sometimes one you know is broken, when the work is a response to a reviewer's finding. Reviewers who look during that window spend attention on a diff that is about to change, and a green CI run on an intermediate head reads as an endorsement of work that is not finished. The round-trip is two commands.
+
+The tell that this was skipped is a PR whose recent commits are labelled as review fixes while it stayed out of draft throughout. Check before you start, not after — note that `gh pr view --json` spells the field `isDraft`, while the REST payload and `gh api` call it `draft`:
+
+```bash
+gh pr view "$PR" --json isDraft,headRefName,state --jq '{isDraft,headRefName,state}'
 ```
 
 **The Draft → Ready edge only exists if the workflow listens for it.** `ready_for_review` is not in the `pull_request` default type set (`opened`, `synchronize`, `reopened`). A workflow declaring a bare `pull_request:` therefore never runs on that transition. Where such a workflow carries the auto-approval — typically a `pr-quality` job gated on `github.event.pull_request.draft == false` — the job skips while the PR is a draft and **nothing re-runs it when the draft is lifted**. The PR then sits at `reviewDecision: REVIEW_REQUIRED` with nothing red and no pending job, which reads as "waiting for a human" and is really "waiting for an event that will never come".
@@ -1150,7 +1160,7 @@ gh pr edit 123 --add-reviewer "@reviewer1,@reviewer2"
 # Mark ready for review
 gh pr ready 123
 
-# Convert to draft
+# Convert to draft — also the first step whenever work resumes on a ready PR
 gh pr ready 123 --undo
 
 # Approve PR
