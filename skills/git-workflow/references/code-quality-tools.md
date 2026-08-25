@@ -114,9 +114,19 @@ guard() { python3 ./scripts/guard.py "$@"; }
 env -u FLAG FLAG=1 guard "$fixture"
 ```
 
-**`set -e` inside `$( )` aborts before the exit code is reported.** The subshell inherits `set -e`,
-so a case that is *supposed* to fail kills the substitution before the `echo $?` that was going to
-capture it — and the variable ends up empty:
+**`set -e` inside `$( )` aborts before the exit code is reported — under `sh`, not under `bash`.**
+The substitution's subshell inherits `set -e`, so the case that is *supposed* to fail kills it
+before the `echo $?` that was going to capture the code. The shell decides whether this bites, and
+the split is what makes it expensive: the same file, unchanged, run three ways —
+
+```text
+sh   probe.sh   exit=1   "suite"                    # dies after the header
+dash probe.sh   exit=1   "suite"                    # same
+bash probe.sh   exit=0   "suite | ok | ok | ende"   # runs clean
+```
+
+So a runner written with `#!/usr/bin/env sh` passes while you develop it with `bash runner.sh` and
+dies in CI, where `sh` is dash or busybox. `set +e` inside the subshell fixes all three:
 
 ```bash
 actual=$(
@@ -135,6 +145,11 @@ Both were hit while writing a guard's regression suite: the first turned 16 pass
 failures, the second produced a runner that printed its header and nothing else. Neither is caught
 by shellcheck — SC2163 fires on the deliberate `export "$assignment"`, which is the one line in the
 block that is correct as written.
+
+Reproducing the second one takes a faithful structure, not a minimal one. `bash -c 'set -e;
+out=$(false; echo $?)'` prints `1` and suggests there is nothing here; the trap needs the real
+shape — a function returning the code, inside `$( )`, inside a script under `set -e`, run as `sh`.
+A probe that is too small is how a real trap gets written off as folklore.
 
 ### CI Integration
 
