@@ -1765,11 +1765,17 @@ A pull request's base must be a branch **in the repository the PR is opened
 against**. Stacking PR2 on PR1's branch therefore requires that branch to exist
 there — which it does when you push branches to the target repo, and does not
 when you contribute from a fork. Upstream has no `feature/x`; it lives in your
-fork, and `gh pr create --base feature/x` answers:
+fork, and `gh pr create --base feature/x` answers with four clauses, of which
+only the last is the cause:
 
 ```
-Base ref must be a branch (createPullRequest)
+pull request create failed: GraphQL: Head sha can't be blank, Base sha can't be
+blank, No commits between upstream:feature/x and myfork:follow-up, Base ref must
+be a branch (createPullRequest)
 ```
+
+`No commits between` is the misleading one — the branches differ, and diffing
+them to find out why wastes the time this note exists to save.
 
 Check before you plan around a stack, not after you have built it:
 
