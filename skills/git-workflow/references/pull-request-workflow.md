@@ -1759,6 +1759,49 @@ The second way PR-green diverges from main-green needs no `push:`-gated job: a P
 - Rebasing before merge does **not** close the window — the config PR can land after your rebase. Only a merge queue or a "require branches to be up to date" rule makes it structurally impossible; where neither is on, expect this occasionally on active repos.
 - Consequence: watching the post-merge run on `main` is part of the merge, because this failure class is visible nowhere else. When it fires, diff `main`'s history for config-touching merges since your branch's last CI run and fix forward against the new config — it is mechanical, not an investigation into which check was wrong.
 
+### A stack needs push access to the repository the PRs target
+
+A pull request's base must be a branch **in the repository the PR is opened
+against**. Stacking PR2 on PR1's branch therefore requires that branch to exist
+there — which it does when you push branches to the target repo, and does not
+when you contribute from a fork. Upstream has no `feature/x`; it lives in your
+fork, and `gh pr create --base feature/x` answers:
+
+```
+Base ref must be a branch (createPullRequest)
+```
+
+Check before you plan around a stack, not after you have built it:
+
+```bash
+gh api "repos/$UPSTREAM" --jq '.permissions.push'   # false → no stack there
+```
+
+With `push: false` the options are a single PR, or a second PR that waits for
+the first to merge and then targets the default branch. Opening the follow-up in
+your own fork keeps it reviewable and off the upstream's list, but it is not a
+stack: the maintainers cannot see it in the queue.
+
+This bites hardest when a review suggests splitting one PR into two, since the
+split is proposed in the same breath as the stack that would deliver it. On a
+fork, "I'll split this into a base PR and a follow-up" is a promise about the
+merge order, not about what can be opened today — say which one you mean.
+
+### Before splitting a PR, run each half without the other
+
+A split is only real if both halves stand on their own. The half that carries a
+test and the half that makes CI accept it are the common trap: they read like
+"the change" and "the infrastructure for the change", and they are one commit's
+worth of coupling. Check it the cheap way — build each half and run the gates on
+it — before proposing the split, because a proposal is what the reviewer will
+plan around.
+
+The tell that they cannot be separated is usually already in front of you: if
+you diagnosed a CI failure that one half causes and the other half fixes, the
+question is settled and the split is a promise you cannot keep. Reviewing your
+own diagnosis before proposing is faster than reversing a split after the branch,
+the PR and the description have been rebuilt around it.
+
 ### Stacked PRs: retarget before you merge, `--delete-branch` only at the end
 
 A stacked chain (PR2 based on PR1's branch, PR3 on PR2's, …) merges
