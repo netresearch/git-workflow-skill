@@ -476,7 +476,7 @@ git -C <repo> fetch origin && git -C <repo> log --oneline origin/main -3   # or:
 git worktree add ../fresh origin/main                                      # read from a fresh tree
 ```
 
-Two recurring failure modes:
+Three recurring failure modes:
 
 - **Reporting a stale value as fact.** Reading `"^0.13"` from an un-fetched
   worktree and stating "the constraint needs bumping" — when current `main` already
@@ -486,6 +486,23 @@ Two recurring failure modes:
   "read the source" for a decision, name the ref/worktree it must read, and
   re-verify its structural claims (config keys, signatures) against the current
   tree before building on them — half a report can come from an outdated path.
+- **Running a *tool* from the stale worktree, not just reading it.** A script you
+  merged an hour ago does not exist in a reference worktree that has not been
+  fast-forwarded, so invoking it by path fails with `exit 127` — which reads as a
+  broken command, a bad `PATH`, a typo, anything but "the tree is old". The
+  remedy is one line, and it belongs at the end of a merge rather than at the
+  start of the next debugging session:
+
+  ```bash
+  git -C <repo>/.bare fetch origin --prune
+  git -C <repo>/main merge --ff-only origin/main   # reference worktree usable again
+  ```
+
+  Note `--ff-only`: a reference worktree that cannot fast-forward has local
+  commits and is not a reference worktree any more, which is worth finding out
+  loudly. In a bare-repo layout `origin/*` does not update on its own, so the
+  fetch is not optional — and after a merge the *branch* worktree is usually gone,
+  which is exactly when scripts start being invoked from `main/` instead.
 
 Confirm the constructor/signature at the **resolved** dependency version (the one
 installed in `vendor`/`.Build`), not the library's `main` branch — they drift
