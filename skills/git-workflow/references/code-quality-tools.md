@@ -97,6 +97,45 @@ Note: SC2155 (`Declare and assign separately to avoid masking return values`) on
 exit code is propagated and `set -e` works normally. The empty-output case is distinct and not
 covered by any shellcheck rule.
 
+### Gotcha: Capturing an exit code, in a script that runs under `set -e`
+
+A shell test runner — one that asserts "this input must exit 1, that one must exit 0" — walks into
+two traps that both fail in the same misleading direction: **every case collapses at once**, so the
+runner looks wholly broken rather than subtly wrong.
+
+**`env` cannot call a shell function.** `env VAR=1 my_func` execs a *program*; the function is
+invisible to it, so the run dies with `127` and every case fails identically. Set the variable in a
+subshell instead of reaching for `env`:
+
+```bash
+guard() { python3 ./scripts/guard.py "$@"; }
+
+# Wrong: env execs a binary, never the function -> 127 on every case.
+env -u FLAG FLAG=1 guard "$fixture"
+```
+
+**`set -e` inside `$( )` aborts before the exit code is reported.** The subshell inherits `set -e`,
+so a case that is *supposed* to fail kills the substitution before the `echo $?` that was going to
+capture it — and the variable ends up empty:
+
+```bash
+actual=$(
+  set +e                                    # or the next non-zero line ends the subshell
+  unset FLAG_A FLAG_B                       # each case starts from a known environment
+  if [ -n "$assignment" ]; then
+    # shellcheck disable=SC2163  # exporting NAME=value, not the variable name
+    export "$assignment"
+  fi
+  guard "$fixture" >/dev/null 2>&1
+  echo $?
+)
+```
+
+Both were hit while writing a guard's regression suite: the first turned 16 passing cases into 16
+failures, the second produced a runner that printed its header and nothing else. Neither is caught
+by shellcheck — SC2163 fires on the deliberate `export "$assignment"`, which is the one line in the
+block that is correct as written.
+
 ### CI Integration
 
 ```yaml
