@@ -102,6 +102,8 @@ Pitfalls baked in: `grep -c` exits 1 on zero matches (`|| true`); decide hard-fa
 
 **On a merge-queue repo, drop the strategy flag.** `gh pr merge $PR --merge` (or `--squash`/`--rebase`) on a repo whose `main` uses a merge queue prints `! The merge strategy for main is set by the merge queue` and ignores the flag — but it still **enqueues** the PR, so that line is a notice, not a failure. Confirm via the queue-entry check (below), not the command's output. Call `gh pr merge $PR` without a strategy flag there and let the queue decide; keep the explicit strategy only for non-queue repos.
 
+**Right after a queue merge, the REST view lags.** `gh pr view --json state` can still answer `OPEN` (with `mergeQueueEntry` already `null`) for a short window after the queue merged the PR — which reads exactly like an ejection. The GraphQL state the watcher polls is the settled verdict; when the two disagree, re-query before reporting either. (Observed 2026-08-25: a merged PR was reported "thrown out of the queue" off the stale REST answer and the report had to be corrected minutes later.)
+
 ## Two facts the loop depends on
 
 **`gh run rerun` reuses the original `GITHUB_SHA`.** For `pull_request` events that is the merge commit computed at first run — a rerun after a base-branch fix still tests against the broken base. Rerun is only for flakes; to pick up a repaired base, rebase the branch and push.
