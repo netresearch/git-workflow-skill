@@ -294,7 +294,9 @@ class AdvisoryOncePerSession(unittest.TestCase):
         self, command: str, session: "str | None", runtime_dir: "str | None" = None
     ) -> str:
         env = dict(os.environ)
-        env["XDG_RUNTIME_DIR"] = runtime_dir if runtime_dir is not None else self.runtime.name
+        env["XDG_RUNTIME_DIR"] = (
+            runtime_dir if runtime_dir is not None else self.runtime.name
+        )
         payload: dict = {"command": command}
         if session is not None:
             payload["session_id"] = session
@@ -305,6 +307,7 @@ class AdvisoryOncePerSession(unittest.TestCase):
             text=True,
             env=env,
             timeout=30,
+            check=False,
         )
         return result.stdout
 

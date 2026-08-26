@@ -779,7 +779,13 @@ def _advisory_already_fired(data, name: str) -> bool:
     except OSError:
         return False
     try:
-        os.close(os.open(os.path.join(directory, f"{slug}.{name}"), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        os.close(
+            os.open(
+                os.path.join(directory, f"{slug}.{name}"),
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                0o600,
+            )
+        )
     except FileExistsError:
         return True
     except OSError:
