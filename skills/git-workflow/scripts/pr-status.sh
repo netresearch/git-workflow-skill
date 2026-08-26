@@ -132,8 +132,12 @@ REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
 
 # Every action the watch loop returns on. --ignore-action accepts exactly
 # these: any other value could never have fired the loop, so accepting one
-# would let a typo behave as if the flag were absent.
-ACTIONABLE="fix-ci triage-ci resolve-threads request-review rebase resolve-conflicts merge blocked none fix-signatures"
+# would let a typo behave as if the flag were absent. The waiting actions
+# (wait, await-*, rules-unavailable) heartbeat instead of returning, so they
+# are deliberately not in here. tests/test_pr_status_draft_watch.sh pins the
+# two lists against every action literal this script can emit — a new action
+# must land in one of them.
+ACTIONABLE="fix-ci triage-ci resolve-threads request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate"
 
 die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
 
@@ -585,8 +589,6 @@ evaluate() {
          elif ($s.rules_fetched|not) then
            {action:"rules-unavailable",
             why:"could not read repos/\($s.repo)/rules/branches/\($s.base) — the required-check list is unknown, so no merge verdict is possible from here"}
-         elif $s.draft then
-           {action:"ready", why:"draft", cmd:"gh pr ready \($s.number) --repo \($s.repo)"}
          elif $s.mergeable == "CONFLICTING" then
            {action:"resolve-conflicts", why:"merge conflict with \($s.base)"}
          elif $s.mergeState == "BEHIND" then
@@ -601,6 +603,36 @@ evaluate() {
          elif $s.unresolved_threads > 0 then
            {action:"resolve-threads", why:"\($s.unresolved_threads) unresolved review thread(s)",
             threads:$s.threads}
+         # Draft sits BELOW the branches that report real work — a conflict, a
+         # stale base, a red check, an open thread all stay worth doing while
+         # the PR is deliberately parked as draft (the back-to-draft-on-resume
+         # convention) — and ABOVE every review and merge branch, whose advice
+         # is meaningless for a draft. While checks still run there is nothing
+         # to act on yet: report wait, so --watch holds through the parked
+         # state and returns on the first real event instead of answering
+         # "ready" on every poll (#228). Only a settled draft is actionable,
+         # and that action belongs to the operator: mark it ready. (No single
+         # quotes in this block — the jq program lives in a single-quoted
+         # shell string, same trap the fix-signatures cmd below notes.)
+         elif $s.draft then
+           # checks_settled is deliberately NOT the gate here: it demands at
+           # least one registered context and zero undispatched required ones,
+           # which a draft often cannot satisfy — workflows that skip drafts
+           # or trigger on ready_for_review leave contexts unregistered, and a
+           # fork draft has runs sitting unapproved. Holding the watch on
+           # those waits for an event that only readying can produce. So only
+           # checks actually RUNNING hold the wait; everything else is the
+           # operator call this state exists for: mark it ready.
+           (if ($s.checks.pending > 0) then
+              {action:"wait", why:"draft — \($s.checks.pending) check(s) still running"}
+            else
+              {action:"ready",
+               why:("draft — nothing running, mark ready when the work is done"
+                    + (if ($s.undispatched|length) > 0
+                       then " (\($s.undispatched|length) required context(s) not reported — dispatch happens on ready, or the runs await approval)"
+                       else "" end)),
+               cmd:"gh pr ready \($s.number) --repo \($s.repo)"}
+            end)
          # Sits after the branches that report real work (failing checks,
          # open threads) — those stay worth doing while queued, and a queue
          # entry that fails its own checks is dropped anyway. It sits before
