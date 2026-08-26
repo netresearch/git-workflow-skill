@@ -1,0 +1,59 @@
+name: CodeQL
+
+# Advanced setup replacing GitHub's DEFAULT setup, which never analyzes fork
+# pull requests — while `Analyze (actions)` / `Analyze (python)` are required
+# contexts in branch protection, so every fork PR sat at BLOCKED with all
+# visible gates green (#237). A workflow runs on fork PRs like any other
+# (subject to the usual once-per-push approval), and its check runs carry the
+# same names the protection requires: the job below is called Analyze and the
+# matrix expands it to exactly those two contexts.
+#
+# Mirrors the default setup it replaces: languages actions + python, the
+# extended query suite, a weekly schedule. Default setup must stay DISABLED in
+# the repo settings — with it enabled, GitHub refuses SARIF uploads from
+# advanced configurations.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+  schedule:
+    - cron: '30 4 * * 1'
+
+permissions: {}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, python]
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          category: "/language:${{ matrix.language }}"
