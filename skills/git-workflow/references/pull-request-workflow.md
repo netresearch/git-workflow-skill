@@ -114,6 +114,17 @@ A force-push invalidates a prior review: the old review stays attached to the
 old commit, so a repo with a `copilot_code_review` rule goes back to BLOCKED
 and needs a fresh request against the new head.
 
+**On a DRAFT PR the request is silently dropped.** The REST call above answers
+200, but the returned object's `requested_reviewers` stays `[]` and no review
+ever starts — nothing errors, the request just does not take. A
+`copilot_code_review` ruleset triggers its review only when the PR leaves
+draft (`gh pr ready`). So do not diagnose a "broken" reviewer request on a
+draft: mark ready first, then check `requested_reviewers` / the reviews list.
+The 2xx-is-not-proof rule applies — read the response body, not the status.
+(Observed 2026-08-26, netresearch/ldap-manager#659: two 200-acknowledged
+requests on the draft, zero effect; the ruleset review fired within a minute
+of `gh pr ready`.)
+
 #### A failed Copilot review looks exactly like a delivered one
 
 Copilot reports its own failures *as a review* — a normal `COMMENTED` row whose
@@ -2010,6 +2021,29 @@ gh run list --repo "$R" --limit 40 --json databaseId,status,headBranch \
            | select(.headBranch | startswith($p)) | .databaseId' \
   | xargs -r -n1 gh run cancel --repo "$R"
 ```
+
+**Ejection with ZERO dispatched runs is a third failure mode** — not a busy
+pool (runs would exist as `queued`) and not a short timeout (runs would exist
+and be running). Here the `merge_group` events never reach Actions at all:
+
+```bash
+gh run list --repo "$R" --event merge_group --limit 5 \
+  --json createdAt,headBranch   # newest run predates your enqueue → no dispatch
+```
+
+The tell: every queue entry drops **at the same instant** when the oldest
+entry's response timeout expires, timeline events show
+`removed_from_merge_queue` with no reason, and `gh run list` has no
+`gh-readonly-queue/*` runs for any of them — while `pull_request`/`push`
+workflows on the same repo dispatch normally. That is a transient GitHub-side
+dispatch outage, not a workflow or ruleset problem (verify the required
+contexts' workflows do carry the `merge_group:` trigger before concluding
+this). Requeue once later and watch for the first `merge_group` run within a
+few minutes — it decides between outage-over and genuinely-broken. (Observed
+2026-08-25, netresearch/ldap-manager — its `check_response_timeout_minutes`
+is 60, hence the hour: two entries starved ~60 min with zero runs and dropped
+together at 23:59; the same PR requeued 40 min later dispatched immediately
+and merged.)
 
 Bot reviews (Copilot, Gemini) land 2–5 minutes after each push — wait that
 window out before concluding "no threads".
