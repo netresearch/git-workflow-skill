@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import ClassVar
@@ -273,6 +274,68 @@ class ForgeBodyLanguageGate(unittest.TestCase):
         # Commit messages are out of scope for this gate; only forge bodies.
         out = run_hook(f"git commit -m 'feat: x\n\n{self.GERMAN}'")
         self.assertNotEqual("deny", decision(out))
+
+
+class AdvisoryOncePerSession(unittest.TestCase):
+    """The two advisories restate a general rule, not a fact about the command.
+
+    Repeating one on every matching call is noise paid in the user's attention:
+    each reaches the transcript via systemMessage. Fire once per session per
+    advisory — but a marker-storage problem must never suppress the warning.
+    """
+
+    ADVISORY_CMD = "git status"  # matches GIT_MEASURING_READ without a -C/cd
+
+    def setUp(self) -> None:
+        self.runtime = tempfile.TemporaryDirectory()
+        self.addCleanup(self.runtime.cleanup)
+
+    def run_hook_session(
+        self, command: str, session: "str | None", runtime_dir: "str | None" = None
+    ) -> str:
+        env = dict(os.environ)
+        env["XDG_RUNTIME_DIR"] = (
+            runtime_dir if runtime_dir is not None else self.runtime.name
+        )
+        payload: dict = {"command": command}
+        if session is not None:
+            payload["session_id"] = session
+        result = subprocess.run(
+            [sys.executable, str(HOOK)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+            check=False,
+        )
+        return result.stdout
+
+    def test_advisory_fires_once_per_session_per_advisory(self) -> None:
+        first = self.run_hook_session(self.ADVISORY_CMD, "sess-1")
+        self.assertIn("git-workflow:", first)
+        second = self.run_hook_session(self.ADVISORY_CMD, "sess-1")
+        self.assertEqual("", second.strip(), "same session, same advisory: stay quiet")
+
+    def test_a_different_session_fires_its_own_first_warning(self) -> None:
+        self.run_hook_session(self.ADVISORY_CMD, "sess-1")
+        other = self.run_hook_session(self.ADVISORY_CMD, "sess-2")
+        self.assertIn("git-workflow:", other)
+
+    def test_without_a_session_id_every_call_warns(self) -> None:
+        first = self.run_hook_session(self.ADVISORY_CMD, None)
+        second = self.run_hook_session(self.ADVISORY_CMD, None)
+        self.assertIn("git-workflow:", first)
+        self.assertIn("git-workflow:", second)
+
+    def test_an_unusable_runtime_dir_never_suppresses_the_warning(self) -> None:
+        # XDG_RUNTIME_DIR names an existing FILE: creating the marker directory
+        # cannot succeed. The advisory must fire anyway — storage failing is
+        # not the same as the warning having been seen.
+        blocker = Path(self.runtime.name) / "blocker"
+        blocker.write_text("not a directory\n")
+        out = self.run_hook_session(self.ADVISORY_CMD, "sess-3", str(blocker))
+        self.assertIn("git-workflow:", out)
 
 
 if __name__ == "__main__":

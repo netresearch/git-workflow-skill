@@ -10,6 +10,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 
 # Enough of a body to count wrapped lines in; a cap so an accidentally huge
 # file cannot stall the hook.
@@ -748,6 +749,50 @@ def check_command(command: str) -> list[dict]:
     return warnings
 
 
+def _advisory_already_fired(data, name: str) -> bool:
+    """True if this advisory has already fired once in this session.
+
+    Both advisories restate a general rule rather than reporting a fact about
+    the particular command in hand. Repeating one on every matching call is
+    noise: the first has already told the author what to check, and the message
+    reaches the user's transcript via systemMessage, so the cost is paid in
+    their attention rather than ours. Fire once per session per advisory.
+
+    Every storage failure returns False: a marker problem must never suppress
+    a warning. The marker directory is therefore created in its own try block
+    — if XDG_RUNTIME_DIR names something unusable, makedirs raises before any
+    marker could exist, and that has to read as "not fired", not as
+    FileExistsError at the marker call.
+    """
+    session_id = data.get("session_id") if isinstance(data, dict) else None
+    if not session_id:
+        return False
+    slug = re.sub(r"[^A-Za-z0-9_-]", "", str(session_id))
+    if not slug:
+        return False
+    directory = os.path.join(
+        os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(),
+        "git-workflow-advisories",
+    )
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError:
+        return False
+    try:
+        os.close(
+            os.open(
+                os.path.join(directory, f"{slug}.{name}"),
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                0o600,
+            )
+        )
+    except FileExistsError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def main():
     try:
         input_data = sys.stdin.read()
@@ -795,6 +840,8 @@ def main():
     for advisory in (run_poll_problem, git_read_without_named_dir):
         note = advisory(command)
         if note:
+            if _advisory_already_fired(data, advisory.__name__):
+                return
             print(
                 json.dumps(
                     {"systemMessage": f"git-workflow: {note}", "suppressOutput": True}
