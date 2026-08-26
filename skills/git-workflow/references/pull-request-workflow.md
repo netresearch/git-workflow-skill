@@ -1967,8 +1967,11 @@ Arm auto-merge / enqueue **only when all four hold**:
 4. **A quiet runner pool** — see below.
 
 **Do not enqueue into a busy runner pool.** A merge queue drops an entry whose
-required checks do not report within `check_response_timeout_minutes` (default
-5). That clock starts at enqueue and covers the wait for a *runner*, not just
+required checks do not report within `check_response_timeout_minutes`. The REST
+docs state no default for that parameter — read the configured value from the
+ruleset (the query below shows it; the two netresearch repos checked run 30
+and 60 minutes).
+That clock starts at enqueue and covers the wait for a *runner*, not just
 the run: with the pool saturated, the jobs sit in `queued` with no runner and
 the entry is discarded having executed nothing.
 
