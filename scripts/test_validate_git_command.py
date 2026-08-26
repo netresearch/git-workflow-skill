@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import ClassVar
@@ -285,6 +286,10 @@ class AdvisoryOncePerSession(unittest.TestCase):
     """
 
     ADVISORY_CMD = "git status"  # matches GIT_MEASURING_READ without a -C/cd
+    POLL_CMD = "while true; do gh run list --limit 5; sleep 30; done"
+    BOTH_CMD = (
+        "while true; do gh run list --limit 5; git log --oneline -1; sleep 30; done"
+    )
 
     def setUp(self) -> None:
         self.runtime = tempfile.TemporaryDirectory()
@@ -336,6 +341,34 @@ class AdvisoryOncePerSession(unittest.TestCase):
         blocker.write_text("not a directory\n")
         out = self.run_hook_session(self.ADVISORY_CMD, "sess-3", str(blocker))
         self.assertIn("git-workflow:", out)
+
+    def test_a_spent_advisory_does_not_swallow_the_other_ones_first_warning(
+        self,
+    ) -> None:
+        # One command can match both advisories. Once the poll advisory has
+        # fired, a combined command must still deliver the other advisory's
+        # first warning instead of returning early on the spent one.
+        first = self.run_hook_session(self.POLL_CMD, "sess-4")
+        self.assertIn("Waiting on workflow runs", first)
+        combined = self.run_hook_session(self.BOTH_CMD, "sess-4")
+        self.assertIn("inherits its working directory", combined)
+
+    def test_a_marker_older_than_the_rearm_window_fires_again_once(self) -> None:
+        # A session can run for days and its context gets compacted, so a
+        # warning delivered once at the start is gone by then. An old marker
+        # re-arms the advisory: fire again, restart the window, go quiet again.
+        self.run_hook_session(self.ADVISORY_CMD, "sess-5")
+        marker = (
+            Path(self.runtime.name)
+            / "git-workflow-advisories"
+            / "sess-5.git_read_without_named_dir"
+        )
+        old = time.time() - 7 * 60 * 60
+        os.utime(marker, (old, old))
+        again = self.run_hook_session(self.ADVISORY_CMD, "sess-5")
+        self.assertIn("git-workflow:", again)
+        quiet = self.run_hook_session(self.ADVISORY_CMD, "sess-5")
+        self.assertEqual("", quiet.strip(), "re-arm must also re-mark: quiet again")
 
 
 if __name__ == "__main__":
