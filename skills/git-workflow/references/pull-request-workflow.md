@@ -2040,9 +2040,10 @@ dispatch outage, not a workflow or ruleset problem (verify the required
 contexts' workflows do carry the `merge_group:` trigger before concluding
 this). Requeue once later and watch for the first `merge_group` run within a
 few minutes — it decides between outage-over and genuinely-broken. (Observed
-2026-08-25, netresearch/ldap-manager: two entries starved ~60 min with zero
-runs and dropped together at 23:59; the same PR requeued 40 min later
-dispatched immediately and merged.)
+2026-08-25, netresearch/ldap-manager — its `check_response_timeout_minutes`
+is 60, hence the hour: two entries starved ~60 min with zero runs and dropped
+together at 23:59; the same PR requeued 40 min later dispatched immediately
+and merged.)
 
 Bot reviews (Copilot, Gemini) land 2–5 minutes after each push — wait that
 window out before concluding "no threads".
