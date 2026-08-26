@@ -11,6 +11,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 
 # Enough of a body to count wrapped lines in; a cap so an accidentally huge
 # file cannot stall the hook.
@@ -749,14 +750,22 @@ def check_command(command: str) -> list[dict]:
     return warnings
 
 
+# A session can run for days and its context gets compacted along the way, so
+# an advisory seen once at the start is long gone by the time the same slip
+# recurs. An old enough marker re-arms the advisory: one fresh warning, then
+# quiet again for another window.
+ADVISORY_REARM_SECONDS = 6 * 60 * 60
+
+
 def _advisory_already_fired(data, name: str) -> bool:
-    """True if this advisory has already fired once in this session.
+    """True if this advisory has already fired recently in this session.
 
     Both advisories restate a general rule rather than reporting a fact about
     the particular command in hand. Repeating one on every matching call is
     noise: the first has already told the author what to check, and the message
     reaches the user's transcript via systemMessage, so the cost is paid in
-    their attention rather than ours. Fire once per session per advisory.
+    their attention rather than ours. Fire once per session per advisory, and
+    once more per ADVISORY_REARM_SECONDS window in a long-running session.
 
     Every storage failure returns False: a marker problem must never suppress
     a warning. The marker directory is therefore created in its own try block
@@ -778,15 +787,18 @@ def _advisory_already_fired(data, name: str) -> bool:
         os.makedirs(directory, exist_ok=True)
     except OSError:
         return False
+    marker = os.path.join(directory, f"{slug}.{name}")
     try:
-        os.close(
-            os.open(
-                os.path.join(directory, f"{slug}.{name}"),
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                0o600,
-            )
-        )
+        os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
     except FileExistsError:
+        try:
+            # A marker mtime in the future (backwards clock step) makes the
+            # delta negative and reads as fresh: stay quiet rather than storm.
+            if time.time() - os.stat(marker).st_mtime > ADVISORY_REARM_SECONDS:
+                os.utime(marker, None)
+                return False
+        except OSError:
+            return False
         return True
     except OSError:
         return False
@@ -841,12 +853,18 @@ def main():
         note = advisory(command)
         if note:
             if _advisory_already_fired(data, advisory.__name__):
-                return
+                # This advisory is spent, but the other one may still owe the
+                # session its first warning — keep looking instead of exiting.
+                continue
             print(
                 json.dumps(
                     {"systemMessage": f"git-workflow: {note}", "suppressOutput": True}
                 )
             )
+            # One message per call: mixing this JSON line with check_command's
+            # plain-text reminder on the same stdout would be ambiguous to the
+            # harness. Only a SPENT advisory falls through (continue above), so
+            # a suppressed advisory no longer swallows unrelated warnings.
             return
 
     if "git" not in command.lower():
