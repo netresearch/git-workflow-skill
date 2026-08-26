@@ -367,9 +367,11 @@ evaluate() {
     | ($queued  | map(select(.name as $n | $required | index($n)))) as $queued_required
     # Right after a push every check is queued and none is running, which is
     # normal for a few seconds and says nothing about runner capacity. Age the
-    # signal before acting on it, using the tolerance the merge queue itself
-    # applies (check_response_timeout_minutes, default 5) as the threshold:
-    # queued longer than the queue would wait is when it stops being fresh.
+    # signal before acting on it. The 5-minute threshold is this script owning
+    # a conservative freshness floor — NOT the merge queue tolerance: that is
+    # check_response_timeout_minutes, which the REST docs give no default for
+    # and which is configured per ruleset (30 and 60 on the two netresearch
+    # repos checked, #233).
     # No apostrophes in here — the whole jq program sits in a single-quoted
     # shell string, and one would end it.
     | (($queued_required | map(.started // empty) | min) // null) as $oldest_q
