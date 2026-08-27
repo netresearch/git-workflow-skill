@@ -1215,6 +1215,33 @@ git fsck --unreachable | grep commit | cut -d' ' -f3 | \
   xargs git log --merges --no-walk --grep=WIP
 ```
 
+### A popped/dropped stash is not immediately gone
+
+`git stash pop` and `git stash drop` remove the stash's ref from `git stash
+list`, but the underlying commit object is not deleted — it becomes a
+dangling commit, still reachable by SHA, until the next `git gc`. Do not
+conclude stashed changes are lost just because they vanished from the
+working tree (e.g. an unrelated later step — a build hook, `composer
+update`'s asset-publish lifecycle, another tool — silently overwrote the
+same files) or because the stash is gone from `git stash list`.
+
+Git prints the commit SHA at pop/drop time — keep that line in view instead
+of letting it scroll away:
+
+```
+Dropped refs/stash@{0} (14386d701aad44499e677dbc4b3a3f613bb6405f)
+```
+
+Recover directly from that SHA:
+
+```bash
+git stash apply 14386d701aad44499e677dbc4b3a3f613bb6405f
+```
+
+If the SHA wasn't captured, find the dangling commit via `git fsck`
+(the "Recover stash" recipe above) or check `git reflog` for stash-related
+entries.
+
 ### Tags & Remote-State Topology
 
 A plain `git fetch` auto-follows *new* tags on fetched commits, but it will not
