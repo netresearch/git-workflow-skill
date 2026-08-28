@@ -57,7 +57,9 @@ STUB
 import sys, json, os
 out = sys.argv[1]
 head = "deadbeefcafe"
-comments = [{"author": {"login": c["author"]}, "body": c.get("body", "x"),
+comments = [{"author": {"login": c["author"],
+                        "__typename": c.get("type", "User")},
+             "body": c.get("body", "x"),
              "url": "https://example.test/c", "createdAt": c["createdAt"]}
             for c in json.loads(os.environ["COMMENTS_JSON"])]
 json.dump({"data": {"repository": {
@@ -107,6 +109,16 @@ COMMENTS_JSON='[{"author":"renovate[bot]","createdAt":"2026-08-02T10:00:00Z"}]' 
 out="$(run)"
 check    "a bot must not push its own PR off the merge rung" "merge" "$(action)"
 contains "bot comment is still visible"  "bots only, not gating" "$out"
+
+echo "Case 3b: an App whose login carries no [bot] suffix"
+# GraphQL returns Bot for an App and strips the [bot] suffix that REST appends,
+# so logins like github-actions and sonarqubecloud read as people to a login
+# test. Measured on netresearch/git-workflow-skill#252, where exactly this took
+# the PR off the merge rung.
+COMMENTS_JSON='[{"author":"sonarqubecloud","type":"Bot","createdAt":"2026-08-02T10:00:00Z"}]' make_stub
+out="$(run)"
+check    "__typename Bot outranks a human-looking login" "merge" "$(action)"
+contains "the App comment is still visible" "bots only, not gating" "$out"
 
 echo "Case 4: the author never commented at all"
 COMMENTS_JSON='[{"author":"jaapio","createdAt":"2026-08-02T10:00:00Z"}]' make_stub

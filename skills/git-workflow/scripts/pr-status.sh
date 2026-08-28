@@ -230,7 +230,7 @@ collect() {
         # The last page, not the first: a Self-review attestation (see the
         # header) is posted at the end of a conversation, and an old page
         # would go blind on exactly the PRs long enough to need one.
-        comments(last:100){ nodes{ author{login} body url createdAt } }
+        comments(last:100){ nodes{ author{login __typename} body url createdAt } }
         reviews(last:50){ nodes{ author{login} state commit{oid} body } }
         reviewRequests(first:20){ nodes{ requestedReviewer{
           ... on User{login} ... on Bot{login} ... on Team{slug} } } }
@@ -366,7 +366,15 @@ evaluate() {
                             | select(.createdAt > $author_last_comment)]) as $unanswered_comments
     # Bots are reported but never drive the ladder: a Renovate or Dependabot
     # note must not push its own PR off the auto-merge rung it exists to reach.
-    | ([$unanswered_comments[] | select((.author.login | test("\\[bot\\]$|^(dependabot|renovate|copilot)"; "i")) | not)]) as $unanswered_human
+    # __typename is the authority, not the login. GraphQL returns Bot for an
+    # App and strips the [bot] suffix REST appends, so a login test alone reads
+    # "github-actions" and "sonarqubecloud" as people — measured on this very
+    # pull request, whose CI comments took it off the merge rung on the first
+    # attempt. The login patterns stay as a fallback for callers that supply a
+    # REST-shaped author, and for App-backed User accounts.
+    | ([$unanswered_comments[]
+        | select(((.author.__typename // "") == "Bot") | not)
+        | select((.author.login | test("\\[bot\\]$|^(dependabot|renovate|copilot)"; "i")) | not)]) as $unanswered_human
     # A cancelled context that reported again under the same name is STALE:
     # the later row is the answer and the cancelled one is a leftover. One that
     # never reported again is genuinely unmet and still shuts the gate — but it
