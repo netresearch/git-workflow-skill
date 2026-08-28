@@ -31,10 +31,18 @@ bash "$GW/scripts/pr-status.sh" -R owner/repo 123 --watch
 Two API calls (a third, admin-only, when the PR is review-blocked — it reads
 classic branch protection, whose review gates like `require_last_push_approval`
 are invisible to the rules endpoint), and the output ends in a computed `NEXT:` — rebase, fix-ci,
-triage-ci, resolve-threads, request-review, wait, or merge (with the method
+triage-ci, resolve-threads, address-comments, request-review, wait, or merge (with the method
 this repo actually allows and a warning when a merge queue is active). The
 JSON form carries each unresolved thread's `threadId` *and* `commentId`, which
 is everything needed to reply and resolve without another query.
+
+`address-comments` covers the channel the other two miss. A reviewer who writes
+under the pull request instead of on a line of the diff produces an *issue
+comment*, which lives in neither `reviewThreads` nor the check rollup — so a
+report built from those alone says `threads: 0 unresolved` while the findings
+sit unread. Anything posted after the last word of the author counts as
+unanswered; comments from bots are shown but never drive the `NEXT:` line, so a
+Renovate note cannot push its own pull request off the auto-merge rung.
 
 Measured on a 40-PR rollout that did not have it: **183 of 370 shell calls
 were PR-status probing**, the rulesets endpoint was queried exactly once, and

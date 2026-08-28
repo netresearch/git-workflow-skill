@@ -76,6 +76,7 @@
 #   state mergeable mergeState draft number title repo author
 #   base head headOid
 #   checks checks_settled threads unresolved_threads
+#   unanswered_comments unanswered_human unanswered_by unanswered_urls
 #   reviewDecision reviews_on_head has_review_on_head
 #   has_copilot_review_on_head copilot_review_errored copilot_error_count copilot_quota_hit
 #   copilot_quota_exhausted
@@ -137,7 +138,7 @@ REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
 # are deliberately not in here. tests/test_pr_status_draft_watch.sh pins the
 # two lists against every action literal this script can emit — a new action
 # must land in one of them.
-ACTIONABLE="fix-ci triage-ci resolve-threads request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate"
+ACTIONABLE="fix-ci triage-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate"
 
 die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
 
@@ -229,7 +230,7 @@ collect() {
         # The last page, not the first: a Self-review attestation (see the
         # header) is posted at the end of a conversation, and an old page
         # would go blind on exactly the PRs long enough to need one.
-        comments(last:100){ nodes{ author{login} body url } }
+        comments(last:100){ nodes{ author{login} body url createdAt } }
         reviews(last:50){ nodes{ author{login} state commit{oid} body } }
         reviewRequests(first:20){ nodes{ requestedReviewer{
           ... on User{login} ... on Bot{login} ... on Team{slug} } } }
@@ -354,6 +355,18 @@ evaluate() {
     | ([$reviews_raw[] | select(is_errored_copilot_review | not)]) as $head_reviews
     | ([$head_reviews[] | select(.author.login | test("copilot"; "i"))]) as $copilot_on_head
     | ([$p.reviewThreads.nodes[]? | select(.isResolved == false)]) as $unresolved
+    # Prose written under the pull request is an ISSUE comment, not a review
+    # thread and not a review. It appears in neither reviewThreads nor the
+    # check rollup, so a report built from those alone says "0 unresolved"
+    # while findings from a maintainer sit unread. Anything posted after the
+    # last word of the author is unanswered by construction; if the author
+    # never commented, every comment by someone else is.
+    | (([$p.comments.nodes[]? | select(.author.login == $author) | .createdAt] | max) // "") as $author_last_comment
+    | ([$p.comments.nodes[]? | select(.author.login != $author)
+                            | select(.createdAt > $author_last_comment)]) as $unanswered_comments
+    # Bots are reported but never drive the ladder: a Renovate or Dependabot
+    # note must not push its own PR off the auto-merge rung it exists to reach.
+    | ([$unanswered_comments[] | select((.author.login | test("\\[bot\\]$|^(dependabot|renovate|copilot)"; "i")) | not)]) as $unanswered_human
     # A cancelled context that reported again under the same name is STALE:
     # the later row is the answer and the cancelled one is a leftover. One that
     # never reported again is genuinely unmet and still shuts the gate — but it
@@ -493,6 +506,10 @@ evaluate() {
         author: $author,
         requested_reviewers: [$p.reviewRequests.nodes[]?.requestedReviewer|(.login // .slug)],
         unresolved_threads: ($unresolved|length),
+        unanswered_comments: ($unanswered_comments|length),
+        unanswered_human: ($unanswered_human|length),
+        unanswered_by: ([$unanswered_comments[]|.author.login]|unique),
+        unanswered_urls: ([$unanswered_comments[]|.url]),
         threads: [$unresolved[]|{threadId: .id,
                                  commentId: .comments.nodes[0].databaseId,
                                  author: .comments.nodes[0].author.login,
@@ -603,6 +620,13 @@ evaluate() {
          elif $s.unresolved_threads > 0 then
            {action:"resolve-threads", why:"\($s.unresolved_threads) unresolved review thread(s)",
             threads:$s.threads}
+         # Below resolve-threads, which names a precise line and a thread id,
+         # and above draft: a comment left unanswered is real work no matter
+         # how the PR is parked. Human comments only — see $unanswered_human.
+         elif $s.unanswered_human > 0 then
+           {action:"address-comments",
+            why:"\($s.unanswered_human) comment(s) posted after your last word by \($s.unanswered_by|join(", ")) — issue comments live outside reviewThreads, so \"0 unresolved\" above does not cover them",
+            urls:$s.unanswered_urls}
          # Draft sits BELOW the branches that report real work — a conflict, a
          # stale base, a red check, an open thread all stay worth doing while
          # the PR is deliberately parked as draft (the back-to-draft-on-resume
@@ -921,6 +945,9 @@ render() {
      else empty end),
     "  reviews     : \(if .has_review_on_head then (.reviews_on_head|to_entries|map("\(.key)=\(.value)")|join(", ")) else "NONE on current head" end)  decision=\(if .reviewDecision=="" then "-" else .reviewDecision end)",
     "  threads     : \(.unresolved_threads) unresolved",
+    (if .unanswered_comments > 0 then
+       "  comments    : \(.unanswered_comments) unanswered (\(.unanswered_by|join(", ")))\(if .unanswered_human == 0 then " — bots only, not gating" else "" end)"
+     else empty end),
     "  merge       : methods=[\(.merge_methods|join(","))] auto=\(.auto_merge_allowed) queue=\(.queue_active)",
     (if .queue_entry then
        "  in queue    : position \(.queue_entry.position), \(.queue_entry.state)\(if (.queue_entry.eta != null) then ", ~\(((.queue_entry.eta) / 60) | floor) min" else "" end)"
