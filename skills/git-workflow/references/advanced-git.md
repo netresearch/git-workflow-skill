@@ -1219,7 +1219,10 @@ git fsck --unreachable | grep commit | cut -d' ' -f3 | \
 
 `git stash pop` and `git stash drop` remove the stash's ref from `git stash
 list`, but the underlying commit object is not deleted — it becomes a
-dangling commit, still reachable by SHA, until the next `git gc`. Do not
+dangling commit, reachable by SHA. It is not deleted by an incidental `git
+gc` either: `gc.pruneExpire` defaults to 2 weeks, so a freshly dangling
+commit survives ordinary garbage collection — only an explicit `git gc
+--prune=now` (or waiting out the expiry window) actually removes it. Do not
 conclude stashed changes are lost just because they vanished from the
 working tree (e.g. an unrelated later step — a build hook, `composer
 update`'s asset-publish lifecycle, another tool — silently overwrote the
@@ -1238,9 +1241,12 @@ Recover directly from that SHA:
 git stash apply 14386d701aad44499e677dbc4b3a3f613bb6405f
 ```
 
-If the SHA wasn't captured, find the dangling commit via `git fsck`
-(the "Recover stash" recipe above) or check `git reflog` for stash-related
-entries.
+If the SHA wasn't captured, find the dangling commit via `git fsck` (the
+"Recover stash" recipe above) — `git reflog` will not help here: dropping or
+popping a stash removes the entry from `refs/stash`'s own reflog (and if it
+was the only stash, `refs/stash` disappears entirely, so `git reflog show
+refs/stash` fails with "ambiguous argument"), and plain `git reflog` (HEAD)
+never had a stash entry to begin with.
 
 ### Tags & Remote-State Topology
 
