@@ -1037,7 +1037,9 @@ git gc
 # Aggressive gc
 git gc --aggressive
 
-# Prune unreachable objects
+# Prune unreachable objects — unlike plain `git gc`, this deletes them
+# immediately (no gc.pruneExpire grace period). Don't run it while recovering
+# a dropped stash — see "A popped/dropped stash is not immediately gone" below.
 git prune
 
 # Verify repository
@@ -1210,26 +1212,34 @@ git checkout HEAD~1 -- path/to/file
 git reflog
 git reset --hard HEAD@{1}
 
-# Recover stash
-git fsck --unreachable | grep commit | cut -d' ' -f3 | \
-  xargs git log --merges --no-walk --grep=WIP
+# Recover stash — field-position parsing (not `cut -d' ' -f3`) survives locale
+# translation (German fsck reorders the line to "unreachable commit <sha>"),
+# and matching both `^WIP on ` (anonymous) and `^On ` (named via `stash push -m`)
+# catches stashes `--grep=WIP` alone would silently miss.
+git fsck --unreachable | awk '{for(i=1;i<=NF;i++) if ($i=="commit"){print $(i+1); break}}' | \
+  xargs -r git log --no-walk --merges -E --grep='^WIP on |^On '
 ```
 
 ### A popped/dropped stash is not immediately gone
 
 `git stash pop` and `git stash drop` remove the stash's ref from `git stash
 list`, but the underlying commit object is not deleted — it becomes a
-dangling commit, reachable by SHA. It is not deleted by an incidental `git
-gc` either: `gc.pruneExpire` defaults to 2 weeks, so a freshly dangling
-commit survives ordinary garbage collection — only an explicit `git gc
---prune=now` (or waiting out the expiry window) actually removes it. Do not
-conclude stashed changes are lost just because they vanished from the
-working tree (e.g. an unrelated later step — a build hook, `composer
-update`'s asset-publish lifecycle, another tool — silently overwrote the
-same files) or because the stash is gone from `git stash list`.
+dangling commit, reachable by SHA. An ordinary `git gc` will not delete it
+right away — `gc.pruneExpire` defaults to 2 weeks, so a freshly dangling
+commit survives routine garbage collection. But don't assume any pruning
+step is safe: a bare `git prune` (no `--expire`, same as `git gc
+--prune=now`) removes unreachable objects immediately, no grace period —
+including the plain `git prune` this file's own Repository Maintenance
+recipe recommends. Do not conclude stashed changes are lost just because
+they vanished from the working tree (e.g. an unrelated later step — a build
+hook, `composer update`'s asset-publish lifecycle, another tool — silently
+overwrote the same files) or because the stash is gone from `git stash
+list` — but don't run maintenance commands against the repo either until
+you've actually recovered it.
 
-Git prints the commit SHA at pop/drop time — keep that line in view instead
-of letting it scroll away:
+Git prints the commit SHA at pop/drop time (not on a `pop` that hits a
+conflict — the stash then stays in `git stash list` instead) — keep that
+line in view instead of letting it scroll away:
 
 ```
 Dropped refs/stash@{0} (14386d701aad44499e677dbc4b3a3f613bb6405f)
