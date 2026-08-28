@@ -750,6 +750,30 @@ against the wrong tree? CI runs each branch in isolation with its own install,
 so **CI is authoritative** — reproduce a doubtful finding by building deps inside
 the target worktree, or defer to CI, rather than "fixing" a phantom.
 
+### Corrupt Per-Worktree Index: `fatal: unable to read <sha>`
+
+When `git status`, `git diff --staged`, or a pre-commit hook in a linked
+worktree dies with `fatal: unable to read <sha>`, and `git fsck` reports
+`invalid sha1 pointer in cache-tree of worktrees/<wt>/index` plus "missing
+blob"s that only the index references (phantom entries for files in neither
+HEAD nor the working tree), the worktree's **private index file** is corrupt —
+the object store and your edits are fine.
+
+The complete fix, losing nothing (working-tree files, including uncommitted
+edits, are untouched):
+
+```bash
+rm <gitdir>/worktrees/<wt>/index     # e.g. .bare/worktrees/release-1.8.0/index
+git -C <worktree> read-tree HEAD     # rebuild the index from HEAD
+git -C <worktree> status             # edits reappear as modified; re-stage them
+```
+
+Per-path repair (`git restore --staged <path>`) is NOT enough when the
+cache-tree itself is broken: the next command fails on the next missing blob.
+Deleting the index is the whole fix. (Observed twice in one 2026-08-27 fleet
+sweep, in freshly created release worktrees; the first repair attempt went
+per-path and hit the second phantom blob immediately.)
+
 ### Use Cases
 
 ```bash
