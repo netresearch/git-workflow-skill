@@ -20,10 +20,11 @@ resolution, and merge-queue handling. Then execute, in order:
 
    ```bash
    R=<owner/repo>; PR=<number>; BASE=<base-branch>
+   SKILL=<installed git-workflow skill dir>   # the gate's deny message prints its absolute path
    # pr-status.sh FIRST — this repo's own PreToolUse gate (scripts/validate_git_command.py)
    # denies a `gh pr view --json …mergeStateStatus…` that is not accompanied by it, and the
    # gate reads the whole invocation, so one block carrying both is the shape it accepts.
-   "$SKILL/scripts/pr-status.sh" -R $R $PR   # $SKILL = the installed git-workflow skill dir; the deny message prints the absolute path
+   "$SKILL/scripts/pr-status.sh" -R $R $PR
    gh pr view   $PR --repo $R --json headRefOid,baseRefName,title
    gh pr checks $PR --repo $R
    gh api repos/$R/rules/branches/$BASE   # effective rules INCL. rulesets (e.g. copilot_code_review) — evaluated against the BASE branch; classic branch-protection API misses these
