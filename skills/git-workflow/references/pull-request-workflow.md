@@ -615,6 +615,28 @@ gh api graphql -f query='
 gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "PRRT_xxx"}) { thread { isResolved } } }'
 ```
 
+### Resolving is a claim about the whole ask, not about the file you edited
+
+A finding often names more than one target — two config files, "the table *and*
+the examples", every caller of a symbol. Fixing the one you opened, replying with
+its SHA and resolving reads exactly like completion, and the thread then carries
+a green mark that stops anyone looking. Nothing in the API checks the claim.
+
+So before `resolveReviewThread`, re-read the comment and enumerate the targets it
+names — by noun, not by impression — and confirm each. A reviewer that writes
+"update the bootstrap table and all affected enforcement and maturity examples"
+has named three things; a commit touching the first two satisfies neither the ask
+nor the thread.
+
+Two habits make this cheap: quote the ask's own list back in the reply and mark
+each item, and grep for the defect's shape across the repository rather than
+across the file you happened to open — the second file is usually the one the
+reviewer could see and you could not.
+
+Where you deliberately do *not* act on part of an ask, say which part and why in
+the reply. "Resolved" with a silent omission is the failure this section exists
+for; an explicit decline is a legitimate outcome the reviewer can argue with.
+
 ### Refusing the lazy pattern
 
 These replies are banned:
