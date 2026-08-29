@@ -190,6 +190,20 @@ if [ -z "$PR" ]; then
 fi
 OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
 
+# This script speaks GitHub GraphQL and nothing else. A GitLab project reads
+# host/group/project, which parses here without complaint and then dies deep in
+# the query as a bare "GraphQL query failed" — and --watch heartbeats into its
+# timeout on a query that can never succeed. Refuse it up front and name where
+# the answer lives instead (#250).
+case "$REPO" in
+  */*/*)
+    die "\"$REPO\" is not owner/repo. pr-status.sh is GitHub-only; for a GitLab merge request see references/pull-request-workflow.md § \"GitHub only\" and the netresearch-gitlab skill" ;;
+esac
+case "${OWNER}" in
+  *.*)
+    die "\"$OWNER\" looks like a host, not a GitHub owner. pr-status.sh is GitHub-only; for a GitLab merge request see references/pull-request-workflow.md § \"GitHub only\" and the netresearch-gitlab skill" ;;
+esac
+
 # --------------------------------------------------------- quota marker -----
 # The Copilot review quota is account-wide and monthly; the evidence for it is
 # not. It arrives as an error body on ONE pull request, and every other PR of

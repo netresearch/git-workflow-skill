@@ -1,6 +1,6 @@
 ---
 name: git-workflow
-description: "Use when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, verifying a merge didn't silently drop changes, syncing a long-diverged branch (e.g. master into integration), rebasing a long-lived branch onto a moved base or splitting one into several PRs, integrating Git with CI/CD, setting up git hooks (lefthook, captainhook, husky, pre-commit), or debugging hook-install failures in git worktrees. Not for creating releases (use github-release) or diagnosing BLOCKED/won't-merge PRs (use github-project)."
+description: "Use when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, verifying a merge didn't silently drop changes, syncing a long-diverged branch (e.g. master into integration), rebasing a long-lived branch onto a moved base or splitting one into several PRs, integrating Git with CI/CD, setting up git hooks (lefthook, captainhook, husky, pre-commit), or debugging hook-install failures in git worktrees. The pull-request tooling is GitHub-only — for a GitLab merge request use netresearch-gitlab. Not for creating releases (use github-release) or diagnosing BLOCKED/won't-merge PRs (use github-project)."
 license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
 compatibility: "Requires git, gh CLI; yq for .spec-cleanup.yml."
 metadata:
@@ -15,6 +15,8 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 ## Not Here
 
 Releases: `github-release`. BLOCKED-PR diagnosis: `github-project`.
+
+**GitHub only.** Everything below the branching and commit sections — `pr-status.sh`, `pr-merge.sh`, the merge gate, review threads — speaks GitHub GraphQL. A GitLab merge request belongs to `netresearch-gitlab`; the equivalent `glab` calls are in `references/pull-request-workflow.md` § *GitHub only*.
 
 ## Critical Rules (Non-Negotiable)
 
