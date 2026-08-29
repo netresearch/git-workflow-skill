@@ -215,6 +215,61 @@ old=$(cd src && git stash -q; ./script.sh; true)
 If a probe genuinely needs a clean tree, commit first (see the sibling rules on
 selective revert and selective commit) — do not stash your way there.
 
+### A control run must prove the change is gone, not assume the removal worked
+
+The sibling rule above keeps stash out of a probe. This one is about the
+opposite direction: using stash *deliberately* to remove your change so you can
+measure the baseline. `git stash push -- <paths>` captures *uncommitted* work
+for those paths — staged entries as well as unstaged edits, clearing the index
+entry in the process — and nothing else. Once your change is committed there is
+nothing left for it to take: it stashes nothing, exits 0, and prints a message
+you skim past. The "control" then runs the very code it was supposed to
+exclude.
+
+That produces the most dangerous shape a measurement can have — a result that
+confirms what you hoped, for a reason that has nothing to do with the code.
+Both runs report identical numbers, you write "behaviour is unchanged", and the
+evidence is a tautology. The only tell is that the matching `git stash pop`
+fails with `No stash entries found`, at the end, after the conclusion is
+already formed.
+
+```bash
+# ❌ Silently a no-op when the change is committed — both runs are identical
+#    because both runs are the SAME code
+git stash push -- config/app.php
+./vendor/bin/phpunit                 # "baseline"
+git stash pop
+
+# ✅ For a committed change, take the file back to the base revision.
+#    `git checkout <rev> -- <path>` overwrites index AND worktree for that path,
+#    and the restore below returns it to HEAD — not to edits you had in flight.
+#    So start from a clean tree, or do this in a throwaway worktree.
+set -euo pipefail   # a failed checkout or status must abort, not be stepped over
+
+st=$(git status --porcelain)
+[ -z "$st" ] || { echo 'dirty tree, refusing'; exit 1; }
+
+git checkout <base-sha> -- config/app.php
+
+# grep exits 0 = found, 1 = absent, 2 = could not read. Only 1 proves absence,
+# so branch on the code: `grep -q … && fail` treats a read error as "absent"
+# and waves the baseline through, and a bare `grep -n` succeeds when the
+# construct is still THERE, which is the same hole facing the other way.
+set +e; grep -q 'theConstructYouRemoved' config/app.php; rc=$?; set -e
+[ "$rc" -eq 1 ] || { echo "still present or unreadable (grep exit $rc)"; exit 1; }
+
+./vendor/bin/phpunit                              # real baseline
+
+git checkout HEAD -- config/app.php               # restore
+st=$(git status --porcelain)
+[ -z "$st" ] || { echo 'tree not restored'; exit 1; }
+```
+
+Whatever mechanism you use, assert the removal before you measure and assert the
+restoration afterwards, and make both assertions fail loudly — a check that
+exits 0 whether or not the condition holds is decoration. Neither costs a
+second, and without them a green A/B says nothing at all.
+
 ### Basic Stash Operations
 
 ```bash
