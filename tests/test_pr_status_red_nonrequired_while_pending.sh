@@ -99,7 +99,7 @@ echo "case: required still running, non-required red -> wait, not triage-ci"
 GATE_STATUS=IN_PROGRESS RED_EXTRA=1 make_stub
 out=$(status)
 check_absent   "no triage-ci"                  '"action": "triage-ci"' "$out"
-check_contains "waits on the required check"   "required check(s) still running: gate" "$out"
+check_contains "waits on the required check"   "required check(s) still pending: gate" "$out"
 check_contains "names the red non-required"    "non-required red meanwhile: codecov/project" "$out"
 
 echo "case: --watch holds instead of returning"

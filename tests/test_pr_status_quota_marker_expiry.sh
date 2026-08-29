@@ -67,7 +67,16 @@ STUB
 import sys, json, os
 out = sys.argv[1]
 head = "deadbeefcafe"
+# COPILOT_SEQ lists the Copilot rows on this head in chronological order, the
+# order reviews(last:50) returns them in: "ok" a delivered review, "err" the
+# quota error. Both can sit on one head, and which came last is what decides.
+ERR = ("Copilot was unable to review this pull request because the user who "
+       "requested the review has reached their quota limit.")
 reviews = []
+for kind in [s for s in os.environ.get("COPILOT_SEQ", "").split(",") if s]:
+    reviews.append({"author": {"login": "copilot-pull-request-reviewer"},
+                    "state": "COMMENTED", "commit": {"oid": head},
+                    "body": ERR if kind == "err" else "looks fine"})
 if os.environ.get("COPILOT_REVIEW", "0") == "1":
     reviews.append({"author": {"login": "copilot-pull-request-reviewer"},
                     "state": "COMMENTED", "commit": {"oid": head}, "body": "looks fine"})
@@ -121,5 +130,20 @@ echo "case: the TTL is configurable"
 COPILOT_REVIEW=0 make_stub; arm_marker "2 hours ago"
 out=$(PR_STATUS_QUOTA_TTL_HOURS=1 status)
 check "marker removed at a 1h TTL" "no" "$(marker_exists)"
+
+# Both rows can sit on one head. Asking only "is there a review" clears the
+# marker in the second case too, where the wall is demonstrably back.
+echo "case: quota error, then a delivered review -> marker cleared"
+COPILOT_SEQ="err,ok" make_stub; arm_marker
+out=$(status)
+check "marker cleared" "no" "$(marker_exists)"
+
+# No wording assertion here: the delivered row satisfies the review gate, so
+# this snapshot goes to the merge branch, which carries no quota sentence. What
+# matters is that the marker is not cleared by a review the error outlived.
+echo "case: a delivered review, then the quota error -> marker stands"
+COPILOT_SEQ="ok,err" make_stub; rm -f "$MARKER"
+out=$(status)
+check "marker re-armed" "yes" "$(marker_exists)"
 
 exit "$fail"

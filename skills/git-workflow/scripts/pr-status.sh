@@ -78,8 +78,8 @@
 #   checks checks_settled threads unresolved_threads
 #   unanswered_comments unanswered_human unanswered_by unanswered_urls
 #   reviewDecision reviews_on_head has_review_on_head
-#   has_copilot_review_on_head copilot_review_errored copilot_error_count copilot_quota_hit
-#   copilot_quota_exhausted
+#   has_copilot_review_on_head copilot_latest_on_head_ok copilot_review_errored
+#   copilot_error_count copilot_quota_hit copilot_quota_exhausted
 #   self_review_on_head self_review_url
 #   requested_reviewers
 #   merge_methods auto_merge_allowed queue_active queue_entry
@@ -524,6 +524,14 @@ evaluate() {
                           | add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
         has_copilot_review_on_head: (($copilot_on_head|length) > 0),
+        # Which of the two came last, not merely which exists. reviews(last:50)
+        # is chronological, so the final Copilot row on this head decides: a
+        # delivered review after an errored quota row means the wall lifted, and
+        # an errored row after a delivered one means it is back. Asking only
+        # "is there a review" would clear the marker in the second case too.
+        copilot_latest_on_head_ok:
+          (([$reviews_raw[] | select(.author.login | test("copilot"; "i"))] | last)
+           | if . == null then false else (is_errored_copilot_review | not) end),
         # True when Copilot answered on this head with an error body rather than
         # a review. Derived from the review body alone — see the comment above
         # $copilot_errored for why the check-run is not consulted.
@@ -907,7 +915,7 @@ evaluate() {
                  + " required check never starts")}
          elif ($s.checks.pending_required|length) > 0 then
            {action:"wait",
-            why:("required check(s) still running: \($s.checks.pending_required|join(", "))"
+            why:("required check(s) still pending: \($s.checks.pending_required|join(", "))"
                  + (if $s.checks.fail > 0
                     then " — non-required red meanwhile: \($s.checks.failing|join(", ")); it decides nothing until the required ones conclude"
                     else "" end))}
@@ -1053,13 +1061,13 @@ snapshot() {
   # copilot_quota_exhausted the marker would re-assert itself, and the PR named
   # inside it would be whichever one read the file rather than the one that
   # proved the wall — the single thing the content is there to answer.
-  if [ "$(jq -r '.copilot_quota_hit // false' <<<"$out")" = "true" ]; then
-    remember_quota_hit
-  # A Copilot review that actually landed outranks a remembered wall: the
-  # account had quota at least until this review, so keeping the marker would
-  # route the next PR to self-review against present evidence (#255).
-  elif [ "$(jq -r '.has_copilot_review_on_head // false' <<<"$out")" = "true" ]; then
+  # Order decides, so this is asked FIRST: an errored quota row and a delivered
+  # review can both sit on the same head, and then copilot_quota_hit alone would
+  # re-arm the marker although the wall has since lifted (#255).
+  if [ "$(jq -r '.copilot_latest_on_head_ok // false' <<<"$out")" = "true" ]; then
     forget_quota_hit
+  elif [ "$(jq -r '.copilot_quota_hit // false' <<<"$out")" = "true" ]; then
+    remember_quota_hit
   fi
   printf '%s\n' "$out"
 }
