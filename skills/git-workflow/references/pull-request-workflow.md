@@ -317,6 +317,22 @@ web UI: consistent authentication, structured `--json` output, and clearer
 errors. Drop to raw `gh api` only for endpoints the porcelain commands don't
 cover yet.
 
+### Two `gh` shapes that read as bugs and are not
+
+`gh pr view --json merged` fails with `Unknown JSON field: "merged"` and then
+prints the whole valid-field list starting at `additions`, which buries the
+answer. There is no `merged` boolean: ask for `state` (`MERGED`), `mergedAt`,
+or `mergeCommit`.
+
+`gh repo fork <owner/repo> --remote=false` is refused outright —
+`the --remote flag is unsupported when a repository argument is provided`. The
+flag only applies when forking the repo you are standing in. To fork something
+else without touching local remotes, pass only `--clone=false`.
+
+Neither is worth a second attempt with the same shape, and they fail for
+different reasons: the first names a JSON field that does not exist, the second
+combines a flag with an argument it is not valid alongside.
+
 ### The quotas are session-shared pools — act, don't re-preflight
 
 Every `gh` call in a session draws from a shared pool — REST 5,000/h and
@@ -398,6 +414,37 @@ have to actually perform.
 Build the before/after table *before* writing the summary sentence. Filling in
 the rows is what catches the case you assumed was untouched; writing the
 sentence first only records the assumption.
+
+### On a small, gated diff, point review rounds at the claims, not the code
+
+A two-file change that every gate has already passed has very little room left
+for a code defect, and a great deal of room for a wrong sentence about it. The
+prose is the part nothing checks: no linter reads the commit message, no test
+runs the PR body, and a maintainer decides from exactly those.
+
+The asymmetry is easy to measure once you look for it. Across four review
+rounds on a two-file config fix, the tree never changed — same hash through
+four commit revisions — while every round found something: a mechanism claimed
+backwards, a blast radius copied from an issue and never traced, a verification
+matrix that claimed more coverage than was run, a `grep` quoted in a form that
+returns different results than stated, a cited line number pointing at a file
+the installed version no longer ships.
+
+So when the diff is small and the gates are green, brief the reviewer on the
+text: every number, every cited file and line, every version range, every
+"affects X", every "I ran Y". Ask for the claim to be checked against the
+source, not for an opinion on the code. Two things make this cheap and worth
+repeating:
+
+- Give the reviewer the SHA and require it back. That does not stop a finding
+  from describing a revision you have already replaced — it makes the mismatch
+  visible, which is the part you can act on.
+- Verify each finding yourself before acting on it. A reviewer's premise can be
+  wrong too, and a confidently wrong correction is worse than the error it
+  replaces.
+
+Stop when a round returns only wording, not substance. Rounds that converge on
+phrasing have found the floor.
 
 ### A PR body describes the branch it had, not the branch it has
 
