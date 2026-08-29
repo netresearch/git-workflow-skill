@@ -37,6 +37,42 @@ including pre-releases**. It happily pins a beta (observed: isort
 mirrors a locked dev dependency (black, isort), keep the hook `rev` aligned
 with the lockfile version instead of blindly taking the newest tag.
 
+### Nobody bumps a `rev` unless you arrange it
+
+`autoupdate` is a manual command, so a repository that never runs it keeps its
+hooks forever. Renovate can do it, but **its pre-commit manager is disabled by
+default** — enable it explicitly:
+
+```json
+{ "extends": ["config:recommended"], "pre-commit": { "enabled": true } }
+```
+
+Without that line no hook is ever offered an update, and nothing reports it:
+an absent pull request looks exactly like being up to date. Measured across one
+fleet of 37 repositories, the six without the manager sat on a validator tag 15
+minor versions behind while the other 31 tracked current — the correlation was
+complete.
+
+**A stale `rev` keeps enforcing the rule that version had.** Those six failed
+commits with `SKILL.md is 501 words (max 500)` months after the word cap had
+been replaced by a line-based one. When a pinned checker rejects your change,
+read the pin before you edit the file to satisfy it: an error message names the
+rule the *pinned* version enforces, which is not necessarily the rule that
+applies. Shortening prose to pass a retired cap is work spent against nothing.
+
+**Do not reach for a moving ref to escape this.** `rev: main`, or a `v1` branch
+that tracks main, is worse rather than better:
+
+```
+[WARNING] The 'rev' field ... appears to be a mutable reference (moving tag /
+branch).  Mutable references are never updated after first install and are not
+supported.
+```
+
+pre-commit clones a mutable ref once and never refreshes it, so the running
+version freezes per machine, invisibly and differently for each developer. An
+immutable tag in the file plus a bot that moves it is the supported shape.
+
 ## Recommended Hooks by Stage
 
 ### pre-commit (fast, <5s)
