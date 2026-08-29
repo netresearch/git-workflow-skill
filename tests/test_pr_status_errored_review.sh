@@ -285,11 +285,22 @@ check "copilot_error_count" "1"              "$(run_flag copilot_error_count)"
 check "next.action"         "request-review" "$(run_next)"
 check "next.cmd absent"     "null"           "$(run_flag 'next.cmd')"
 check "next.reason"         "bot-review-unsatisfiable" "$(run_flag 'next.reason')"
-if status | jq -e '.next.why | test("MONTHLY")' >/dev/null; then
-    echo "  ok   why states the quota is monthly and will not recover"
+# Was test("MONTHLY"), pinning the claim that the quota "will not recover this
+# month" — withdrawn in #255, where a wall recorded on the 18th was followed by
+# a delivered review on the 29th. What still has to be said is that the wall is
+# account-wide, so another PR is no way around it; when it lifts is now stated
+# as unknown, and the marker expires instead of being believed to the reset.
+if status | jq -e '.next.why | test("account-wide")' >/dev/null; then
+    echo "  ok   why states the quota is account-wide"
 else
-    echo "  FAIL why lacks the monthly-quota advice"
+    echo "  FAIL why lacks the account-wide advice"
     fail=1
+fi
+if status | jq -e '.next.why | test("will not recover this month")' >/dev/null; then
+    echo "  FAIL why still predicts a recovery date"
+    fail=1
+else
+    echo "  ok   why no longer predicts when the quota returns"
 fi
 
 # The quota detector must be able to stay quiet: a generic outage row must not

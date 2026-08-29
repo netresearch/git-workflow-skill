@@ -215,8 +215,28 @@ QUOTA_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/pr-status"
 # The month is in the NAME, not in the mtime: any later write would refresh an
 # mtime and make a marker outlive the reset it describes.
 QUOTA_MARKER="$QUOTA_DIR/copilot-quota-exhausted-$(date -u +%Y-%m)"
+# ... and the marker expires, because the wall does not last the month. Measured
+# on one machine: recorded 2026-08-18, a normal Copilot review delivered
+# 2026-08-29, the wall back ten minutes later. A marker believed until the month
+# rolls over turns one transient error into weeks of suppressed bot review, and
+# nothing re-probes. After the TTL the next run asks again and either re-arms it
+# or leaves it gone (#255). remember_quota_hit() never rewrites an existing
+# marker, so the mtime stays the moment the wall was first proven.
+QUOTA_TTL_HOURS="${PR_STATUS_QUOTA_TTL_HOURS:-6}"
 
-quota_marker_seen() { if [ -f "$QUOTA_MARKER" ]; then echo true; else echo false; fi; }
+quota_marker_seen() {
+  [ -f "$QUOTA_MARKER" ] || { echo false; return; }
+  if [ -n "$(find "$QUOTA_MARKER" -mmin "+$((QUOTA_TTL_HOURS * 60))" 2>/dev/null)" ]; then
+    rm -f "$QUOTA_MARKER" 2>/dev/null || :
+    echo false; return
+  fi
+  echo true
+}
+
+# A delivered Copilot review is the only positive evidence the wall is gone.
+# Acting on it beats waiting out the TTL: the very run that sees the review
+# would otherwise still route to self-review.
+forget_quota_hit() { rm -f "$QUOTA_MARKER" 2>/dev/null || :; }
 
 # Best-effort by design: the marker only saves a wasted re-request, so a
 # read-only or full cache directory must never turn a status query into a
@@ -608,13 +628,14 @@ evaluate() {
     # the file to undo it.
     | (if $s.copilot_quota_hit
        then "the error body on this pull request says the requesting user reached the quota limit"
-       else "an earlier run recorded the wall this month in \($marker_path) — delete that file if it was recorded in error"
+       else "an earlier run recorded the wall in \($marker_path) — delete that file if it was recorded in error"
        end) as $quota_evidence
-    | ("Copilot is OUT OF REVIEW QUOTA — \($quota_evidence). The quota is MONTHLY and"
-       + " account-wide: it will not recover this month, on this or any other PR, and"
-       + " re-requesting cannot change that. Review the diff yourself, note in the PR that"
-       + " the bot review was unavailable, and decide on that. Treat this notice as covering"
-       + " every PR until the monthly reset."
+    | ("Copilot is OUT OF REVIEW QUOTA — \($quota_evidence). The quota is account-wide, so"
+       + " re-requesting on another PR will not get around it right now. When it comes back"
+       + " is not something this tool can predict: it has been seen to return within the"
+       + " same month and go again minutes later, so the record above expires on its own and"
+       + " is dropped as soon as a Copilot review is observed. Review the diff yourself, note"
+       + " in the PR that the bot review was unavailable, and decide on that."
        + " To proceed on a documented self-review, post a PR comment (as the PR author)"
        + " containing the line `Self-review: <head-sha>` with at least the first 12"
        + " chars of \($s.headOid[0:12]) — pr-merge.sh --self-reviewed posts it and merges in"
@@ -1034,6 +1055,11 @@ snapshot() {
   # proved the wall — the single thing the content is there to answer.
   if [ "$(jq -r '.copilot_quota_hit // false' <<<"$out")" = "true" ]; then
     remember_quota_hit
+  # A Copilot review that actually landed outranks a remembered wall: the
+  # account had quota at least until this review, so keeping the marker would
+  # route the next PR to self-review against present evidence (#255).
+  elif [ "$(jq -r '.has_copilot_review_on_head // false' <<<"$out")" = "true" ]; then
+    forget_quota_hit
   fi
   printf '%s\n' "$out"
 }
