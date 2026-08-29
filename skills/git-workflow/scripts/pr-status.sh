@@ -78,8 +78,8 @@
 #   checks checks_settled threads unresolved_threads
 #   unanswered_comments unanswered_human unanswered_by unanswered_urls
 #   reviewDecision reviews_on_head has_review_on_head
-#   has_copilot_review_on_head copilot_review_errored copilot_error_count copilot_quota_hit
-#   copilot_quota_exhausted
+#   has_copilot_review_on_head copilot_latest_on_head_ok copilot_review_errored
+#   copilot_error_count copilot_quota_hit copilot_quota_exhausted
 #   self_review_on_head self_review_url
 #   requested_reviewers
 #   merge_methods auto_merge_allowed queue_active queue_entry
@@ -190,6 +190,20 @@ if [ -z "$PR" ]; then
 fi
 OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
 
+# This script speaks GitHub GraphQL and nothing else. A GitLab project reads
+# host/group/project, which parses here without complaint and then dies deep in
+# the query as a bare "GraphQL query failed" — and --watch heartbeats into its
+# timeout on a query that can never succeed. Refuse it up front and name where
+# the answer lives instead (#250).
+case "$REPO" in
+  */*/*)
+    die "\"$REPO\" is not owner/repo. pr-status.sh is GitHub-only; for a GitLab merge request see references/pull-request-workflow.md § \"GitHub only\" and the netresearch-gitlab skill" ;;
+esac
+case "${OWNER}" in
+  *.*)
+    die "\"$OWNER\" looks like a host, not a GitHub owner. pr-status.sh is GitHub-only; for a GitLab merge request see references/pull-request-workflow.md § \"GitHub only\" and the netresearch-gitlab skill" ;;
+esac
+
 # --------------------------------------------------------- quota marker -----
 # The Copilot review quota is account-wide and monthly; the evidence for it is
 # not. It arrives as an error body on ONE pull request, and every other PR of
@@ -201,8 +215,28 @@ QUOTA_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/pr-status"
 # The month is in the NAME, not in the mtime: any later write would refresh an
 # mtime and make a marker outlive the reset it describes.
 QUOTA_MARKER="$QUOTA_DIR/copilot-quota-exhausted-$(date -u +%Y-%m)"
+# ... and the marker expires, because the wall does not last the month. Measured
+# on one machine: recorded 2026-08-18, a normal Copilot review delivered
+# 2026-08-29, the wall back ten minutes later. A marker believed until the month
+# rolls over turns one transient error into weeks of suppressed bot review, and
+# nothing re-probes. After the TTL the next run asks again and either re-arms it
+# or leaves it gone (#255). remember_quota_hit() never rewrites an existing
+# marker, so the mtime stays the moment the wall was first proven.
+QUOTA_TTL_HOURS="${PR_STATUS_QUOTA_TTL_HOURS:-6}"
 
-quota_marker_seen() { if [ -f "$QUOTA_MARKER" ]; then echo true; else echo false; fi; }
+quota_marker_seen() {
+  [ -f "$QUOTA_MARKER" ] || { echo false; return; }
+  if [ -n "$(find "$QUOTA_MARKER" -mmin "+$((QUOTA_TTL_HOURS * 60))" 2>/dev/null)" ]; then
+    rm -f "$QUOTA_MARKER" 2>/dev/null || :
+    echo false; return
+  fi
+  echo true
+}
+
+# A delivered Copilot review is the only positive evidence the wall is gone.
+# Acting on it beats waiting out the TTL: the very run that sees the review
+# would otherwise still route to self-review.
+forget_quota_hit() { rm -f "$QUOTA_MARKER" 2>/dev/null || :; }
 
 # Best-effort by design: the marker only saves a wasted re-request, so a
 # read-only or full cache directory must never turn a status query into a
@@ -490,6 +524,14 @@ evaluate() {
                           | add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
         has_copilot_review_on_head: (($copilot_on_head|length) > 0),
+        # Which of the two came last, not merely which exists. reviews(last:50)
+        # is chronological, so the final Copilot row on this head decides: a
+        # delivered review after an errored quota row means the wall lifted, and
+        # an errored row after a delivered one means it is back. Asking only
+        # "is there a review" would clear the marker in the second case too.
+        copilot_latest_on_head_ok:
+          (([$reviews_raw[] | select(.author.login | test("copilot"; "i"))] | last)
+           | if . == null then false else (is_errored_copilot_review | not) end),
         # True when Copilot answered on this head with an error body rather than
         # a review. Derived from the review body alone — see the comment above
         # $copilot_errored for why the check-run is not consulted.
@@ -594,13 +636,14 @@ evaluate() {
     # the file to undo it.
     | (if $s.copilot_quota_hit
        then "the error body on this pull request says the requesting user reached the quota limit"
-       else "an earlier run recorded the wall this month in \($marker_path) — delete that file if it was recorded in error"
+       else "an earlier run recorded the wall in \($marker_path) — delete that file if it was recorded in error"
        end) as $quota_evidence
-    | ("Copilot is OUT OF REVIEW QUOTA — \($quota_evidence). The quota is MONTHLY and"
-       + " account-wide: it will not recover this month, on this or any other PR, and"
-       + " re-requesting cannot change that. Review the diff yourself, note in the PR that"
-       + " the bot review was unavailable, and decide on that. Treat this notice as covering"
-       + " every PR until the monthly reset."
+    | ("Copilot is OUT OF REVIEW QUOTA — \($quota_evidence). The quota is account-wide, so"
+       + " re-requesting on another PR will not get around it right now. When it comes back"
+       + " is not something this tool can predict: it has been seen to return within the"
+       + " same month and go again minutes later, so the record above expires on its own and"
+       + " is dropped as soon as a Copilot review is observed. Review the diff yourself, note"
+       + " in the PR that the bot review was unavailable, and decide on that."
        + " To proceed on a documented self-review, post a PR comment (as the PR author)"
        + " containing the line `Self-review: <head-sha>` with at least the first 12"
        + " chars of \($s.headOid[0:12]) — pr-merge.sh --self-reviewed posts it and merges in"
@@ -622,7 +665,11 @@ evaluate() {
          elif ($s.checks.failing_required|length) > 0 then
            {action:"fix-ci", why:"required check(s) failing: \($s.checks.failing_required|join(", "))",
             urls:$s.checks.failing_urls}
-         elif ($s.checks.fail > 0) then
+         # Only once every required check has concluded. While one is still
+         # running, a red non-required check is information: it cannot be what
+         # keeps the gate shut yet, and returning an action here ends a --watch
+         # that has nothing to act on. The wait branch below names it instead.
+         elif ($s.checks.fail > 0 and ($s.checks.pending_required|length) == 0) then
            {action:"triage-ci", why:"non-required check(s) failing: \($s.checks.failing|join(", ")) — not merge-blocking on their own, but UNSTABLE keeps the gate shut",
             urls:$s.checks.failing_urls}
          elif $s.unresolved_threads > 0 then
@@ -867,7 +914,11 @@ evaluate() {
                  + " Enqueueing now risks the merge queue dropping the entry when its"
                  + " required check never starts")}
          elif ($s.checks.pending_required|length) > 0 then
-           {action:"wait", why:"required check(s) still running: \($s.checks.pending_required|join(", "))"}
+           {action:"wait",
+            why:("required check(s) still pending: \($s.checks.pending_required|join(", "))"
+                 + (if $s.checks.fail > 0
+                    then " — non-required red meanwhile: \($s.checks.failing|join(", ")); it decides nothing until the required ones conclude"
+                    else "" end))}
          elif ($s.mergeState == "CLEAN"
                and ($s.merge_methods|index("merge")|not)
                and ($s.merge_methods|index("rebase")|not)) then
@@ -1010,7 +1061,12 @@ snapshot() {
   # copilot_quota_exhausted the marker would re-assert itself, and the PR named
   # inside it would be whichever one read the file rather than the one that
   # proved the wall — the single thing the content is there to answer.
-  if [ "$(jq -r '.copilot_quota_hit // false' <<<"$out")" = "true" ]; then
+  # Order decides, so this is asked FIRST: an errored quota row and a delivered
+  # review can both sit on the same head, and then copilot_quota_hit alone would
+  # re-arm the marker although the wall has since lifted (#255).
+  if [ "$(jq -r '.copilot_latest_on_head_ok // false' <<<"$out")" = "true" ]; then
+    forget_quota_hit
+  elif [ "$(jq -r '.copilot_quota_hit // false' <<<"$out")" = "true" ]; then
     remember_quota_hit
   fi
   printf '%s\n' "$out"
@@ -1032,6 +1088,16 @@ while :; do
   s=$(snapshot)
   act=$(jq -r '.next.action' <<<"$s")
   fails=$(jq -r '.checks.failing|join(",")' <<<"$s")
+  # A red REQUIRED check is actionable the moment it appears. A red
+  # non-required one is not, while a required check is still running: it
+  # cannot be what keeps the gate shut yet, and returning on it ends the watch
+  # with nothing to do (#249). Hold until the required checks conclude — then
+  # the same red check is the reason the gate stays shut, and this fires.
+  fails_required=$(jq -r '.checks.failing_required|join(",")' <<<"$s")
+  pending_required=$(jq -r '.checks.pending_required|length' <<<"$s")
+  if [ -z "$fails_required" ] && [ "$pending_required" -gt 0 ]; then
+    fails=""
+  fi
 
   # The ignore test sits on this exit too, but ONLY when the standing action
   # the caller declined IS the CI action (fix-ci/triage-ci) — then its failing
