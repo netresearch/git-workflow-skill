@@ -1107,6 +1107,61 @@ git lfs ls-files
 git lfs pull
 ```
 
+#### Removing LFS without a history rewrite
+
+LFS earns its keep for assets that are large *and* churn. For a working set
+that is neither — 238 files / 39 MB in one demo repository — it costs the
+org's monthly LFS bandwidth allowance instead: every `actions/checkout` with
+`lfs: true` and every deploy-side `git lfs pull` fetches the whole set again,
+and ~20 CI runs a day turned 39 MB into 1.5 GB/day (netresearch/typo3-demo#231,
+2026-08-29). Moving the files back into plain git needs no `git lfs migrate
+export` and no force-push:
+
+```bash
+# 1. Drop the tracking rules (delete the file if LFS was all it held).
+git rm .gitattributes            # or: git lfs untrack '<pattern>' per rule
+
+# 2. Re-store every tracked file as a plain blob. --renormalize is the point:
+#    the stat cache still calls the files clean, so a bare `git add` stores
+#    nothing; renormalize re-runs the (now absent) clean filter.
+git add --renormalize .
+
+# 3. Prove the conversion byte for byte: staged blob sha256 == LFS object id.
+#    Process substitution, not a pipe — a `| while` runs in a subshell and
+#    loses the counter, so nothing could ever fail. shasum covers macOS.
+sha=$(command -v sha256sum >/dev/null && echo sha256sum || echo 'shasum -a 256')
+bad=0
+while read -r oid _ path; do
+  [ "$(git cat-file blob ":$path" | $sha | cut -d' ' -f1)" = "$oid" ] \
+    || { echo "MISMATCH $path"; bad=$((bad + 1)); }
+done < <(git lfs ls-files -l)
+[ "$bad" -eq 0 ] || { echo "$bad file(s) are not the LFS content — do not commit"; exit 1; }
+```
+
+Then strip every LFS *step* the repository carries — `lfs: true` on each
+`actions/checkout` (grep the workflows: a reusable build workflow may take it
+as an input), `git lfs pull` in deploy scripts, direnv/tool checks — and
+commit with the files. The `git-lfs` *package* in host provisioning is a
+separate decision: a host that can still deploy or roll back to a commit from
+before the conversion needs it, or that checkout leaves pointer files where the
+assets should be. Drop the package only once no pre-conversion commit is a
+deploy target any more; until then it is harmless to keep. Two things to know
+while doing it:
+
+- `git lfs ls-files` reads **HEAD**, so it keeps reporting the old count until
+  the commit exists; the staged tree is what to check (`git show :<path>`
+  must not start with `version https://git-lfs.github.com/spec/v1`).
+- Nothing changes on hosts that already hold a smudged checkout: their next
+  `git pull --ff-only` replaces the files with identical content from the new
+  blobs. Only a checkout of a commit *before* the conversion still needs
+  `git-lfs` installed — say so in the PR body, and keep the package where
+  that checkout is a rollback path (see above).
+
+The LFS objects stay in the remote's LFS store (storage, not bandwidth, and
+usually far inside the allowance); a history rewrite is the only way to drop
+them, and for a few dozen MB it is not worth the force-push and the rebase of
+every open PR.
+
 ### Repository Maintenance
 
 ```bash
