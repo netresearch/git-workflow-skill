@@ -10,6 +10,7 @@ names the failure it stands for.
 
 import json
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -164,6 +165,31 @@ def pr_status_path_case(command: str) -> bool:
     return bool(match and os.path.isfile(match.group(1)))
 
 
+COMMANDS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "commands"
+)
+
+
+def shipped_command_blocks():
+    """Every ```bash block in commands/*.md, as (file, block) pairs.
+
+    The commands this repo ships are instructions an agent executes verbatim.
+    A block that the repo's own gate denies costs a round-trip every time the
+    command runs, and reads as the gate misfiring rather than the instruction
+    being wrong — which is exactly how it survived: `/pr-finish` step 0 told
+    the agent to run `gh pr view --json …mergeStateStatus…` without
+    pr-status.sh, and the deny landed twice in one session.
+    """
+    for md in sorted(pathlib.Path(COMMANDS_DIR).glob("*.md")):
+        text = md.read_text()
+        for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
+            body = "\n".join(
+                line.strip() for line in block.splitlines() if line.strip()
+            )
+            if body:
+                yield md.name, body
+
+
 def main() -> int:
     fails = 0
     for name, expected, command in CASES:
@@ -195,6 +221,15 @@ def main() -> int:
             f"  {'OK  ' if ok else 'FAIL'} {name:<44} "
             f"want=abs-path got={'abs-path' if ok else 'bare-name'}"
         )
+
+    denied = 0
+    for fname, block in shipped_command_blocks():
+        if run(block) == "DENY":
+            denied += 1
+            print(f"  FAIL shipped block denied in {fname}:\n{block}")
+    fails += denied
+    if not denied:
+        print("  OK   shipped command blocks pass the gate")
 
     print(f"  ---- failures: {fails}")
     return 1 if fails else 0

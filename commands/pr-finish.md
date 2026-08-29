@@ -20,14 +20,21 @@ resolution, and merge-queue handling. Then execute, in order:
 
    ```bash
    R=<owner/repo>; PR=<number>; BASE=<base-branch>
-   gh pr view   $PR --repo $R --json state,mergeable,mergeStateStatus,reviewDecision,headRefOid,baseRefName,title
+   # pr-status.sh FIRST — this repo's own PreToolUse gate (scripts/validate_git_command.py)
+   # denies a `gh pr view --json …mergeStateStatus…` that is not accompanied by it, and the
+   # gate reads the whole invocation, so one block carrying both is the shape it accepts.
+   "$SKILL/scripts/pr-status.sh" -R $R $PR   # $SKILL = the installed git-workflow skill dir; the deny message prints the absolute path
+   gh pr view   $PR --repo $R --json headRefOid,baseRefName,title
    gh pr checks $PR --repo $R
    gh api repos/$R/rules/branches/$BASE   # effective rules INCL. rulesets (e.g. copilot_code_review) — evaluated against the BASE branch; classic branch-protection API misses these
    gh pr view   $PR --repo $R --json reviewRequests --jq '.reviewRequests'
    gh api graphql -F owner="${R%/*}" -F repo="${R#*/}" -F pr="$PR" -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:50){nodes{id isResolved comments(first:1){nodes{databaseId author{login} path body}}}}}}}'
    ```
 
-   This yields, in one shot: merge state + why, every required check, **rulesets**
+   `pr-status.sh` already answers state, mergeability, checks, reviews, rulesets and
+   unresolved threads, and ends with a `NEXT:` line naming the action — the remaining
+   calls add what it does not break down. This yields, in one shot: merge state + why,
+   every required check, **rulesets**
    (if a `copilot_code_review` rule is blocking because no review has been triggered yet,
    you can request one via `gh api repos/$R/pulls/$PR/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'` — but once requested you must wait for it to land before merging; see step 5, never merge over an in-flight review), pending review requests, and the thread IDs needed to reply to and resolve each thread. Reason once from this, not serially.
 
