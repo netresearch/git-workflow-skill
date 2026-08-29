@@ -615,6 +615,28 @@ gh api graphql -f query='
 gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "PRRT_xxx"}) { thread { isResolved } } }'
 ```
 
+### Resolving is a claim about the whole ask, not about the file you edited
+
+A finding often names more than one target — two config files, "the table *and*
+the examples", every caller of a symbol. Fixing the one you opened, replying with
+its SHA and resolving reads exactly like completion, and the thread then carries
+a green mark that stops anyone looking. Nothing in the API checks the claim.
+
+So before `resolveReviewThread`, re-read the comment and enumerate the targets it
+names — by noun, not by impression — and confirm each. A reviewer that writes
+"update the bootstrap table and all affected enforcement and maturity examples"
+has named three things; a commit touching the first two satisfies neither the ask
+nor the thread.
+
+Two habits make this cheap: quote the ask's own list back in the reply and mark
+each item, and grep for the defect's shape across the repository rather than
+across the file you happened to open — the second file is usually the one the
+reviewer could see and you could not.
+
+Where you deliberately do *not* act on part of an ask, say which part and why in
+the reply. "Resolved" with a silent omission is the failure this section exists
+for; an explicit decline is a legitimate outcome the reviewer can argue with.
+
 ### Refusing the lazy pattern
 
 These replies are banned:
@@ -787,6 +809,35 @@ gh api graphql -f query='
 ```
 
 If that returns any rows, the PR is not merge-ready.
+
+#### Reading a bot body: strip the `<details>` blocks, never split on them
+
+`body[:80]` above tells threads apart; it does not let you read one. CodeRabbit
+opens every comment with a 54-character severity header (`_🎯 Functional
+Correctness_ | _🟡 Minor_ | _⚡ Quick win_`), so 80 characters buy the header
+plus about twenty of the title.
+
+Splitting on the tag is the tempting fix and it fails silently, because the
+blocks appear on **both sides** of the finding: "Supported by static analysis"
+and web-search evidence before it, "Committable suggestion" and "Prompt for AI
+Agents" after it. Over 18 CodeRabbit comments in one session, 7 had a block
+before the finding — so `split("<details>")[0]` returns the bare severity header
+about a third of the time, with nothing to say which third. `split("</details>")[-1]`
+is worse: it returns the trailing `<!-- fingerprinting -->` comments.
+
+Remove the blocks non-greedily across newlines instead, then the HTML comments:
+
+```python
+import re
+
+body = re.sub(r"<details>.*?</details>", "", raw, flags=re.S)  # re.S load-bearing
+body = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+body = re.sub(r"\n{3,}", "\n\n", body).strip()
+```
+
+This holds for any reviewer that folds evidence into `<details>`. Read the
+finding, not the wrapper, before deciding whether a thread is actionable — and
+before replying to it.
 
 ### Wait for the async re-review before trusting `unresolved == 0`
 
