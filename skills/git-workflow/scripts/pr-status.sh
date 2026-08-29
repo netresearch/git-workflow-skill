@@ -622,7 +622,11 @@ evaluate() {
          elif ($s.checks.failing_required|length) > 0 then
            {action:"fix-ci", why:"required check(s) failing: \($s.checks.failing_required|join(", "))",
             urls:$s.checks.failing_urls}
-         elif ($s.checks.fail > 0) then
+         # Only once every required check has concluded. While one is still
+         # running, a red non-required check is information: it cannot be what
+         # keeps the gate shut yet, and returning an action here ends a --watch
+         # that has nothing to act on. The wait branch below names it instead.
+         elif ($s.checks.fail > 0 and ($s.checks.pending_required|length) == 0) then
            {action:"triage-ci", why:"non-required check(s) failing: \($s.checks.failing|join(", ")) — not merge-blocking on their own, but UNSTABLE keeps the gate shut",
             urls:$s.checks.failing_urls}
          elif $s.unresolved_threads > 0 then
@@ -867,7 +871,11 @@ evaluate() {
                  + " Enqueueing now risks the merge queue dropping the entry when its"
                  + " required check never starts")}
          elif ($s.checks.pending_required|length) > 0 then
-           {action:"wait", why:"required check(s) still running: \($s.checks.pending_required|join(", "))"}
+           {action:"wait",
+            why:("required check(s) still running: \($s.checks.pending_required|join(", "))"
+                 + (if $s.checks.fail > 0
+                    then " — non-required red meanwhile: \($s.checks.failing|join(", ")); it decides nothing until the required ones conclude"
+                    else "" end))}
          elif ($s.mergeState == "CLEAN"
                and ($s.merge_methods|index("merge")|not)
                and ($s.merge_methods|index("rebase")|not)) then
@@ -1032,6 +1040,16 @@ while :; do
   s=$(snapshot)
   act=$(jq -r '.next.action' <<<"$s")
   fails=$(jq -r '.checks.failing|join(",")' <<<"$s")
+  # A red REQUIRED check is actionable the moment it appears. A red
+  # non-required one is not, while a required check is still running: it
+  # cannot be what keeps the gate shut yet, and returning on it ends the watch
+  # with nothing to do (#249). Hold until the required checks conclude — then
+  # the same red check is the reason the gate stays shut, and this fires.
+  fails_required=$(jq -r '.checks.failing_required|join(",")' <<<"$s")
+  pending_required=$(jq -r '.checks.pending_required|length' <<<"$s")
+  if [ -z "$fails_required" ] && [ "$pending_required" -gt 0 ]; then
+    fails=""
+  fi
 
   # The ignore test sits on this exit too, but ONLY when the standing action
   # the caller declined IS the CI action (fix-ci/triage-ci) — then its failing
