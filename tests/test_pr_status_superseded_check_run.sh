@@ -35,7 +35,8 @@ check_absent() { # check_absent <name> <needle> <haystack>
 export XDG_CACHE_HOME="$STUB_DIR/cache"
 
 # Stub `gh`: no rulesets, so every check is non-required.
-#   NEWEST=SUCCESS|FAILURE — conclusion of the row with the later startedAt
+#   NEWEST=SUCCESS|FAILURE|QUEUED — state of the newer row. QUEUED models a
+#   re-run that has not started yet: status QUEUED, startedAt null.
 make_stub() {
     printf '%s\n' '[]' > "$STUB_DIR/rules.json"
     cat > "$STUB_DIR/gh" <<STUB
@@ -56,13 +57,19 @@ newest = os.environ.get("NEWEST", "SUCCESS")
 older = "FAILURE" if newest == "SUCCESS" else "SUCCESS"
 # The old row comes FIRST in the rollup, as GitHub returns it — the fix must
 # pick by startedAt, not by position.
+if newest == "QUEUED":
+    newer_row = {"__typename": "CheckRun", "name": "fuzz / Fuzz Tests",
+                 "conclusion": None, "status": "QUEUED",
+                 "detailsUrl": "run/2", "startedAt": None}
+else:
+    newer_row = {"__typename": "CheckRun", "name": "fuzz / Fuzz Tests",
+                 "conclusion": newest, "status": "COMPLETED",
+                 "detailsUrl": "run/2", "startedAt": "2026-08-30T18:30:00Z"}
 checks = [
     {"__typename": "CheckRun", "name": "fuzz / Fuzz Tests",
      "conclusion": older, "status": "COMPLETED",
      "detailsUrl": "run/1", "startedAt": "2026-08-30T15:03:00Z"},
-    {"__typename": "CheckRun", "name": "fuzz / Fuzz Tests",
-     "conclusion": newest, "status": "COMPLETED",
-     "detailsUrl": "run/2", "startedAt": "2026-08-30T18:30:00Z"},
+    newer_row,
     {"__typename": "CheckRun", "name": "ci / Unit Tests",
      "conclusion": "SUCCESS", "status": "COMPLETED",
      "detailsUrl": "run/2", "startedAt": "2026-08-30T18:30:00Z"},
@@ -84,7 +91,7 @@ json.dump({"data": {"repository": {
         "reviewThreads": {"nodes": []},
         "comments": {"nodes": []},
         "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
-            "state": "SUCCESS" if newest == "SUCCESS" else "FAILURE",
+            "state": {"SUCCESS": "SUCCESS", "QUEUED": "PENDING"}.get(newest, "FAILURE"),
             "contexts": {"nodes": checks}}}}]},
         "allCommits": {"nodes": [{"commit": {"oid": head,
                                              "signature": {"isValid": True}}}]},
@@ -108,5 +115,13 @@ out=$(status)
 check_contains "returns triage-ci"            '"action": "triage-ci"' "$out"
 check_contains "names the failing check"      'fuzz / Fuzz Tests' "$out"
 check_contains "points at the newest run"     'run/2' "$out"
+
+echo "case: old row red, re-run still QUEUED (startedAt null) -> the queued row wins, gate waits"
+NEWEST=QUEUED make_stub
+out=$(status)
+check_absent   "no triage-ci for the old row"   '"action": "triage-ci"' "$out"
+check_absent   "old run not listed"             'run/1' "$out"
+check_contains "waits on the queued re-run"     '"action": "wait"' "$out"
+check_contains "reports it as queued"           '"queued": 1' "$out"
 
 exit "$fail"
