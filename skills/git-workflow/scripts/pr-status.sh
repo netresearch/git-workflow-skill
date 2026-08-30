@@ -331,6 +331,16 @@ evaluate() {
                                         elif .state == "PENDING" then "PENDING"
                                         else "FAIL" end), url: .targetUrl}
           end]) as $checks
+    # One head can carry several check-runs of the SAME name: a close/reopen,
+    # a workflow_dispatch or a `gh run rerun` of a superseded run starts a new
+    # run whose rows join the old ones in the rollup instead of replacing
+    # them. The GitHub merge state reads only the newest row per name; counting
+    # the old one answered triage-ci on a CLEAN pull request, and pr-merge.sh
+    # refused a merge the gate had already opened (t3x-nr-image-optimize#173:
+    # fuzz red at 15:03, green at 18:30, one SHA). Keep the newest row per
+    # name. Status contexts carry no startedAt and are unique per context, so
+    # the fallback only ever compares a row with itself.
+    | ($checks | group_by(.name) | map(max_by(.started // ""))) as $checks
     # Effective required contexts come from the rules endpoint; classic
     # protection alone misses rulesets entirely.
     | ([$r[]? | select(.type=="required_status_checks")
