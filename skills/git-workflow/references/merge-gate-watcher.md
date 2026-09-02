@@ -339,6 +339,36 @@ Three rules follow, and they cost nothing:
 
 Recovery is waiting: `gh api rate_limit --jq '.resources.graphql.reset'` is an epoch timestamp — sleep to it in **one** background command rather than retrying into the limit.
 
+### What still works while GraphQL is drained
+
+`pr-status.sh` is GraphQL end to end, so it exits `GraphQL query failed` and the
+whole finish flow appears blocked. Most of it is not. `rate_limit` can even
+report `5000/5000` for both resources while GraphQL refuses — the counter is not
+where a secondary limit shows up, so probe it directly instead of believing the
+number:
+
+```bash
+gh api graphql -f query='{viewer{login}}' >/dev/null 2>&1 && echo up || echo throttled
+```
+
+Answerable from REST, which is usually still healthy:
+
+| Question | REST call |
+|---|---|
+| head SHA, base, draft state | `gh api repos/$R/pulls/$PR` |
+| every check on the head | `gh api "repos/$R/commits/$SHA/check-runs?per_page=100" --paginate` |
+| reviews submitted | `gh api repos/$R/pulls/$PR/reviews` |
+| reviewers still requested | `gh api repos/$R/pulls/$PR/requested_reviewers` |
+| effective rulesets on the base | `gh api repos/$R/rules/branches/$BASE` |
+| merge | `gh api repos/$R/pulls/$PR/merge -X PUT -f merge_method=merge` |
+
+Two things have **no** REST equivalent and genuinely have to wait: converting a
+draft to ready (`markPullRequestReadyForReview`), and review-thread resolution
+(`resolveReviewThread`). A ruleset that requires a bot review is therefore a
+hard stop while the budget is out, because the review cannot be requested on a
+draft and the draft cannot be lifted. Say so and wait for the reset rather than
+merging past the rule.
+
 ### "Has it merged yet?" costs nothing — ask git, not the API
 
 The three rules above make a watcher cheaper. This one makes the commonest watcher free. Once a PR is queued the only question left is whether its head landed on the base, and git answers that with no API budget at all:
