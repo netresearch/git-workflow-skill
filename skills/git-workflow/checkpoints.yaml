@@ -34,11 +34,65 @@ mechanical:
     desc: ".gitignore should exclude node_modules if using npm"
 
   # === PR TEMPLATE ===
+  # GitHub resolves a PR template from the repository root, `.github/` or
+  # `docs/`, in either spelling and in a single-file or a directory form —
+  # and, when the repository provides none, from the OWNER's `.github`
+  # repository, which serves one org-wide. Checking only the two repo-local
+  # `.github/` file paths reported netresearch/git-workflow-skill as missing a
+  # PR template while netresearch/.github/pull_request_template.md was serving
+  # it to every repo in the org.
+  #
+  # A `file_exists` target cannot reach the second source. `org_provides:` can,
+  # but takes a single path and returns *fail* — not skip — when gh is absent
+  # or unauthenticated (run-checkpoints.sh, check_org_provides), which trades
+  # one false failure for another. So the check is inlined as a script.
+  #
+  # Multi-line on purpose: the runner screens a block-scalar body with
+  # is_safe_script_text (run-checkpoints.sh:895-916) and runs it from a temp
+  # file. That path drops the whitelist and the `; && || $()` ban, both of
+  # which describe the SINGLE-LINE analyzer (is_safe_eval_command). Same
+  # vehicle as GH-31 in github-project, spelled `pattern:` rather than
+  # `target:` so validate-checkpoints.sh accepts it.
   - id: GW-05
-    type: file_exists
-    target: "{.github/PULL_REQUEST_TEMPLATE.md,.github/pull_request_template.md}"
+    type: command
+    pattern: |
+      # Repo-local first — all six single-file locations GitHub honours.
+      for f in pull_request_template.md PULL_REQUEST_TEMPLATE.md \
+               .github/pull_request_template.md .github/PULL_REQUEST_TEMPLATE.md \
+               docs/pull_request_template.md docs/PULL_REQUEST_TEMPLATE.md; do
+        test -f "$f" && exit 0
+      done
+      # ...then the DIRECTORY form, which holds several templates the author
+      # picks between. This skill's own scripts/verify-git-workflow.sh and
+      # scripts/repo-contribution-preflight.sh both accept it; a repo using it
+      # has a working template and must not be reported as missing one.
+      for d in .github/PULL_REQUEST_TEMPLATE PULL_REQUEST_TEMPLATE docs/PULL_REQUEST_TEMPLATE; do
+        for t in "$d"/*; do
+          test -f "$t" && exit 0
+        done
+      done
+      # No local template: the org may still provide one. Without gh, without
+      # auth, or on a non-github remote that half is unknowable — pass quietly
+      # rather than report a template as missing on evidence we do not have.
+      command -v gh >/dev/null 2>&1 || exit 0
+      gh auth status >/dev/null 2>&1 || exit 0
+      R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
+      test -n "$R" || exit 0
+      O=${R%%/*}
+      for f in pull_request_template.md PULL_REQUEST_TEMPLATE.md \
+               .github/pull_request_template.md .github/PULL_REQUEST_TEMPLATE.md \
+               docs/pull_request_template.md docs/PULL_REQUEST_TEMPLATE.md \
+               .github/PULL_REQUEST_TEMPLATE PULL_REQUEST_TEMPLATE \
+               docs/PULL_REQUEST_TEMPLATE; do
+        gh api "repos/$O/.github/contents/$f" >/dev/null 2>&1 && exit 0
+      done
+      exit 1
     severity: warning
-    desc: "PR template should exist for consistent pull requests"
+    desc: >-
+      A PR template should exist — in this repository (root, .github/ or
+      docs/, single file or PULL_REQUEST_TEMPLATE/ directory) or org-wide in
+      OWNER/.github. Passes quietly when gh is unavailable or
+      unauthenticated: the org half cannot be read there.
 
   # === CODEOWNERS ===
   # GitHub looks for CODEOWNERS in this order: .github/CODEOWNERS, root,
@@ -56,37 +110,150 @@ mechanical:
       location). Root and docs/ are fallbacks per GitHub docs.
 
   # === BRANCH PROTECTION INDICATORS ===
+  # A branch is protected by classic branch protection, by a RULESET, or by
+  # both, and the classic endpoint is blind to rulesets. Reading it alone
+  # reports a correctly protected branch as unprotected: on
+  # netresearch/t3x-nr-temporal-cache `repos/…/branches/main/protection`
+  # carries no `required_status_checks` key at all, while ruleset
+  # `t3x-baseline` enforces eight contexts (All security checks, CodeQL, DCO,
+  # Opengrep OSS, betterleaks, "ci / All CI checks", scorecard, zizmor). On a
+  # repository governed by rulesets ALONE the classic endpoint 404s and the
+  # gh_api type turned that into "GitHub API call failed" — a finding about
+  # the reader, not the repository.
+  #
+  # So GW-08/09/10/11 read `repos/OWNER/REPO/rules/branches/BRANCH`, which
+  # returns the EFFECTIVE rules, and pass when either source enforces the
+  # requirement. GH-31 in github-project is the same dual-source shape.
+  #
+  # Two further defects go with it: the branch was hardcoded to `main` (404 on
+  # a repo whose default is `master`/`develop`), and gh_api's "skip when gh is
+  # missing" becomes a quiet pass here — a `command` checkpoint has no skip
+  # status, and a pass on unreadable evidence beats a fabricated failure.
+  #
+  # Multi-line on purpose — see the note on GW-05 for why a block-scalar body
+  # may use `$()` and `||` where a one-line pattern may not.
   - id: GW-08
-    type: gh_api
-    endpoint: repos/{owner}/{repo}/branches/main/protection
-    json_path: ".required_status_checks"
+    type: command
+    pattern: |
+      command -v gh >/dev/null 2>&1 || exit 0
+      gh auth status >/dev/null 2>&1 || exit 0
+      R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
+      B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
+      # A default branch may contain '/' (release/1.0); unencoded it splits the
+      # REST path and both endpoints below answer for something else. Encode
+      # into a separate variable: assigning straight back to B would turn a
+      # missing jq into an empty B, which the -n guard below then treats as
+      # "nothing to check" and passes — a protection gap reported as protected.
+      command -v jq >/dev/null 2>&1 || exit 0
+      B_ENC=$(printf %s "$B" | jq -sRr @uri 2>/dev/null) || exit 0
+      test -n "$B_ENC" || exit 0
+      B="$B_ENC"
+      test -n "$R" || exit 0
+      test -n "$B" || exit 0
+      classic=$(gh api "repos/$R/branches/$B/protection" \
+        --jq '((.required_status_checks.checks // .required_status_checks.contexts // []) | length) > 0' 2>/dev/null || echo false)
+      ruleset=$(gh api "repos/$R/rules/branches/$B" \
+        --jq 'any(.[]?; .type == "required_status_checks"
+                        and ((.parameters.required_status_checks // []) | length) > 0)' 2>/dev/null || echo false)
+      [ "$classic" = "true" ] || [ "$ruleset" = "true" ]
     severity: warning
-    desc: "Main branch should have status check protection enabled"
+    desc: >-
+      Default branch should require status checks, enforced by classic branch
+      protection or by a ruleset. Counts the contexts rather than the presence
+      of the block: a protection object listing zero checks enforces nothing.
 
   - id: GW-09
-    type: gh_api
-    endpoint: repos/{owner}/{repo}/branches/main/protection
-    json_path: ".required_pull_request_reviews"
+    type: command
+    pattern: |
+      command -v gh >/dev/null 2>&1 || exit 0
+      gh auth status >/dev/null 2>&1 || exit 0
+      R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
+      B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
+      # A default branch may contain '/' (release/1.0); unencoded it splits the
+      # REST path and both endpoints below answer for something else. Encode
+      # into a separate variable: assigning straight back to B would turn a
+      # missing jq into an empty B, which the -n guard below then treats as
+      # "nothing to check" and passes — a protection gap reported as protected.
+      command -v jq >/dev/null 2>&1 || exit 0
+      B_ENC=$(printf %s "$B" | jq -sRr @uri 2>/dev/null) || exit 0
+      test -n "$B_ENC" || exit 0
+      B="$B_ENC"
+      test -n "$R" || exit 0
+      test -n "$B" || exit 0
+      classic=$(gh api "repos/$R/branches/$B/protection" \
+        --jq '.required_pull_request_reviews != null' 2>/dev/null || echo false)
+      ruleset=$(gh api "repos/$R/rules/branches/$B" \
+        --jq 'any(.[]?; .type == "pull_request")' 2>/dev/null || echo false)
+      [ "$classic" = "true" ] || [ "$ruleset" = "true" ]
     severity: warning
-    desc: "Main branch should require PR reviews before merging"
+    desc: >-
+      Default branch should require a pull request before merging, enforced by
+      classic branch protection or by a ruleset. Asks for the requirement's
+      presence only — `required_approving_review_count: 0` still passes, as it
+      did before; whether the count is high enough is GH-22's question.
 
   - id: GW-10
-    type: gh_api
-    endpoint: repos/{owner}/{repo}/branches/main/protection
-    json_path: ".enforce_admins.enabled"
+    type: command
+    pattern: |
+      command -v gh >/dev/null 2>&1 || exit 0
+      gh auth status >/dev/null 2>&1 || exit 0
+      R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
+      B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
+      # A default branch may contain '/' (release/1.0); unencoded it splits the
+      # REST path and both endpoints below answer for something else. Encode
+      # into a separate variable: assigning straight back to B would turn a
+      # missing jq into an empty B, which the -n guard below then treats as
+      # "nothing to check" and passes — a protection gap reported as protected.
+      command -v jq >/dev/null 2>&1 || exit 0
+      B_ENC=$(printf %s "$B" | jq -sRr @uri 2>/dev/null) || exit 0
+      test -n "$B_ENC" || exit 0
+      B="$B_ENC"
+      test -n "$R" || exit 0
+      test -n "$B" || exit 0
+      # enforce_admins is a CLASSIC-protection field with no field-for-field
+      # ruleset counterpart (a ruleset spells the same idea as an empty
+      # bypass_actors list). So: no classic protection means not applicable,
+      # not a finding — read the bypass_actors of the ruleset by hand.
+      gh api "repos/$R/branches/$B/protection" >/dev/null 2>&1 || exit 0
+      enforced=$(gh api "repos/$R/branches/$B/protection" \
+        --jq '.enforce_admins.enabled // false' 2>/dev/null || echo false)
+      [ "$enforced" = "true" ]
     severity: info
     desc: >-
-      Branch protection may apply to admins too. Org default at Netresearch
-      leaves this off so admins keep bypass for emergency response; tighten
-      to true only if your policy requires admin enforcement.
+      Classic branch protection may apply to admins too. Org default at
+      Netresearch leaves this off so admins keep bypass for emergency
+      response; tighten to true only if your policy requires admin
+      enforcement. Says nothing about a ruleset-governed branch — read
+      `gh api repos/OWNER/REPO/rulesets/ID --jq .bypass_actors` for that.
 
   # === SIGNED COMMITS REQUIREMENT ===
   - id: GW-11
-    type: gh_api
-    endpoint: repos/{owner}/{repo}/branches/main/protection
-    json_path: ".required_signatures.enabled"
+    type: command
+    pattern: |
+      command -v gh >/dev/null 2>&1 || exit 0
+      gh auth status >/dev/null 2>&1 || exit 0
+      R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
+      B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
+      # A default branch may contain '/' (release/1.0); unencoded it splits the
+      # REST path and both endpoints below answer for something else. Encode
+      # into a separate variable: assigning straight back to B would turn a
+      # missing jq into an empty B, which the -n guard below then treats as
+      # "nothing to check" and passes — a protection gap reported as protected.
+      command -v jq >/dev/null 2>&1 || exit 0
+      B_ENC=$(printf %s "$B" | jq -sRr @uri 2>/dev/null) || exit 0
+      test -n "$B_ENC" || exit 0
+      B="$B_ENC"
+      test -n "$R" || exit 0
+      test -n "$B" || exit 0
+      classic=$(gh api "repos/$R/branches/$B/protection" \
+        --jq '.required_signatures.enabled // false' 2>/dev/null || echo false)
+      ruleset=$(gh api "repos/$R/rules/branches/$B" \
+        --jq 'any(.[]?; .type == "required_signatures")' 2>/dev/null || echo false)
+      [ "$classic" = "true" ] || [ "$ruleset" = "true" ]
     severity: info
-    desc: "Main branch should require signed commits"
+    desc: >-
+      Default branch should require signed commits, enforced by classic branch
+      protection or by a ruleset (`required_signatures` in both spellings).
 
   # === EDITORCONFIG ===
   - id: GW-12
@@ -130,9 +297,12 @@ mechanical:
   # === UNRELEASED COMMITS ===
   # GW-15 was removed rather than fixed: counting commits since the last tag
   # needs a rev-range (`<tag>..HEAD`) and command substitution, and the runner's
-  # allowlist rejects both — `..` as path traversal, `$(` as command chaining.
-  # It never ran. The rule itself is intact and now lives where a full shell is
-  # available, in scripts/verify-git-workflow.sh ("Unreleased Commits").
+  # SINGLE-LINE allowlist rejects both — `..` as path traversal, `$(` as command
+  # chaining. It never ran. (A block-scalar body is screened by
+  # is_safe_script_text instead, which permits both — GW-08 uses that vehicle —
+  # so restoring GW-15 is now possible; it has not been done.) The rule itself
+  # is intact and lives where a full shell is available, in
+  # scripts/verify-git-workflow.sh ("Unreleased Commits").
 
   # === INTERMEDIATE PLANNING ARTIFACTS ===
   # `! … | grep -q .` rather than `test -z "$(…)"`: same verdict, no command
@@ -155,13 +325,13 @@ mechanical:
   # verifies is the host's answer (GW-11 / the commits API), not this one's.
   # Kept in step with signing-preflight.sh by tests/test_signing_preflight.sh.
   #
-  # HEAD only, single line, and no `$(`/`;`/`&&`: the checkpoint runner's
-  # allowlist (is_safe_eval_command in automated-assessment's
-  # run-checkpoints.sh) rejects command-chaining metacharacters outright, and a
-  # multi-line YAML scalar reaches it as an EMPTY pattern. A loop over the last
-  # five commits satisfies neither, so this mirrors the rule rather than
-  # reproducing it — the same arrangement as SR-37 in skill-repo. The full
-  # sweep lives in verify-git-workflow.sh (last 10) and signing-preflight.sh.
+  # HEAD only, single line, and no `$(`/`;`/`&&`: for a one-line pattern the
+  # checkpoint runner's allowlist (is_safe_eval_command in
+  # automated-assessment's run-checkpoints.sh) rejects command-chaining
+  # metacharacters outright. A loop over the last five commits does not fit
+  # that, so this mirrors the rule rather than reproducing it — the same
+  # arrangement as SR-37 in skill-repo. The full sweep lives in
+  # verify-git-workflow.sh (last 10) and signing-preflight.sh.
   # `sed -n -e '/^$/q' -e p` is the semicolon-free spelling of the header cut.
   - id: GW-17
     type: command
@@ -256,7 +426,9 @@ llm_reviews:
   - id: GW-24
     domain: git-workflow
     prompt: |
-      Review the PR template (.github/PULL_REQUEST_TEMPLATE.md) if it exists.
+      Review the PR template if it exists — in any location GW-05 accepts
+      (root, .github/ or docs/, either spelling, single file or
+      PULL_REQUEST_TEMPLATE/ directory), or org-wide in OWNER/.github.
 
       A good PR template should include:
       - Description/Summary section
