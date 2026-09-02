@@ -139,6 +139,9 @@ mechanical:
       gh auth status >/dev/null 2>&1 || exit 0
       R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
       B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
+      # A default branch may contain '/' (release/1.0); unencoded it splits the
+      # REST path and both endpoints below answer for something else.
+      B=$(printf %s "$B" | jq -sRr @uri)
       test -n "$R" || exit 0
       test -n "$B" || exit 0
       classic=$(gh api "repos/$R/branches/$B/protection" \
@@ -160,6 +163,9 @@ mechanical:
       gh auth status >/dev/null 2>&1 || exit 0
       R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
       B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
+      # A default branch may contain '/' (release/1.0); unencoded it splits the
+      # REST path and both endpoints below answer for something else.
+      B=$(printf %s "$B" | jq -sRr @uri)
       test -n "$R" || exit 0
       test -n "$B" || exit 0
       classic=$(gh api "repos/$R/branches/$B/protection" \
@@ -181,6 +187,9 @@ mechanical:
       gh auth status >/dev/null 2>&1 || exit 0
       R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
       B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
+      # A default branch may contain '/' (release/1.0); unencoded it splits the
+      # REST path and both endpoints below answer for something else.
+      B=$(printf %s "$B" | jq -sRr @uri)
       test -n "$R" || exit 0
       test -n "$B" || exit 0
       # enforce_admins is a CLASSIC-protection field with no field-for-field
@@ -207,6 +216,9 @@ mechanical:
       gh auth status >/dev/null 2>&1 || exit 0
       R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
       B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
+      # A default branch may contain '/' (release/1.0); unencoded it splits the
+      # REST path and both endpoints below answer for something else.
+      B=$(printf %s "$B" | jq -sRr @uri)
       test -n "$R" || exit 0
       test -n "$B" || exit 0
       classic=$(gh api "repos/$R/branches/$B/protection" \
