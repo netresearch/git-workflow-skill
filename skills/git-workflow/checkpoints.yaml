@@ -140,8 +140,14 @@ mechanical:
       R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
       B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
       # A default branch may contain '/' (release/1.0); unencoded it splits the
-      # REST path and both endpoints below answer for something else.
-      B=$(printf %s "$B" | jq -sRr @uri)
+      # REST path and both endpoints below answer for something else. Encode
+      # into a separate variable: assigning straight back to B would turn a
+      # missing jq into an empty B, which the -n guard below then treats as
+      # "nothing to check" and passes — a protection gap reported as protected.
+      command -v jq >/dev/null 2>&1 || exit 0
+      B_ENC=$(printf %s "$B" | jq -sRr @uri 2>/dev/null) || exit 0
+      test -n "$B_ENC" || exit 0
+      B="$B_ENC"
       test -n "$R" || exit 0
       test -n "$B" || exit 0
       classic=$(gh api "repos/$R/branches/$B/protection" \
@@ -164,8 +170,14 @@ mechanical:
       R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
       B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
       # A default branch may contain '/' (release/1.0); unencoded it splits the
-      # REST path and both endpoints below answer for something else.
-      B=$(printf %s "$B" | jq -sRr @uri)
+      # REST path and both endpoints below answer for something else. Encode
+      # into a separate variable: assigning straight back to B would turn a
+      # missing jq into an empty B, which the -n guard below then treats as
+      # "nothing to check" and passes — a protection gap reported as protected.
+      command -v jq >/dev/null 2>&1 || exit 0
+      B_ENC=$(printf %s "$B" | jq -sRr @uri 2>/dev/null) || exit 0
+      test -n "$B_ENC" || exit 0
+      B="$B_ENC"
       test -n "$R" || exit 0
       test -n "$B" || exit 0
       classic=$(gh api "repos/$R/branches/$B/protection" \
@@ -188,8 +200,14 @@ mechanical:
       R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
       B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
       # A default branch may contain '/' (release/1.0); unencoded it splits the
-      # REST path and both endpoints below answer for something else.
-      B=$(printf %s "$B" | jq -sRr @uri)
+      # REST path and both endpoints below answer for something else. Encode
+      # into a separate variable: assigning straight back to B would turn a
+      # missing jq into an empty B, which the -n guard below then treats as
+      # "nothing to check" and passes — a protection gap reported as protected.
+      command -v jq >/dev/null 2>&1 || exit 0
+      B_ENC=$(printf %s "$B" | jq -sRr @uri 2>/dev/null) || exit 0
+      test -n "$B_ENC" || exit 0
+      B="$B_ENC"
       test -n "$R" || exit 0
       test -n "$B" || exit 0
       # enforce_admins is a CLASSIC-protection field with no field-for-field
@@ -217,8 +235,14 @@ mechanical:
       R=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || exit 0
       B=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) || exit 0
       # A default branch may contain '/' (release/1.0); unencoded it splits the
-      # REST path and both endpoints below answer for something else.
-      B=$(printf %s "$B" | jq -sRr @uri)
+      # REST path and both endpoints below answer for something else. Encode
+      # into a separate variable: assigning straight back to B would turn a
+      # missing jq into an empty B, which the -n guard below then treats as
+      # "nothing to check" and passes — a protection gap reported as protected.
+      command -v jq >/dev/null 2>&1 || exit 0
+      B_ENC=$(printf %s "$B" | jq -sRr @uri 2>/dev/null) || exit 0
+      test -n "$B_ENC" || exit 0
+      B="$B_ENC"
       test -n "$R" || exit 0
       test -n "$B" || exit 0
       classic=$(gh api "repos/$R/branches/$B/protection" \
