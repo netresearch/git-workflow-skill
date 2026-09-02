@@ -569,6 +569,24 @@ GIT_MEASURING_READ = re.compile(
     r"|symbolic-ref|for-each-ref|ls-files|cat-file)\b"
 )
 CD_BEFORE = re.compile(r"(?:^|[|&;\n])\s*cd\s+\S")
+# A quote is not a statement separator, so `ssh host 'cd /etc && git log -1'`
+# used to read as "no cd" and drew the advisory on every remote inspection.
+# The cd counts only inside the same quoted run as the measurement, so a cd
+# belonging to an earlier payload cannot silence a later local slip.
+_QUOTES = "\"'"
+
+
+def _named_directory_before(cmd: str, end: int) -> bool:
+    """True when a `cd` names the directory the measurement at `end` runs in."""
+    segment_start, quote = 0, ""
+    for i, ch in enumerate(cmd[:end]):
+        if quote:
+            if ch == quote:
+                quote, segment_start = "", i + 1
+        elif ch in _QUOTES:
+            quote, segment_start = ch, i + 1
+    prefix = cmd[segment_start:end] if quote else cmd[:end]
+    return bool(CD_BEFORE.search(prefix) or (quote and re.match(r"\s*cd\s+\S", prefix)))
 
 
 # --- blanket `git add` (promoted from a harness-local hook, 2026-08-20) ------
@@ -644,8 +662,9 @@ def blanket_git_add(cmd: str, cwd: str = "", untracked=_untracked_files) -> str 
 
 def git_read_without_named_dir(cmd: str) -> str | None:
     """Warn when a git measurement does not say which directory it measures."""
-    m = GIT_MEASURING_READ.search(cmd or "")
-    if not m or CD_BEFORE.search(cmd[: m.start()]):
+    cmd = cmd or ""
+    m = GIT_MEASURING_READ.search(cmd)
+    if not m or _named_directory_before(cmd, m.start()):
         return None
     return (
         "This git command inherits its working directory. `cd` survives between "
@@ -772,6 +791,15 @@ def _advisory_already_fired(data, name: str) -> bool:
     — if XDG_RUNTIME_DIR names something unusable, makedirs raises before any
     marker could exist, and that has to read as "not fired", not as
     FileExistsError at the marker call.
+
+    XDG_RUNTIME_DIR is only trusted once it has been shown to work. Login
+    shells export it whether or not the directory exists, and where there is no
+    systemd user session (WSL, containers, a cron-launched session) it names a
+    path under root-owned /run/user that cannot be created. Treating that as
+    "not fired" is permanent: the advisory then repeats on every matching
+    command for the life of the session, which is the storm the once-per-
+    session rule exists to prevent. So fall back to the temp directory, and
+    keep returning False only when nowhere at all can hold a marker.
     """
     session_id = data.get("session_id") if isinstance(data, dict) else None
     if not session_id:
@@ -779,13 +807,17 @@ def _advisory_already_fired(data, name: str) -> bool:
     slug = re.sub(r"[^A-Za-z0-9_-]", "", str(session_id))
     if not slug:
         return False
-    directory = os.path.join(
-        os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(),
-        "git-workflow-advisories",
-    )
-    try:
-        os.makedirs(directory, exist_ok=True)
-    except OSError:
+    roots = [os.environ.get("XDG_RUNTIME_DIR"), tempfile.gettempdir()]
+    for root in roots:
+        if not root:
+            continue
+        directory = os.path.join(root, "git-workflow-advisories")
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except OSError:
+            continue
+        break
+    else:
         return False
     marker = os.path.join(directory, f"{slug}.{name}")
     try:
