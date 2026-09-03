@@ -601,6 +601,14 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         # the inherited directory while the gate returned None.
         "git --no-pager push origin main",
         "env X=1 git push origin main",
+        # A payload a local shell runs is a command, not text (second round).
+        "bash -c 'git push origin main'",
+        "sh -c 'git commit -m x'",
+        # git reads an empty -C as no directory change at all (git 2.55.0).
+        'git -C "" push origin main',
+        "git --git-dir= push origin main",
+        # The assignment prefixes `true`, not the write.
+        "DESTRUCTIVE_GIT_GATE_OFF=1 true; git push origin main",
         "git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'",
         "cd && git push origin main",
         "cd - && git push origin main",
@@ -620,6 +628,8 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         "cd /home/u/repo && git push origin feat/x",
         "cd /home/u/repo && git add a.txt && git commit -m x",
         "bash -c 'cd /srv/app && git pull --ff-only'",
+        # Another machine's working directory is not this gate's subject.
+        "ssh host 'git pull --ff-only'",
         "git status",
         "git log --oneline -3",
         "git -C /home/u/repo commit -m x && git log --oneline -1",
@@ -643,14 +653,15 @@ class NamedDirectoryWriteGate(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertNotEqual("deny", decision(run_hook(command)), command)
 
-    def test_a_write_inside_a_quoted_payload_is_a_known_gap(self) -> None:
-        # Quoted runs are blanked before the scan, so a commit message that
-        # names a command cannot read as one. The cost is this: a payload a
-        # wrapper would run is not seen. Reviewed and accepted on 2026-09-03 —
-        # a false deny on an ordinary commit message is the worse failure.
+    def test_a_quoted_argument_is_text_and_a_shell_payload_is_a_command(self) -> None:
+        # The distinction the second review round asked for: `-m 'fix git
+        # push'` is a message that names a command, `bash -c 'git push'` is
+        # the command. Blanking every quoted run treated both as text; the
+        # payload of a local shell is read now.
         self.assertNotEqual(
-            "deny", decision(run_hook("bash -c 'git push origin main'"))
+            "deny", decision(run_hook("git -C /r commit -m 'fix git push handling'"))
         )
+        self.assertEqual("deny", decision(run_hook("bash -c 'git push origin main'")))
 
     def test_the_message_names_the_subcommand_and_both_fixes(self) -> None:
         out = run_hook("git push origin main")

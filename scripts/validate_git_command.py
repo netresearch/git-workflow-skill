@@ -631,14 +631,26 @@ def _named_directory_before(cmd: str, end: int) -> bool:
 # assignment; anywhere else it is text. A substring test let
 # `git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'` through both gates,
 # and this repository's own commit messages name the marker (2026-09-03).
-_GATE_OFF = re.compile(
-    r"(?:^|[;&|]|\$\(|\n)\s*(?:\w+=\S*\s+)*DESTRUCTIVE_GIT_GATE_OFF=1(?=\s|$)"
+_STATEMENT_BREAK = re.compile(r"[;&|\n]|\$\(|\(")
+_GATE_OFF_PREFIX = re.compile(
+    r"\s*(?:\w+=\S*\s+)*DESTRUCTIVE_GIT_GATE_OFF=1\s*(?:\w+=\S*\s+)*"
 )
 
 
-def _gate_disabled(cmd: str) -> bool:
-    """True when the command is prefixed with the escape-hatch assignment."""
-    return bool(_GATE_OFF.search(cmd))
+def _statement_start(cmd: str, end: int) -> int:
+    """Index just past the separator that opens the statement holding `end`."""
+    breaks = [m.end() for m in _STATEMENT_BREAK.finditer(cmd[:end])]
+    return breaks[-1] if breaks else 0
+
+
+def _gate_disabled(cmd: str, end: int) -> bool:
+    """True when the escape-hatch assignment prefixes the statement at `end`.
+
+    Scoped to the statement rather than the whole payload: as a whole-command
+    test, `DESTRUCTIVE_GIT_GATE_OFF=1 true; git push origin main` disabled the
+    gate for a write the assignment never prefixed (2026-09-03 review).
+    """
+    return bool(_GATE_OFF_PREFIX.fullmatch(cmd[_statement_start(cmd, end) : end]))
 
 
 # --- blanket `git add` (promoted from a harness-local hook, 2026-08-20) ------
@@ -676,9 +688,9 @@ def _untracked_files(repo_dir: str) -> list[str] | None:
 def blanket_git_add(cmd: str, cwd: str = "", untracked=_untracked_files) -> str | None:
     """Deny `git add -A|--all|.` while untracked, non-ignored files exist."""
     cmd = QUOTED_HEREDOC.sub(" ", cmd or "")
-    if _gate_disabled(cmd):
-        return None
     for m in _GIT_ADD.finditer(cmd):
+        if _gate_disabled(cmd, m.start()):
+            continue
         rest = m.group("rest")
         try:
             tokens = shlex.split(rest)
@@ -783,34 +795,67 @@ _GIT_OPTIONS_WITH_VALUE = frozenset(
 )
 # `git` as its own token, so `env X=1 git push` is seen. A separator is not
 # required, unlike the read advisory's pattern.
-_GIT_TOKEN = re.compile(r"(?:^|[\s|&;\n(])git(?=\s)")
+_GIT_TOKEN = re.compile(r"(?:^|[\s|&;\n('\"])git(?=\s)")
 _QUOTED_RUN = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+
+# A payload a local shell runs, as opposed to a quoted argument. `ssh host
+# '…'` is deliberately absent: it runs on another machine, whose working
+# directory is not the one this gate is about.
+_LOCAL_SHELL_PAYLOAD = re.compile(
+    r"(?:^|[\s|&;(])(?:ba|z|da|k)?sh\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c\s+"
+    r"(?P<payload>'[^']*'|\"[^\"]*\")"
+)
 
 
 def _without_quoted_runs(cmd: str) -> str:
     """`cmd` with quoted runs blanked to spaces, positions preserved.
 
     A `git push` inside quotes is usually text — a commit message naming the
-    command — not a command, and `git -C /r commit -m "fix git push"` must not
-    read as an unnamed write. The cost is that a payload a wrapper would run
-    (`bash -c 'git push'`) is not seen either; a test pins both halves.
+    command — so `git -C /r commit -m "fix git push"` must not read as a
+    second, unnamed write. A payload a local shell will run is the exception
+    and stays visible, so `bash -c 'git push'` is seen as the write it is.
     """
-    return _QUOTED_RUN.sub(lambda m: " " * len(m.group(0)), cmd)
+    masked = list(_QUOTED_RUN.sub(lambda m: " " * len(m.group(0)), cmd))
+    for match in _LOCAL_SHELL_PAYLOAD.finditer(cmd):
+        start, end = match.span("payload")
+        masked[start:end] = cmd[start:end]
+    return "".join(masked)
+
+
+def _names_a_directory(option: str, operand: str) -> bool:
+    """True when the option carries a directory git will actually change to.
+
+    `git -C "" push` changes nothing — git reads an empty operand as no
+    directory at all (git 2.55.0) — so it must not count as named.
+    """
+    if option in ("-C", "--git-dir"):
+        return bool(operand.strip("\"'").strip())
+    if option.startswith(("-C=", "--git-dir=")):
+        return bool(option.split("=", 1)[1].strip("\"'").strip())
+    return False
 
 
 def _git_invocations(cmd: str):
     """Yield `(subcommand, start, names_directory)` for each `git` call."""
     scanned = _without_quoted_runs(cmd)
     for match in _GIT_TOKEN.finditer(scanned):
-        rest = re.split(r"[;\n|&]", scanned[match.end() :], maxsplit=1)[0]
+        # Found in the scanned text so quoted argument text is not read as a
+        # command; parsed from the original so an operand blanked with its
+        # quotes (`-C ""`) is still there to be judged.
+        rest = re.split(r"[;\n|&]", cmd[match.end() :], maxsplit=1)[0]
         tokens = rest.split()
         names_directory = False
         index = 0
         while index < len(tokens) and tokens[index].startswith("-"):
             option = tokens[index]
-            if option in ("-C", "--git-dir") or option.startswith("--git-dir="):
+            takes_value = option in _GIT_OPTIONS_WITH_VALUE
+            operand = (
+                tokens[index + 1] if takes_value and index + 1 < len(tokens) else ""
+            )
+            if _names_a_directory(option, operand):
                 names_directory = True
-            index += 2 if option in _GIT_OPTIONS_WITH_VALUE else 1
+            index += 2 if takes_value else 1
         subcommand = tokens[index] if index < len(tokens) else ""
         yield subcommand, match.start(), names_directory
 
@@ -818,14 +863,13 @@ def _git_invocations(cmd: str):
 def git_write_without_named_dir(cmd: str) -> str | None:
     """Deny a git write that neither uses `-C` nor follows a `cd` in its scope."""
     cmd = cmd or ""
-    if _gate_disabled(cmd):
-        return None
     unnamed = [
         subcommand
         for subcommand, start, names_directory in _git_invocations(cmd)
         if subcommand in GIT_WRITE_SUBCOMMANDS
         and not names_directory
         and not _named_directory_before(cmd, start)
+        and not _gate_disabled(cmd, start)
     ]
     if not unnamed:
         return None
