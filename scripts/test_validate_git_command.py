@@ -621,6 +621,12 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         'bash -c "echo \\"hi\\" && git push origin main"',
         # The separator that opens the statement carries no space.
         "true;git push origin main",
+        # A backtick opens a command substitution, so this runs (sixth
+        # round). `$(…)` was already a boundary; the backtick was not.
+        "echo `git push origin main`",
+        # Shell options may carry an operand before -c.
+        "bash -o pipefail -c 'git push origin main'",
+        "bash -euo pipefail -c 'git push origin main'",
         "git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'",
         "cd && git push origin main",
         "cd - && git push origin main",
@@ -655,6 +661,10 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         'bash -c "echo \\"hi\\" && cd /srv && git push origin main"',
         # No space around the separator, on either side of the check.
         "cd /home/u/repo&&git push origin main",
+        # Behind the option terminator a hyphen belongs to the name.
+        "cd -- -repo && git push origin main",
+        # The same option-bearing payload, with its own cd.
+        "bash -euo pipefail -c 'cd /srv && git push origin main'",
         "true;DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
         # A backslash escapes a quote inside a double-quoted message, so
         # the run does not end there and the rest stays text.

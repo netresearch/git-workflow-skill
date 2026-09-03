@@ -578,7 +578,7 @@ GIT_MEASURING_READ = re.compile(
 # The operand has to be a directory. `cd &&` has none; `cd -` returns to
 # $OLDPWD, which changes the directory but names none a reader can see. `--`
 # is an option terminator and the directory follows it, so it stays allowed.
-CD_BEFORE = re.compile(_SEP + r"\s*cd\s+(?:--\s+)?(?![-&|;])\S")
+CD_BEFORE = re.compile(_SEP + r"\s*cd\s+(?:--\s+\S|(?![-&|;])\S)")
 # A quote is not a statement separator, so `ssh host 'cd /etc && git log -1'`
 # read as "no cd" and drew the advisory on every remote inspection.
 _QUOTES = "\"'"
@@ -797,7 +797,7 @@ _GIT_OPTIONS_WITH_VALUE = frozenset(
 )
 # `git` as its own token, so `env X=1 git push` is seen. A separator is not
 # required, unlike the read advisory's pattern.
-_GIT_TOKEN = re.compile(r"(?:^|(?<=[\s|&;\n('\"]))git(?=\s)")
+_GIT_TOKEN = re.compile(r"(?:^|(?<=[\s|&;\n('\"`]))git(?=\s)")
 # A shell takes no escapes inside single quotes and takes them inside
 # double ones. One spelling, so the payload pattern below cannot drift
 # from it — it did, and hid a write behind an earlier escaped quote.
@@ -809,7 +809,7 @@ _QUOTED_RUN = re.compile(_QUOTED)
 # '…'` is deliberately absent: it runs on another machine, whose working
 # directory is not the one this gate is about.
 _LOCAL_SHELL_PAYLOAD = re.compile(
-    r"(?:^|[\s|&;(])(?:ba|z|da|k)?sh\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c\s+"
+    r"(?:^|[\s|&;(`])(?:ba|z|da|k)?sh\s+(?:[^'\"]*?\s)?-[A-Za-z]*c\s+"
     rf"(?P<payload>{_QUOTED})"
 )
 
