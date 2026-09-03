@@ -797,8 +797,12 @@ _GIT_OPTIONS_WITH_VALUE = frozenset(
 )
 # `git` as its own token, so `env X=1 git push` is seen. A separator is not
 # required, unlike the read advisory's pattern.
-_GIT_TOKEN = re.compile(r"(?:^|[\s|&;\n('\"])git(?=\s)")
-_QUOTED_RUN = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
+_GIT_TOKEN = re.compile(r"(?:^|(?<=[\s|&;\n('\"]))git(?=\s)")
+# A shell takes no escapes inside single quotes and takes them inside
+# double ones. One spelling, so the payload pattern below cannot drift
+# from it — it did, and hid a write behind an earlier escaped quote.
+_QUOTED = r"'[^']*'|\"(?:[^\"\\]|\\.)*\""
+_QUOTED_RUN = re.compile(_QUOTED)
 
 
 # A payload a local shell runs, as opposed to a quoted argument. `ssh host
@@ -806,7 +810,7 @@ _QUOTED_RUN = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
 # directory is not the one this gate is about.
 _LOCAL_SHELL_PAYLOAD = re.compile(
     r"(?:^|[\s|&;(])(?:ba|z|da|k)?sh\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c\s+"
-    r"(?P<payload>'[^']*'|\"[^\"]*\")"
+    rf"(?P<payload>{_QUOTED})"
 )
 
 

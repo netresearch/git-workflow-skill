@@ -616,6 +616,11 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         # `1=2` is not a shell assignment, so it prefixes nothing a
         # shell would honour (fourth round).
         "1=2 DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
+        # An escaped quote earlier in a shell payload used to end it, so
+        # the write behind it was never seen (fifth round).
+        'bash -c "echo \\"hi\\" && git push origin main"',
+        # The separator that opens the statement carries no space.
+        "true;git push origin main",
         "git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'",
         "cd && git push origin main",
         "cd - && git push origin main",
@@ -646,6 +651,11 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         'git -c "user.name=A B" -C /home/u/repo push origin main',
         # `--` terminates cd's options; the directory follows it.
         "cd -- /home/u/repo && git push origin feat/x",
+        # The same payload, with the directory named inside it.
+        'bash -c "echo \\"hi\\" && cd /srv && git push origin main"',
+        # No space around the separator, on either side of the check.
+        "cd /home/u/repo&&git push origin main",
+        "true;DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
         # A backslash escapes a quote inside a double-quoted message, so
         # the run does not end there and the rest stays text.
         'git -C /r commit -m "fix \\" git push origin main"',
