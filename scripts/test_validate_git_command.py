@@ -597,7 +597,7 @@ class NamedDirectoryWriteGate(unittest.TestCase):
 
     DENIED: ClassVar[list[str]] = [
         # Behind a global option, an environment prefix, or a `cd` that names
-        # no directory — all reviewed in on 2026-09-03, all writes that ran in
+        # no directory — all reviewed on 2026-09-03, all writes that ran in
         # the inherited directory while the gate returned None.
         "git --no-pager push origin main",
         "env X=1 git push origin main",
@@ -613,6 +613,9 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         # option value is one token (third round).
         'git "push" origin main',
         'git -c "user.name=A B" push origin main',
+        # `1=2` is not a shell assignment, so it prefixes nothing a
+        # shell would honour (fourth round).
+        "1=2 DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
         "git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'",
         "cd && git push origin main",
         "cd - && git push origin main",
@@ -641,6 +644,11 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         "FOO=1 DESTRUCTIVE_GIT_GATE_OFF=1 git commit -m x",
         "git --no-pager -C /home/u/repo push origin main",
         'git -c "user.name=A B" -C /home/u/repo push origin main',
+        # `--` terminates cd's options; the directory follows it.
+        "cd -- /home/u/repo && git push origin feat/x",
+        # A backslash escapes a quote inside a double-quoted message, so
+        # the run does not end there and the rest stays text.
+        'git -C /r commit -m "fix \\" git push origin main"',
         # The directory is named; the message only mentions a command.
         "git -C /home/u/repo commit -m 'fix git push handling'",
         "gh pr create --draft",

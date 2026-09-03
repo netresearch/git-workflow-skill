@@ -575,9 +575,10 @@ GIT_MEASURING_READ = re.compile(
     r"(ls-remote|rev-parse|rev-list|log|status|diff|show|describe"
     r"|symbolic-ref|for-each-ref|ls-files|cat-file)\b"
 )
-# The operand has to be a directory: `cd && git push` and `cd - && git push`
-# leave the inherited directory in place, and both read as named before.
-CD_BEFORE = re.compile(_SEP + r"\s*cd\s+(?![-&|;])\S")
+# The operand has to be a directory. `cd &&` has none; `cd -` returns to
+# $OLDPWD, which changes the directory but names none a reader can see. `--`
+# is an option terminator and the directory follows it, so it stays allowed.
+CD_BEFORE = re.compile(_SEP + r"\s*cd\s+(?:--\s+)?(?![-&|;])\S")
 # A quote is not a statement separator, so `ssh host 'cd /etc && git log -1'`
 # read as "no cd" and drew the advisory on every remote inspection.
 _QUOTES = "\"'"
@@ -632,8 +633,9 @@ def _named_directory_before(cmd: str, end: int) -> bool:
 # `git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'` through both gates,
 # and this repository's own commit messages name the marker (2026-09-03).
 _STATEMENT_BREAK = re.compile(r"[;&|\n]|\$\(|\(")
+_ASSIGNMENT = r"[A-Za-z_][A-Za-z0-9_]*=\S*\s+"
 _GATE_OFF_PREFIX = re.compile(
-    r"\s*(?:\w+=\S*\s+)*DESTRUCTIVE_GIT_GATE_OFF=1\s*(?:\w+=\S*\s+)*"
+    rf"\s*(?:{_ASSIGNMENT})*DESTRUCTIVE_GIT_GATE_OFF=1\s*(?:{_ASSIGNMENT})*"
 )
 
 
@@ -796,7 +798,7 @@ _GIT_OPTIONS_WITH_VALUE = frozenset(
 # `git` as its own token, so `env X=1 git push` is seen. A separator is not
 # required, unlike the read advisory's pattern.
 _GIT_TOKEN = re.compile(r"(?:^|[\s|&;\n('\"])git(?=\s)")
-_QUOTED_RUN = re.compile(r"'[^']*'|\"[^\"]*\"")
+_QUOTED_RUN = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
 
 
 # A payload a local shell runs, as opposed to a quoted argument. `ssh host
