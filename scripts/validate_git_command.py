@@ -582,6 +582,9 @@ CD_BEFORE = re.compile(_SEP + r"\s*cd\s+(?:--\s+\S|(?![-&|;])\S)")
 # A quote is not a statement separator, so `ssh host 'cd /etc && git log -1'`
 # read as "no cd" and drew the advisory on every remote inspection.
 _QUOTES = "\"'"
+# Stands in for the text of a quoted run: not a space, so the run still
+# reads as an operand, and not a letter, so it cannot spell a command.
+_RUN_FILLER = "_"
 
 
 def _same_scope_prefix(cmd: str, end: int) -> str:
@@ -606,7 +609,8 @@ def _same_scope_prefix(cmd: str, end: int) -> str:
     for i, ch in enumerate(cmd[:end]):
         if quote:
             if ch == quote:
-                out[quote_start : i + 1] = " " * (i - quote_start + 1)
+                filler = " " if i == quote_start + 1 else _RUN_FILLER
+                out[quote_start : i + 1] = filler * (i - quote_start + 1)
                 quote = ""
             continue
         if ch in _QUOTES:
@@ -636,7 +640,14 @@ def _named_directory_before(cmd: str, end: int) -> bool:
 # `=` it belongs to an array assignment, and `FOO=(x) DESTRUCTIVE_GIT_GATE_OFF=1
 # git push` is a legal prefix that the gate then failed to honour.
 _STATEMENT_BREAK = re.compile(r"[;&|\n]|\$\(|(?<![=\w])\(")
-_ASSIGNMENT = r"[A-Za-z_][A-Za-z0-9_]*=\S*\s+"
+# A shell takes no escapes inside single quotes and takes them inside
+# double ones. One spelling, so the payload pattern below cannot drift
+# from it — it did, and hid a write behind an earlier escaped quote.
+# ANSI-C quoting comes first: at the `$` the scan must take the whole
+# `$'…'`, not the `'…'` one character later. Its backslash escapes are
+# interpreted, so it reads like the double-quoted form.
+_QUOTED = r"\$'(?:[^'\\]|\\.)*'|'[^']*'|\"(?:[^\"\\]|\\.)*\""
+_ASSIGNMENT = rf"[A-Za-z_][A-Za-z0-9_]*=(?:{_QUOTED}|[^\s;&|])*\s+"
 _GATE_OFF_PREFIX = re.compile(
     rf"\s*(?:{_ASSIGNMENT})*DESTRUCTIVE_GIT_GATE_OFF=1\s*(?:{_ASSIGNMENT})*"
 )
@@ -807,13 +818,6 @@ _GIT_OPTIONS_WITH_VALUE = frozenset(
 # `git` as its own token, so `env X=1 git push` is seen. A separator is not
 # required, unlike the read advisory's pattern.
 _GIT_TOKEN = re.compile(r"(?:^|(?<=[\s|&;\n('\"`]))git(?=\s)")
-# A shell takes no escapes inside single quotes and takes them inside
-# double ones. One spelling, so the payload pattern below cannot drift
-# from it — it did, and hid a write behind an earlier escaped quote.
-# ANSI-C quoting comes first: at the `$` the scan must take the whole
-# `$'…'`, not the `'…'` one character later. Its backslash escapes are
-# interpreted, so it reads like the double-quoted form.
-_QUOTED = r"\$'(?:[^'\\]|\\.)*'|'[^']*'|\"(?:[^\"\\]|\\.)*\""
 _QUOTED_RUN = re.compile(_QUOTED)
 
 
@@ -861,7 +865,9 @@ def _git_invocations(cmd: str):
         # Found in the scanned text so quoted argument text is not read as a
         # command; parsed from the original so an operand blanked with its
         # quotes (`-C ""`) is still there to be judged.
-        rest = re.split(r"[;\n|&]", cmd[match.end() :], maxsplit=1)[0]
+        tail = scanned[match.end() :]
+        stop = re.search(r"[;\n|&]", tail)
+        rest = cmd[match.end() : match.end() + (stop.start() if stop else len(tail))]
         # Shell rules, not whitespace: `git "push" origin main` kept its quotes
         # and `git -c "user.name=A B" push` split the value, so in both the
         # subcommand read as something that is not a write (2026-09-03 review).

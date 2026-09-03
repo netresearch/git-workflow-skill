@@ -635,6 +635,9 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         "cd\ngit push origin main",
         'cd "" ; git push origin main',
         "(git push origin main)",
+        # A separator inside a quoted option value is not a separator
+        # (ninth round); the subcommand behind it was never reached.
+        'git -c "x=a;b" push origin main',
         "git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'",
         "cd && git push origin main",
         "cd - && git push origin main",
@@ -682,6 +685,12 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         "FOO='(x)' DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
         "(DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main)",
         "(cd /home/u/repo && git push origin main)",
+        # A quoted path is the ordinary way to write one, spaces or not.
+        'cd "/abs/path with spaces" && git push origin main',
+        'cd "/home/u/repo" && git push origin main',
+        "cd '/home/u/repo' && git push origin main",
+        # An assignment value may be quoted and hold spaces.
+        'FOO="a b" DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main',
         "true;DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
         # A backslash escapes a quote inside a double-quoted message, so
         # the run does not end there and the rest stays text.
