@@ -575,7 +575,9 @@ GIT_MEASURING_READ = re.compile(
     r"(ls-remote|rev-parse|rev-list|log|status|diff|show|describe"
     r"|symbolic-ref|for-each-ref|ls-files|cat-file)\b"
 )
-CD_BEFORE = re.compile(_SEP + r"\s*cd\s+\S")
+# The operand has to be a directory: `cd && git push` and `cd - && git push`
+# leave the inherited directory in place, and both read as named before.
+CD_BEFORE = re.compile(_SEP + r"\s*cd\s+(?![-&|;])\S")
 # A quote is not a statement separator, so `ssh host 'cd /etc && git log -1'`
 # read as "no cd" and drew the advisory on every remote inspection.
 _QUOTES = "\"'"
@@ -624,6 +626,21 @@ def _named_directory_before(cmd: str, end: int) -> bool:
     return bool(CD_BEFORE.search(_same_scope_prefix(cmd, end)))
 
 
+# The escape hatch shared by the state-changing gates. It counts only at the
+# start of a command, where a shell would read it as an environment
+# assignment; anywhere else it is text. A substring test let
+# `git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'` through both gates,
+# and this repository's own commit messages name the marker (2026-09-03).
+_GATE_OFF = re.compile(
+    r"(?:^|[;&|]|\$\(|\n)\s*(?:\w+=\S*\s+)*DESTRUCTIVE_GIT_GATE_OFF=1(?=\s|$)"
+)
+
+
+def _gate_disabled(cmd: str) -> bool:
+    """True when the command is prefixed with the escape-hatch assignment."""
+    return bool(_GATE_OFF.search(cmd))
+
+
 # --- blanket `git add` (promoted from a harness-local hook, 2026-08-20) ------
 # `git add -A` / `git add .` / `--all` stages every untracked, non-ignored file
 # in the tree. Named paths are the rule (CLAUDE.md, Git / PR / release); the
@@ -659,7 +676,7 @@ def _untracked_files(repo_dir: str) -> list[str] | None:
 def blanket_git_add(cmd: str, cwd: str = "", untracked=_untracked_files) -> str | None:
     """Deny `git add -A|--all|.` while untracked, non-ignored files exist."""
     cmd = QUOTED_HEREDOC.sub(" ", cmd or "")
-    if "DESTRUCTIVE_GIT_GATE_OFF=1" in cmd:
+    if _gate_disabled(cmd):
         return None
     for m in _GIT_ADD.finditer(cmd):
         rest = m.group("rest")
@@ -727,22 +744,88 @@ def git_read_without_named_dir(cmd: str) -> str | None:
 # wrong repository does not fail; it succeeds there. The rule ("every call
 # names its directory") had been written down for weeks and still lapsed
 # under a long chain of commands, which is the case for a gate.
-GIT_STATE_WRITE = re.compile(
-    _SEP + r"\s*git\s+(?!-C\b)(?!--git-dir)(?:-c\s+\S+\s+)*"
-    r"(commit|push|pull|merge|rebase|cherry-pick|revert|reset|checkout|switch"
-    r"|restore|stash|tag|branch|worktree|am|apply|rm|mv)\b"
+GIT_WRITE_SUBCOMMANDS = frozenset(
+    {
+        "commit",
+        "push",
+        "pull",
+        "merge",
+        "rebase",
+        "cherry-pick",
+        "revert",
+        "reset",
+        "checkout",
+        "switch",
+        "restore",
+        "stash",
+        "tag",
+        "branch",
+        "worktree",
+        "am",
+        "apply",
+        "rm",
+        "mv",
+    }
 )
+# Global options are skipped rather than enumerated: a pattern that knew only
+# `-c` missed the write in `git --no-pager push origin main`. These take a
+# separate value, so the value is not mistaken for the subcommand.
+_GIT_OPTIONS_WITH_VALUE = frozenset(
+    {
+        "-C",
+        "-c",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--exec-path",
+        "--config-env",
+    }
+)
+# `git` as its own token, so `env X=1 git push` is seen. A separator is not
+# required, unlike the read advisory's pattern.
+_GIT_TOKEN = re.compile(r"(?:^|[\s|&;\n(])git(?=\s)")
+_QUOTED_RUN = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+
+def _without_quoted_runs(cmd: str) -> str:
+    """`cmd` with quoted runs blanked to spaces, positions preserved.
+
+    A `git push` inside quotes is usually text — a commit message naming the
+    command — not a command, and `git -C /r commit -m "fix git push"` must not
+    read as an unnamed write. The cost is that a payload a wrapper would run
+    (`bash -c 'git push'`) is not seen either; a test pins both halves.
+    """
+    return _QUOTED_RUN.sub(lambda m: " " * len(m.group(0)), cmd)
+
+
+def _git_invocations(cmd: str):
+    """Yield `(subcommand, start, names_directory)` for each `git` call."""
+    scanned = _without_quoted_runs(cmd)
+    for match in _GIT_TOKEN.finditer(scanned):
+        rest = re.split(r"[;\n|&]", scanned[match.end() :], maxsplit=1)[0]
+        tokens = rest.split()
+        names_directory = False
+        index = 0
+        while index < len(tokens) and tokens[index].startswith("-"):
+            option = tokens[index]
+            if option in ("-C", "--git-dir") or option.startswith("--git-dir="):
+                names_directory = True
+            index += 2 if option in _GIT_OPTIONS_WITH_VALUE else 1
+        subcommand = tokens[index] if index < len(tokens) else ""
+        yield subcommand, match.start(), names_directory
 
 
 def git_write_without_named_dir(cmd: str) -> str | None:
     """Deny a git write that neither uses `-C` nor follows a `cd` in its scope."""
     cmd = cmd or ""
-    if "DESTRUCTIVE_GIT_GATE_OFF=1" in cmd:
+    if _gate_disabled(cmd):
         return None
     unnamed = [
-        m.group(1)
-        for m in GIT_STATE_WRITE.finditer(cmd)
-        if not _named_directory_before(cmd, m.start())
+        subcommand
+        for subcommand, start, names_directory in _git_invocations(cmd)
+        if subcommand in GIT_WRITE_SUBCOMMANDS
+        and not names_directory
+        and not _named_directory_before(cmd, start)
     ]
     if not unnamed:
         return None

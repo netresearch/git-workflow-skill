@@ -586,10 +586,6 @@ class NowhereToStoreAMarker(unittest.TestCase):
             self.assertFalse((Path(fallback) / "git-workflow-advisories").exists())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class NamedDirectoryWriteGate(unittest.TestCase):
     """A git write must say where it runs; a read only gets the advisory.
 
@@ -600,6 +596,14 @@ class NamedDirectoryWriteGate(unittest.TestCase):
     """
 
     DENIED: ClassVar[list[str]] = [
+        # Behind a global option, an environment prefix, or a `cd` that names
+        # no directory — all reviewed in on 2026-09-03, all writes that ran in
+        # the inherited directory while the gate returned None.
+        "git --no-pager push origin main",
+        "env X=1 git push origin main",
+        "git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'",
+        "cd && git push origin main",
+        "cd - && git push origin main",
         "git commit -S -s -m 'feat: x'",
         "git push origin feat/x",
         "git push --force-with-lease origin feat/x",
@@ -620,6 +624,10 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         "git log --oneline -3",
         "git -C /home/u/repo commit -m x && git log --oneline -1",
         "DESTRUCTIVE_GIT_GATE_OFF=1 git commit -m x",
+        "FOO=1 DESTRUCTIVE_GIT_GATE_OFF=1 git commit -m x",
+        "git --no-pager -C /home/u/repo push origin main",
+        # The directory is named; the message only mentions a command.
+        "git -C /home/u/repo commit -m 'fix git push handling'",
         "gh pr create --draft",
     ]
 
@@ -635,8 +643,21 @@ class NamedDirectoryWriteGate(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertNotEqual("deny", decision(run_hook(command)), command)
 
+    def test_a_write_inside_a_quoted_payload_is_a_known_gap(self) -> None:
+        # Quoted runs are blanked before the scan, so a commit message that
+        # names a command cannot read as one. The cost is this: a payload a
+        # wrapper would run is not seen. Reviewed and accepted on 2026-09-03 —
+        # a false deny on an ordinary commit message is the worse failure.
+        self.assertNotEqual(
+            "deny", decision(run_hook("bash -c 'git push origin main'"))
+        )
+
     def test_the_message_names_the_subcommand_and_both_fixes(self) -> None:
         out = run_hook("git push origin main")
         self.assertIn("`git push`", out)
         self.assertIn("git -C /abs/path <subcommand>", out)
         self.assertIn("cd /abs/path && git <subcommand>", out)
+
+
+if __name__ == "__main__":
+    unittest.main()
