@@ -339,6 +339,69 @@ Three rules follow, and they cost nothing:
 
 Recovery is waiting: `gh api rate_limit --jq '.resources.graphql.reset'` is an epoch timestamp — sleep to it in **one** background command rather than retrying into the limit.
 
+### What still works while GraphQL is drained
+
+`pr-status.sh` is GraphQL end to end, so it exits `GraphQL query failed` and the
+whole finish flow appears blocked. Most of it is not. `rate_limit` can even
+report `5000/5000` for both resources while GraphQL refuses — the counter is not
+where a secondary limit shows up, so probe it directly instead of believing the
+number, and classify the failure rather than assuming the worst: a 401, a DNS
+error and a throttle all make `gh api` exit non-zero, and only one of them is
+worth waiting an hour for.
+
+```bash
+err=$(gh api graphql -f query='{viewer{login}}' 2>&1 >/dev/null) && echo up \
+  || case "$err" in
+       *RATE_LIMIT*|*"rate limit"*|*"secondary rate"*) echo throttled ;;
+       *) echo "graphql down, not throttled: $err" ;;
+     esac
+```
+
+Answerable from REST, which is usually still healthy:
+
+| Question | REST call |
+|---|---|
+| head SHA, base, draft state | `gh api repos/$R/pulls/$PR` |
+| check runs on the head | `gh api "repos/$R/commits/$SHA/check-runs?per_page=100" --paginate` |
+| legacy commit statuses | `gh api "repos/$R/commits/$SHA/status?per_page=100" --paginate` |
+| reviews submitted | `gh api "repos/$R/pulls/$PR/reviews?per_page=100" --paginate` |
+| reviewers still requested | `gh api repos/$R/pulls/$PR/requested_reviewers` |
+| effective rulesets on the base | `gh api "repos/$R/rules/branches/$ENC_BASE?per_page=100" --paginate` |
+| merge (direct only) | `gh api repos/$R/pulls/$PR/merge -X PUT -f sha="$SHA" -f merge_method=merge` |
+
+Four details the table hides.
+
+**Checks are two endpoints, not one.** `check-runs` does not carry legacy commit
+statuses, so a repository whose required contexts are classic statuses looks
+green with none of them read. Query both.
+
+**Every one of these paginates.** Default page size is 30 — `reviews`,
+`check-runs` and the rulesets array all truncate silently, which is the same
+trap this file warns about elsewhere.
+
+**The rulesets path takes the branch as a path segment**, so a base like
+`release/2.1` must be URI-encoded first (`pr-status.sh` encodes it for exactly
+this reason):
+
+```bash
+ENC_BASE=$(printf %s "$BASE" | jq -sRr @uri)
+```
+
+**Pin the head when merging through REST.** Without `-f sha="$SHA"` the endpoint
+merges whatever the head is at the moment it runs, so a push that lands between
+the gate check and the call is merged unreviewed. This row is also
+direct-merge-only: the endpoint has no merge-queue mode, so a queue repository
+needs its own flow rather than this fallback.
+
+The one thing with **no** REST equivalent is converting a draft to ready
+(`markPullRequestReadyForReview`); review-thread resolution
+(`resolveReviewThread`) is GraphQL-only too. Requesting a review is not on that
+list — `POST /pulls/$PR/requested_reviewers` works on a draft, and Copilot does
+review drafts, so a bot-review ruleset is not automatically a hard stop while
+the budget is out. Confirm the request off the **timeline**, not off
+`requested_reviewers`: the response body does not echo a bot reviewer, and a
+reviewer that has started drops off that list without having submitted.
+
 ### "Has it merged yet?" costs nothing — ask git, not the API
 
 The three rules above make a watcher cheaper. This one makes the commonest watcher free. Once a PR is queued the only question left is whether its head landed on the base, and git answers that with no API budget at all:

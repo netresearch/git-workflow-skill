@@ -275,6 +275,63 @@ gh api "repos/$R/code-scanning/alerts?tool_name=<tool>&pr=$PR&state=open" \
 If the paths and lines are yours, the finding is yours — whatever the local run
 says.
 
+## A presence check is not a correctness check: assert the count, not the existence
+
+A pipeline gate written as "the thing is there" passes for every wrong number of
+the thing. One repository ended its publish job with
+
+```bash
+grep -q '<select name="repository"' public/index.html \
+  || { echo "dropdown injection failed" >&2; exit 1; }
+```
+
+which is satisfied by one copy and equally by the 190 that had silently
+accumulated, because the injecting script was not idempotent and each run
+appended another. The gate existed precisely to catch a broken injection and was
+structurally blind to the failure that happened. It shipped 496 KB index pages
+for months.
+
+Where a build injects, generates or de-duplicates something, the assertion is a
+count and an equality, across every artifact rather than the one that happens to
+be convenient:
+
+```bash
+seen=0
+while IFS= read -r -d '' f; do
+  seen=$((seen + 1))
+  n=$(grep -o '<select name="repository"' "$f" | wc -l)
+  [ "$n" -eq 1 ] || { echo "$f carries $n, expected exactly 1" >&2; exit 1; }
+done < <(find public -name index.html -print0)
+[ "$seen" -gt 0 ] || { echo "no index.html found — nothing was checked" >&2; exit 1; }
+```
+
+Three shapes in that loop, each of which has silently broken a gate:
+
+- **`-print0` with a NUL-delimited read**, not `for f in $(find …)`. The
+  unquoted substitution word-splits, so a path containing a space becomes two
+  paths and the gate checks neither.
+- **Process substitution, not a pipe.** `find … | while …` puts the loop in a
+  subshell, where `exit 1` ends the subshell and leaves the caller running — the
+  gate then reports its failure to nobody, unless `set -e` and `pipefail` happen
+  to be on in whatever copied it.
+- **Fail closed on an empty list.** Finding no artifacts is not a pass. A gate
+  that validated zero files is exactly as green as one that validated all of
+  them, which is how a renamed output directory goes unnoticed.
+
+Two habits follow:
+
+- **`grep -q` answers "at least one".** Count instead — but count *matches*:
+  `grep -c` counts matching **lines**, so generated or minified output that puts
+  several occurrences on one line reads as 1 and the gate passes on exactly the
+  artifact most likely to be wrong. `grep -o … | wc -l` is the one that answers
+  the question asked.
+- **Prove the guard fails.** Disable the fix, run the gate, watch it exit
+  non-zero with the message you expect, restore. A gate never seen red is a
+  claim; the run that reddens it is the evidence. The same session's idempotency
+  fix passed its own count check while still growing the file by one byte per
+  run — the count was right and the artifact was not, which only a
+  byte-comparison of two consecutive runs surfaced.
+
 ## Git Mirror Repositories
 
 Use `git clone --mirror` + `git push --mirror` to keep a target repository in sync with an
