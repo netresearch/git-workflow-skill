@@ -100,3 +100,37 @@ Grep for it when auditing:
 ```bash
 gh pr view "$PR" --repo "$R" --json body --jq .body | grep -c '^Signed-off-by:'
 ```
+
+## A negative capability claim needs the call and the response that produced it
+
+"X cannot be done" is the most expensive sentence to get wrong in a skill,
+because nobody re-tests it. Every reader after you inherits a limitation that
+may not exist, and the ones who would have discovered otherwise are precisely
+the ones who now do not try.
+
+It is also the sentence that hardens fastest. One session went, across three
+restatements and about ninety minutes:
+
+1. an observation — a request returned an empty body;
+2. a hedge in chat — "apparently the request did not register";
+3. a flat statement merged into a public skill — "a review cannot be requested
+   on a draft, so the ruleset is a hard stop".
+
+A reviewer refuted it the same day, and the counter-example was **in that very
+session**: a review had been requested on a draft and delivered. The empty body
+was the API not echoing a bot reviewer; the timeline showed the request the
+whole time.
+
+So, when writing a limitation into a reference:
+
+- **Cite the call and the response.** The command, the status, the body. A claim
+  with its evidence attached invites correction; one without it invites belief.
+- **Distinguish "did not work here" from "cannot be done".** An empty response,
+  a 404 and a silent no-op are all observations about one attempt.
+- **Write the hedge if it is a hedge.** "Observed once, not confirmed" costs one
+  clause and keeps the next reader looking.
+- **Prefer the positive form.** "Confirm the request off the timeline" is both
+  true and useful; "requests do not register on drafts" was neither.
+
+The same applies to a limitation you are about to route around: if the
+workaround is expensive, spend two minutes proving the limitation first.
