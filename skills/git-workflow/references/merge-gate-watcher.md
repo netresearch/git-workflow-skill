@@ -357,9 +357,19 @@ Answerable from REST, which is usually still healthy:
 |---|---|
 | head SHA, base, draft state | `gh api repos/$R/pulls/$PR` |
 | every check on the head | `gh api "repos/$R/commits/$SHA/check-runs?per_page=100" --paginate` |
-| reviews submitted | `gh api repos/$R/pulls/$PR/reviews` |
+| reviews submitted | `gh api repos/$R/pulls/$PR/reviews --paginate` |
 | reviewers still requested | `gh api repos/$R/pulls/$PR/requested_reviewers` |
-| effective rulesets on the base | `gh api repos/$R/rules/branches/$BASE` |
+| effective rulesets on the base | `gh api repos/$R/rules/branches/$ENC_BASE` (see below) |
+
+Two details the table hides. `reviews` is paginated and defaults to 30, so a PR
+with a long review history answers with a prefix that looks complete — the same
+truncation trap as unpaginated check-runs. And the rulesets endpoint takes the
+branch as a path segment, so a base like `release/2.1` must be URI-encoded first
+(`pr-status.sh` encodes it for exactly this reason):
+
+```bash
+ENC_BASE=$(printf %s "$BASE" | jq -sRr @uri)
+```
 | merge | `gh api repos/$R/pulls/$PR/merge -X PUT -f merge_method=merge` |
 
 Two things have **no** REST equivalent and genuinely have to wait: converting a

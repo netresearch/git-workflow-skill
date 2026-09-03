@@ -296,16 +296,23 @@ count and an equality, across every artifact rather than the one that happens to
 be convenient:
 
 ```bash
-for f in $(find public -name index.html); do
+find public -name index.html -print0 | while IFS= read -r -d '' f; do
   n=$(grep -o '<select name="repository"' "$f" | wc -l)
   [ "$n" -eq 1 ] || { echo "$f carries $n, expected exactly 1" >&2; exit 1; }
 done
 ```
 
+`-print0` with a NUL-delimited read, not `for f in $(find …)`: the unquoted
+substitution word-splits, so a path containing a space silently becomes two
+paths and the gate checks neither of them.
+
 Two habits follow:
 
-- **`grep -q` answers "at least one".** Reach for `grep -c` plus a comparison
-  whenever "none" and "many" are both wrong.
+- **`grep -q` answers "at least one".** Count instead — but count *matches*:
+  `grep -c` counts matching **lines**, so generated or minified output that puts
+  several occurrences on one line reads as 1 and the gate passes on exactly the
+  artifact most likely to be wrong. `grep -o … | wc -l` is the one that answers
+  the question asked.
 - **Prove the guard fails.** Disable the fix, run the gate, watch it exit
   non-zero with the message you expect, restore. A gate never seen red is a
   claim; the run that reddens it is the evidence. The same session's idempotency
