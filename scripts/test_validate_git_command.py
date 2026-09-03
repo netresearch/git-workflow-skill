@@ -627,6 +627,13 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         # Shell options may carry an operand before -c.
         "bash -o pipefail -c 'git push origin main'",
         "bash -euo pipefail -c 'git push origin main'",
+        # ANSI-C quoting is still a payload a shell runs (seventh round).
+        "bash -c $'git push origin main'",
+        # Reported as bypasses and refused already: a bare cd has no
+        # operand to match, and an empty one is blanked with its quotes,
+        # leaving the separator behind. Pinned so it stays that way.
+        "cd\ngit push origin main",
+        'cd "" ; git push origin main',
         "git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'",
         "cd && git push origin main",
         "cd - && git push origin main",
@@ -665,6 +672,9 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         "cd -- -repo && git push origin main",
         # The same option-bearing payload, with its own cd.
         "bash -euo pipefail -c 'cd /srv && git push origin main'",
+        "bash -c $'cd /srv && git push origin main'",
+        # An ANSI-C message is text, like any other quoted argument.
+        "git -C /r commit -m $'fix git push\\nsecond line'",
         "true;DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
         # A backslash escapes a quote inside a double-quoted message, so
         # the run does not end there and the rest stays text.

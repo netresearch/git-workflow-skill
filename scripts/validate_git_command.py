@@ -801,7 +801,10 @@ _GIT_TOKEN = re.compile(r"(?:^|(?<=[\s|&;\n('\"`]))git(?=\s)")
 # A shell takes no escapes inside single quotes and takes them inside
 # double ones. One spelling, so the payload pattern below cannot drift
 # from it — it did, and hid a write behind an earlier escaped quote.
-_QUOTED = r"'[^']*'|\"(?:[^\"\\]|\\.)*\""
+# ANSI-C quoting comes first: at the `$` the scan must take the whole
+# `$'…'`, not the `'…'` one character later. Its backslash escapes are
+# interpreted, so it reads like the double-quoted form.
+_QUOTED = r"\$'(?:[^'\\]|\\.)*'|'[^']*'|\"(?:[^\"\\]|\\.)*\""
 _QUOTED_RUN = re.compile(_QUOTED)
 
 
