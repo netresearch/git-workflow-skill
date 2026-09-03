@@ -472,6 +472,23 @@ class NamedDirectoryAdvisoryScope(unittest.TestCase):
     def test_a_local_measurement_after_a_remote_one_still_warns(self) -> None:
         self.assertTrue(self.fired("ssh host 'git status'; git log --oneline -1"))
 
+    def test_a_closed_subshell_cd_does_not_reach_the_next_command(self) -> None:
+        # `cd` inside a subshell dies with the subshell. Accepting it for a
+        # measurement that runs after the closing paren is the advisory going
+        # quiet on precisely the slip it exists for.
+        self.assertTrue(self.fired("(cd /etc && ls); git status"))
+        self.assertTrue(self.fired("x=$(cd /etc && pwd); git status"))
+
+    def test_a_cd_deeper_inside_a_closed_payload_does_not_leak_out(self) -> None:
+        # Same for a remote payload: the earlier test only covered a `cd` at
+        # the start of the quoted run, which no separator preceded anyway.
+        self.assertTrue(self.fired('ssh host "echo ok; cd /etc && ls"; git status'))
+
+    def test_every_measurement_is_checked_not_just_the_first(self) -> None:
+        # The remote measurement is named by its own `cd`; the local one that
+        # follows is not, and it is the one worth warning about.
+        self.assertTrue(self.fired("ssh host 'cd /etc && git status'; git status"))
+
 
 class NowhereToStoreAMarker(unittest.TestCase):
     """When no location can hold a marker, the warning still reaches the author.
@@ -494,6 +511,50 @@ class NowhereToStoreAMarker(unittest.TestCase):
             second = vgc._advisory_already_fired(payload, "git_read_without_named_dir")
         self.assertFalse(first)
         self.assertFalse(second, "storage failure must never read as 'already seen'")
+
+    def test_a_root_that_takes_the_directory_but_refuses_the_marker_falls_through(
+        self,
+    ) -> None:
+        # makedirs succeeding does not mean the marker can be written: the
+        # advisory directory may exist and be unwritable. Committing to the
+        # first root that accepts makedirs leaves the dedupe off for good,
+        # which is the storm this whole mechanism exists to prevent.
+        import validate_git_command as vgc
+
+        with (
+            tempfile.TemporaryDirectory() as runtime,
+            tempfile.TemporaryDirectory() as fallback,
+        ):
+            hostile = Path(runtime) / "git-workflow-advisories"
+            hostile.mkdir()
+            hostile.chmod(0o500)  # listable, not writable
+            try:
+                with (
+                    unittest.mock.patch.dict(
+                        vgc.os.environ, {"XDG_RUNTIME_DIR": runtime}
+                    ),
+                    unittest.mock.patch.object(
+                        vgc.tempfile, "gettempdir", return_value=fallback
+                    ),
+                ):
+                    first = vgc._advisory_already_fired(
+                        {"session_id": "sess-fall"}, "git_read_without_named_dir"
+                    )
+                    second = vgc._advisory_already_fired(
+                        {"session_id": "sess-fall"}, "git_read_without_named_dir"
+                    )
+            finally:
+                # restore before the TemporaryDirectory tries to remove it
+                hostile.chmod(0o700)
+            self.assertFalse(first)
+            self.assertTrue(second, "the fallback root must still dedupe")
+            self.assertTrue(
+                (
+                    Path(fallback)
+                    / "git-workflow-advisories"
+                    / "sess-fall.git_read_without_named_dir"
+                ).exists()
+            )
 
     def test_the_runtime_dir_is_preferred_when_it_works(self) -> None:
         import validate_git_command as vgc
