@@ -32,8 +32,20 @@ WRAPPED = (
 CASES = [
     # (name, expected, command)
     # The bug that made every check below unreachable: the payload is nested.
-    ("nested payload reaches the checks", "REMINDER", 'git commit -m "stuff"'),
-    ("conventional message stays quiet", "PASS", 'git commit -m "fix: handle null"'),
+    # A write names its directory (the named-directory gate denies it otherwise);
+    # the cd form keeps the legacy `git <verb>` patterns these two cases probe.
+    (
+        "nested payload reaches the checks",
+        "REMINDER",
+        'cd /repo && git commit -m "stuff"',
+    ),
+    (
+        "conventional message stays quiet",
+        "PASS",
+        'cd /repo && git commit -m "fix: handle null"',
+    ),
+    ("a write without a named directory is denied", "DENY", "git push origin main"),
+    ("the same write with -C passes", "PASS", "git -C /repo push origin feat/x"),
     (
         "reply path without the PR number",
         "DENY",

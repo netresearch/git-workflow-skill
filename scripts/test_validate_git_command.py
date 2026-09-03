@@ -89,7 +89,7 @@ class MergeReadinessGate(unittest.TestCase):
         ),
         (
             "the word in prose, not a query",
-            'git commit -m "explain why mergeStateStatus alone is not enough"',
+            'git -C /repo commit -m "explain why mergeStateStatus alone is not enough"',
         ),
     ]
 
@@ -110,18 +110,23 @@ class MergeReadinessGate(unittest.TestCase):
 
 class ExistingChecks(unittest.TestCase):
     def test_non_conventional_commit_message_warns(self) -> None:
-        self.assertIn("onventional", run_hook('git commit -m "fixed stuff"'))
+        self.assertIn(
+            "onventional", run_hook('cd /repo && git commit -m "fixed stuff"')
+        )
 
     def test_conventional_commit_message_stays_quiet(self) -> None:
         self.assertNotIn(
-            "onventional", run_hook('git commit -m "fix: correct the tally"')
+            "onventional",
+            run_hook('cd /repo && git commit -m "fix: correct the tally"'),
         )
 
     def test_force_push_warns(self) -> None:
-        self.assertIn("Force push", run_hook("git push -f origin main"))
+        self.assertIn("Force push", run_hook("cd /repo && git push -f origin main"))
 
     def test_hard_reset_warns(self) -> None:
-        self.assertIn("Hard reset", run_hook("git reset --hard origin/main"))
+        self.assertIn(
+            "Hard reset", run_hook("cd /repo && git reset --hard origin/main")
+        )
 
     def test_unrelated_command_produces_nothing(self) -> None:
         self.assertEqual("", run_hook("ls -la"))
@@ -274,7 +279,7 @@ class ForgeBodyLanguageGate(unittest.TestCase):
 
     def test_commit_message_is_not_a_forge_body(self) -> None:
         # Commit messages are out of scope for this gate; only forge bodies.
-        out = run_hook(f"git commit -m 'feat: x\n\n{self.GERMAN}'")
+        out = run_hook(f"git -C /repo commit -m 'feat: x\n\n{self.GERMAN}'")
         self.assertNotEqual("deny", decision(out))
 
 
@@ -583,3 +588,55 @@ class NowhereToStoreAMarker(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NamedDirectoryWriteGate(unittest.TestCase):
+    """A git write must say where it runs; a read only gets the advisory.
+
+    The read advisory fires once per session and is easy to read past; on
+    2026-09-03 a `git push` without a directory ran in the wrong checkout and
+    was saved only by a branch that did not exist there. Writes are denied
+    until they name their directory with `-C` or a `cd` in the same scope.
+    """
+
+    DENIED: ClassVar[list[str]] = [
+        "git commit -S -s -m 'feat: x'",
+        "git push origin feat/x",
+        "git push --force-with-lease origin feat/x",
+        "git reset --hard HEAD~1",
+        "git cherry-pick abc1234",
+        "git rebase -S origin/main",
+        "git worktree remove ../x",
+        "git -c commit.gpgsign=true commit -m x",
+        "git add -A; git commit -m x",
+    ]
+    ALLOWED: ClassVar[list[str]] = [
+        "git -C /home/u/repo commit -m x",
+        "git -C .bare worktree add ../x -b x origin/main",
+        "cd /home/u/repo && git push origin feat/x",
+        "cd /home/u/repo && git add a.txt && git commit -m x",
+        "bash -c 'cd /srv/app && git pull --ff-only'",
+        "git status",
+        "git log --oneline -3",
+        "git -C /home/u/repo commit -m x && git log --oneline -1",
+        "DESTRUCTIVE_GIT_GATE_OFF=1 git commit -m x",
+        "gh pr create --draft",
+    ]
+
+    def test_writes_without_a_named_directory_are_denied(self) -> None:
+        for command in self.DENIED:
+            with self.subTest(command=command):
+                out = run_hook(command)
+                self.assertEqual("deny", decision(out), out)
+                self.assertIn("without naming its directory", out)
+
+    def test_named_directories_reads_and_the_escape_hatch_pass(self) -> None:
+        for command in self.ALLOWED:
+            with self.subTest(command=command):
+                self.assertNotEqual("deny", decision(run_hook(command)), command)
+
+    def test_the_message_names_the_subcommand_and_both_fixes(self) -> None:
+        out = run_hook("git push origin main")
+        self.assertIn("`git push`", out)
+        self.assertIn("git -C /abs/path <subcommand>", out)
+        self.assertIn("cd /abs/path && git <subcommand>", out)

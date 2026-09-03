@@ -718,6 +718,49 @@ def git_read_without_named_dir(cmd: str) -> str | None:
     )
 
 
+# --- git writes that do not name their directory (2026-09-03) ---------------
+# The read advisory above tells the author once per session; a write cannot
+# afford a warning it may not read. `cd` survives between tool calls, so a
+# `git push` that omits its directory runs wherever the previous call stopped
+# — on 2026-09-03 in a simulator checkout instead of the addon worktree, and
+# only a branch that did not exist there kept it from pushing. A write in the
+# wrong repository does not fail; it succeeds there. The rule ("every call
+# names its directory") had been written down for weeks and still lapsed
+# under a long chain of commands, which is the case for a gate.
+GIT_STATE_WRITE = re.compile(
+    _SEP + r"\s*git\s+(?!-C\b)(?!--git-dir)(?:-c\s+\S+\s+)*"
+    r"(commit|push|pull|merge|rebase|cherry-pick|revert|reset|checkout|switch"
+    r"|restore|stash|tag|branch|worktree|am|apply|rm|mv)\b"
+)
+
+
+def git_write_without_named_dir(cmd: str) -> str | None:
+    """Deny a git write that neither uses `-C` nor follows a `cd` in its scope."""
+    cmd = cmd or ""
+    if "DESTRUCTIVE_GIT_GATE_OFF=1" in cmd:
+        return None
+    unnamed = [
+        m.group(1)
+        for m in GIT_STATE_WRITE.finditer(cmd)
+        if not _named_directory_before(cmd, m.start())
+    ]
+    if not unnamed:
+        return None
+    return (
+        f"`git {unnamed[0]}` changes state without naming its directory. `cd` "
+        "survives between tool calls, so this runs wherever the last call left "
+        "off — and in the wrong repository it does not fail, it succeeds there "
+        "(2026-09-03: a `git push` ran in a simulator checkout instead of the "
+        "addon worktree; only a branch that did not exist there stopped it). "
+        "Name the directory:\n\n"
+        "  git -C /abs/path <subcommand>\n"
+        "  cd /abs/path && git <subcommand>\n\n"
+        "Reads keep their once-per-session advisory. If running in the "
+        "inherited directory really is the point, prefix the command with "
+        "DESTRUCTIVE_GIT_GATE_OFF=1."
+    )
+
+
 def check_conventional_commit(message: str) -> str | None:
     """Validate commit message follows conventional commits."""
     if not re.match(CONVENTIONAL_COMMIT_PATTERN, message):
@@ -919,6 +962,12 @@ def main():
     # State-aware gate: needs the repository the command runs in.
     cwd = data.get("cwd", "") if isinstance(data, dict) else ""
     reason = blanket_git_add(command, cwd if isinstance(cwd, str) else "")
+    if reason:
+        deny(reason)
+        return
+    # After the specific gates: a blanket add or a conflict marker names the
+    # sharper reason, and only then does the unnamed directory get its turn.
+    reason = git_write_without_named_dir(command)
     if reason:
         deny(reason)
         return
