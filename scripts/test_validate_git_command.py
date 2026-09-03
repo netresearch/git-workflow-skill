@@ -609,6 +609,10 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         "git --git-dir= push origin main",
         # The assignment prefixes `true`, not the write.
         "DESTRUCTIVE_GIT_GATE_OFF=1 true; git push origin main",
+        # Shell rules: quotes are not part of the subcommand, and a quoted
+        # option value is one token (third round).
+        'git "push" origin main',
+        'git -c "user.name=A B" push origin main',
         "git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'",
         "cd && git push origin main",
         "cd - && git push origin main",
@@ -636,6 +640,7 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         "DESTRUCTIVE_GIT_GATE_OFF=1 git commit -m x",
         "FOO=1 DESTRUCTIVE_GIT_GATE_OFF=1 git commit -m x",
         "git --no-pager -C /home/u/repo push origin main",
+        'git -c "user.name=A B" -C /home/u/repo push origin main',
         # The directory is named; the message only mentions a command.
         "git -C /home/u/repo commit -m 'fix git push handling'",
         "gh pr create --draft",

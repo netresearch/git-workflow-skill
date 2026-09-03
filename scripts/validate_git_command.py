@@ -844,7 +844,15 @@ def _git_invocations(cmd: str):
         # command; parsed from the original so an operand blanked with its
         # quotes (`-C ""`) is still there to be judged.
         rest = re.split(r"[;\n|&]", cmd[match.end() :], maxsplit=1)[0]
-        tokens = rest.split()
+        # Shell rules, not whitespace: `git "push" origin main` kept its quotes
+        # and `git -c "user.name=A B" push` split the value, so in both the
+        # subcommand read as something that is not a write (2026-09-03 review).
+        # Splitting `rest` at a separator can leave a quote unbalanced, which is
+        # what the fallback is for.
+        try:
+            tokens = shlex.split(rest)
+        except ValueError:
+            tokens = rest.split()
         names_directory = False
         index = 0
         while index < len(tokens) and tokens[index].startswith("-"):
