@@ -575,10 +575,16 @@ GIT_MEASURING_READ = re.compile(
     r"(ls-remote|rev-parse|rev-list|log|status|diff|show|describe"
     r"|symbolic-ref|for-each-ref|ls-files|cat-file)\b"
 )
-CD_BEFORE = re.compile(_SEP + r"\s*cd\s+\S")
+# The operand has to be a directory. `cd &&` has none; `cd -` returns to
+# $OLDPWD, which changes the directory but names none a reader can see. `--`
+# is an option terminator and the directory follows it, so it stays allowed.
+CD_BEFORE = re.compile(_SEP + r"\s*cd\s+(?:--\s+\S|(?![-&|;])\S)")
 # A quote is not a statement separator, so `ssh host 'cd /etc && git log -1'`
 # read as "no cd" and drew the advisory on every remote inspection.
 _QUOTES = "\"'"
+# Stands in for the text of a quoted run: not a space, so the run still
+# reads as an operand, and not a letter, so it cannot spell a command.
+_RUN_FILLER = "_"
 
 
 def _same_scope_prefix(cmd: str, end: int) -> str:
@@ -603,7 +609,8 @@ def _same_scope_prefix(cmd: str, end: int) -> str:
     for i, ch in enumerate(cmd[:end]):
         if quote:
             if ch == quote:
-                out[quote_start : i + 1] = " " * (i - quote_start + 1)
+                filler = " " if i == quote_start + 1 else _RUN_FILLER
+                out[quote_start : i + 1] = filler * (i - quote_start + 1)
                 quote = ""
             continue
         if ch in _QUOTES:
@@ -622,6 +629,50 @@ def _same_scope_prefix(cmd: str, end: int) -> str:
 def _named_directory_before(cmd: str, end: int) -> bool:
     """True when a `cd` names the directory the measurement at `end` runs in."""
     return bool(CD_BEFORE.search(_same_scope_prefix(cmd, end)))
+
+
+# The escape hatch shared by the state-changing gates. It counts only at the
+# start of a command, where a shell would read it as an environment
+# assignment; anywhere else it is text. A substring test let
+# `git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'` through both gates,
+# and this repository's own commit messages name the marker (2026-09-03).
+# A parenthesis opens a statement only where a command could start. After
+# `=` it belongs to an array assignment, and `FOO=(x) DESTRUCTIVE_GIT_GATE_OFF=1
+# git push` is a legal prefix that the gate then failed to honour.
+_STATEMENT_BREAK = re.compile(r"[;&|\n]|\$\(|(?<![=\w])\(")
+# A shell takes no escapes inside single quotes and takes them inside
+# double ones. One spelling, so the payload pattern below cannot drift
+# from it — it did, and hid a write behind an earlier escaped quote.
+# ANSI-C quoting comes first: at the `$` the scan must take the whole
+# `$'…'`, not the `'…'` one character later. Its backslash escapes are
+# interpreted, so it reads like the double-quoted form.
+_QUOTED = r"\$'(?:[^'\\]|\\.)*'|'[^']*'|\"(?:[^\"\\]|\\.)*\""
+_ASSIGNMENT = rf"[A-Za-z_][A-Za-z0-9_]*=(?:{_QUOTED}|[^\s;&|])*\s+"
+_GATE_OFF_PREFIX = re.compile(
+    rf"\s*(?:{_ASSIGNMENT})*DESTRUCTIVE_GIT_GATE_OFF=1\s*(?:{_ASSIGNMENT})*"
+)
+
+
+def _statement_start(cmd: str, end: int) -> int:
+    """Index just past the separator that opens the statement holding `end`.
+
+    Read on the masked view, so a separator inside a quoted value is text —
+    `FOO='(x)'` is one token, not the start of a new statement.
+    """
+    breaks = [
+        m.end() for m in _STATEMENT_BREAK.finditer(_without_quoted_runs(cmd)[:end])
+    ]
+    return breaks[-1] if breaks else 0
+
+
+def _gate_disabled(cmd: str, end: int) -> bool:
+    """True when the escape-hatch assignment prefixes the statement at `end`.
+
+    Scoped to the statement rather than the whole payload: as a whole-command
+    test, `DESTRUCTIVE_GIT_GATE_OFF=1 true; git push origin main` disabled the
+    gate for a write the assignment never prefixed (2026-09-03 review).
+    """
+    return bool(_GATE_OFF_PREFIX.fullmatch(cmd[_statement_start(cmd, end) : end]))
 
 
 # --- blanket `git add` (promoted from a harness-local hook, 2026-08-20) ------
@@ -659,9 +710,9 @@ def _untracked_files(repo_dir: str) -> list[str] | None:
 def blanket_git_add(cmd: str, cwd: str = "", untracked=_untracked_files) -> str | None:
     """Deny `git add -A|--all|.` while untracked, non-ignored files exist."""
     cmd = QUOTED_HEREDOC.sub(" ", cmd or "")
-    if "DESTRUCTIVE_GIT_GATE_OFF=1" in cmd:
-        return None
     for m in _GIT_ADD.finditer(cmd):
+        if _gate_disabled(cmd, m.start()):
+            continue
         rest = m.group("rest")
         try:
             tokens = shlex.split(rest)
@@ -715,6 +766,171 @@ def git_read_without_named_dir(cmd: str) -> str | None:
         "  git -C /abs/path <subcommand>\n"
         "  cd /abs/path && git <subcommand>\n\n"
         "Nothing to change if you only need the current checkout."
+    )
+
+
+# --- git writes that do not name their directory (2026-09-03) ---------------
+# The read advisory above tells the author once per session; a write cannot
+# afford a warning it may not read. `cd` survives between tool calls, so a
+# `git push` that omits its directory runs wherever the previous call stopped
+# — on 2026-09-03 in a simulator checkout instead of the addon worktree, and
+# only a branch that did not exist there kept it from pushing. A write in the
+# wrong repository does not fail; it succeeds there. The rule ("every call
+# names its directory") had been written down for weeks and still lapsed
+# under a long chain of commands, which is the case for a gate.
+GIT_WRITE_SUBCOMMANDS = frozenset(
+    {
+        "commit",
+        "push",
+        "pull",
+        "merge",
+        "rebase",
+        "cherry-pick",
+        "revert",
+        "reset",
+        "checkout",
+        "switch",
+        "restore",
+        "stash",
+        "tag",
+        "branch",
+        "worktree",
+        "am",
+        "apply",
+        "rm",
+        "mv",
+    }
+)
+# Global options are skipped rather than enumerated: a pattern that knew only
+# `-c` missed the write in `git --no-pager push origin main`. These take a
+# separate value, so the value is not mistaken for the subcommand.
+_GIT_OPTIONS_WITH_VALUE = frozenset(
+    {
+        "-C",
+        "-c",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--exec-path",
+        "--config-env",
+    }
+)
+# `git` as its own token, so `env X=1 git push` is seen. A separator is not
+# required, unlike the read advisory's pattern.
+_GIT_TOKEN = re.compile(r"(?:^|(?<=[\s|&;\n('\"`]))git(?=\s)")
+_QUOTED_RUN = re.compile(_QUOTED)
+
+
+# A payload a local shell runs, as opposed to a quoted argument. `ssh host
+# '…'` is deliberately absent: it runs on another machine, whose working
+# directory is not the one this gate is about.
+_LOCAL_SHELL_PAYLOAD = re.compile(
+    r"(?:^|[\s|&;(`])(?:ba|z|da|k)?sh\s+(?:[^'\"]*?\s)?-[A-Za-z]*c\s+"
+    rf"(?P<payload>{_QUOTED})"
+)
+
+
+def _mask_quoted(text: str) -> str:
+    """`text` with each quoted run replaced by filler of the same width."""
+    return _QUOTED_RUN.sub(lambda m: " " * len(m.group(0)), text)
+
+
+def _without_quoted_runs(cmd: str) -> str:
+    """`cmd` with quoted runs masked, positions preserved.
+
+    A `git push` inside quotes is usually text — a commit message naming the
+    command — so `git -C /r commit -m "fix git push"` must not read as a
+    second, unnamed write. A payload a local shell will run is the exception
+    and comes back, so `bash -c 'git push'` is seen as the write it is.
+
+    The payload comes back with its OWN quoting masked, though. Restoring it
+    verbatim handed its inner quotes to the separator search, and a separator
+    inside a quoted value there — `bash -c 'git -c "x=a;b" push'` — ended the
+    invocation before its subcommand, so the write went unseen.
+    """
+    masked = list(_mask_quoted(cmd))
+    for match in _LOCAL_SHELL_PAYLOAD.finditer(cmd):
+        start, end = match.span("payload")
+        # The interior, not the run itself: masking the payload whole would
+        # mask its own opening quote and hide the payload from this very scan.
+        opener = 2 if cmd[start : start + 2] == "$'" else 1
+        inner_start, inner_end = start + opener, end - 1
+        masked[inner_start:inner_end] = _mask_quoted(cmd[inner_start:inner_end])
+    return "".join(masked)
+
+
+def _names_a_directory(option: str, operand: str) -> bool:
+    """True when the option carries a directory git will actually change to.
+
+    `git -C "" push` changes nothing — git reads an empty operand as no
+    directory at all (git 2.55.0) — so it must not count as named.
+    """
+    if option in ("-C", "--git-dir"):
+        return bool(operand.strip("\"'").strip())
+    if option.startswith(("-C=", "--git-dir=")):
+        return bool(option.split("=", 1)[1].strip("\"'").strip())
+    return False
+
+
+def _git_invocations(cmd: str):
+    """Yield `(subcommand, start, names_directory)` for each `git` call."""
+    scanned = _without_quoted_runs(cmd)
+    for match in _GIT_TOKEN.finditer(scanned):
+        # Found in the scanned text so quoted argument text is not read as a
+        # command; parsed from the original so an operand blanked with its
+        # quotes (`-C ""`) is still there to be judged.
+        tail = scanned[match.end() :]
+        stop = re.search(r"[;\n|&]", tail)
+        rest = cmd[match.end() : match.end() + (stop.start() if stop else len(tail))]
+        # Shell rules, not whitespace: `git "push" origin main` kept its quotes
+        # and `git -c "user.name=A B" push` split the value, so in both the
+        # subcommand read as something that is not a write (2026-09-03 review).
+        # Splitting `rest` at a separator can leave a quote unbalanced, which is
+        # what the fallback is for.
+        try:
+            tokens = shlex.split(rest)
+        except ValueError:
+            tokens = rest.split()
+        names_directory = False
+        index = 0
+        while index < len(tokens) and tokens[index].startswith("-"):
+            option = tokens[index]
+            takes_value = option in _GIT_OPTIONS_WITH_VALUE
+            operand = (
+                tokens[index + 1] if takes_value and index + 1 < len(tokens) else ""
+            )
+            if _names_a_directory(option, operand):
+                names_directory = True
+            index += 2 if takes_value else 1
+        subcommand = tokens[index] if index < len(tokens) else ""
+        yield subcommand, match.start(), names_directory
+
+
+def git_write_without_named_dir(cmd: str) -> str | None:
+    """Deny a git write that neither uses `-C` nor follows a `cd` in its scope."""
+    cmd = cmd or ""
+    unnamed = [
+        subcommand
+        for subcommand, start, names_directory in _git_invocations(cmd)
+        if subcommand in GIT_WRITE_SUBCOMMANDS
+        and not names_directory
+        and not _named_directory_before(cmd, start)
+        and not _gate_disabled(cmd, start)
+    ]
+    if not unnamed:
+        return None
+    return (
+        f"`git {unnamed[0]}` changes state without naming its directory. `cd` "
+        "survives between tool calls, so this runs wherever the last call left "
+        "off — and in the wrong repository it does not fail, it succeeds there "
+        "(2026-09-03: a `git push` ran in a simulator checkout instead of the "
+        "addon worktree; only a branch that did not exist there stopped it). "
+        "Name the directory:\n\n"
+        "  git -C /abs/path <subcommand>\n"
+        "  cd /abs/path && git <subcommand>\n\n"
+        "Reads keep their once-per-session advisory. If running in the "
+        "inherited directory really is the point, prefix the command with "
+        "DESTRUCTIVE_GIT_GATE_OFF=1."
     )
 
 
@@ -919,6 +1135,12 @@ def main():
     # State-aware gate: needs the repository the command runs in.
     cwd = data.get("cwd", "") if isinstance(data, dict) else ""
     reason = blanket_git_add(command, cwd if isinstance(cwd, str) else "")
+    if reason:
+        deny(reason)
+        return
+    # After the specific gates: a blanket add or a conflict marker names the
+    # sharper reason, and only then does the unnamed directory get its turn.
+    reason = git_write_without_named_dir(command)
     if reason:
         deny(reason)
         return

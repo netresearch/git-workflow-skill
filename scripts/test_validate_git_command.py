@@ -89,7 +89,7 @@ class MergeReadinessGate(unittest.TestCase):
         ),
         (
             "the word in prose, not a query",
-            'git commit -m "explain why mergeStateStatus alone is not enough"',
+            'git -C /repo commit -m "explain why mergeStateStatus alone is not enough"',
         ),
     ]
 
@@ -110,18 +110,23 @@ class MergeReadinessGate(unittest.TestCase):
 
 class ExistingChecks(unittest.TestCase):
     def test_non_conventional_commit_message_warns(self) -> None:
-        self.assertIn("onventional", run_hook('git commit -m "fixed stuff"'))
+        self.assertIn(
+            "onventional", run_hook('cd /repo && git commit -m "fixed stuff"')
+        )
 
     def test_conventional_commit_message_stays_quiet(self) -> None:
         self.assertNotIn(
-            "onventional", run_hook('git commit -m "fix: correct the tally"')
+            "onventional",
+            run_hook('cd /repo && git commit -m "fix: correct the tally"'),
         )
 
     def test_force_push_warns(self) -> None:
-        self.assertIn("Force push", run_hook("git push -f origin main"))
+        self.assertIn("Force push", run_hook("cd /repo && git push -f origin main"))
 
     def test_hard_reset_warns(self) -> None:
-        self.assertIn("Hard reset", run_hook("git reset --hard origin/main"))
+        self.assertIn(
+            "Hard reset", run_hook("cd /repo && git reset --hard origin/main")
+        )
 
     def test_unrelated_command_produces_nothing(self) -> None:
         self.assertEqual("", run_hook("ls -la"))
@@ -274,7 +279,7 @@ class ForgeBodyLanguageGate(unittest.TestCase):
 
     def test_commit_message_is_not_a_forge_body(self) -> None:
         # Commit messages are out of scope for this gate; only forge bodies.
-        out = run_hook(f"git commit -m 'feat: x\n\n{self.GERMAN}'")
+        out = run_hook(f"git -C /repo commit -m 'feat: x\n\n{self.GERMAN}'")
         self.assertNotEqual("deny", decision(out))
 
 
@@ -579,6 +584,154 @@ class NowhereToStoreAMarker(unittest.TestCase):
             )
             self.assertTrue(marker.exists(), "a working XDG_RUNTIME_DIR wins")
             self.assertFalse((Path(fallback) / "git-workflow-advisories").exists())
+
+
+class NamedDirectoryWriteGate(unittest.TestCase):
+    """A git write must say where it runs; a read only gets the advisory.
+
+    The read advisory fires once per session and is easy to read past; on
+    2026-09-03 a `git push` without a directory ran in the wrong checkout and
+    was saved only by a branch that did not exist there. Writes are denied
+    until they name their directory with `-C` or a `cd` in the same scope.
+    """
+
+    DENIED: ClassVar[list[str]] = [
+        # Behind a global option, an environment prefix, or a `cd` that names
+        # no directory — all reviewed on 2026-09-03, all writes that ran in
+        # the inherited directory while the gate returned None.
+        "git --no-pager push origin main",
+        "env X=1 git push origin main",
+        # A payload a local shell runs is a command, not text (second round).
+        "bash -c 'git push origin main'",
+        "sh -c 'git commit -m x'",
+        # git reads an empty -C as no directory change at all (git 2.55.0).
+        'git -C "" push origin main',
+        "git --git-dir= push origin main",
+        # The assignment prefixes `true`, not the write.
+        "DESTRUCTIVE_GIT_GATE_OFF=1 true; git push origin main",
+        # Shell rules: quotes are not part of the subcommand, and a quoted
+        # option value is one token (third round).
+        'git "push" origin main',
+        'git -c "user.name=A B" push origin main',
+        # `1=2` is not a shell assignment, so it prefixes nothing a
+        # shell would honour (fourth round).
+        "1=2 DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
+        # An escaped quote earlier in a shell payload used to end it, so
+        # the write behind it was never seen (fifth round).
+        'bash -c "echo \\"hi\\" && git push origin main"',
+        # The separator that opens the statement carries no space.
+        "true;git push origin main",
+        # A backtick opens a command substitution, so this runs (sixth
+        # round). `$(…)` was already a boundary; the backtick was not.
+        "echo `git push origin main`",
+        # Shell options may carry an operand before -c.
+        "bash -o pipefail -c 'git push origin main'",
+        "bash -euo pipefail -c 'git push origin main'",
+        # ANSI-C quoting is still a payload a shell runs (seventh round).
+        "bash -c $'git push origin main'",
+        # Reported as bypasses and refused already: a bare cd has no
+        # operand to match, and an empty one is blanked with its quotes,
+        # leaving the separator behind. Pinned so it stays that way.
+        "cd\ngit push origin main",
+        'cd "" ; git push origin main',
+        "(git push origin main)",
+        # A separator inside a quoted option value is not a separator
+        # (ninth round); the subcommand behind it was never reached.
+        'git -c "x=a;b" push origin main',
+        # The same inside a payload: restoring it verbatim handed its own
+        # quoting to the separator search (tenth round).
+        "bash -c 'git -c \"x=a;b\" push origin main'",
+        "bash -c 'echo \"a;b\" && git push origin main'",
+        "git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'",
+        "cd && git push origin main",
+        "cd - && git push origin main",
+        "git commit -S -s -m 'feat: x'",
+        "git push origin feat/x",
+        "git push --force-with-lease origin feat/x",
+        "git reset --hard HEAD~1",
+        "git cherry-pick abc1234",
+        "git rebase -S origin/main",
+        "git worktree remove ../x",
+        "git -c commit.gpgsign=true commit -m x",
+        "git add -A; git commit -m x",
+    ]
+    ALLOWED: ClassVar[list[str]] = [
+        "git -C /home/u/repo commit -m x",
+        "git -C .bare worktree add ../x -b x origin/main",
+        "cd /home/u/repo && git push origin feat/x",
+        "cd /home/u/repo && git add a.txt && git commit -m x",
+        "bash -c 'cd /srv/app && git pull --ff-only'",
+        # Another machine's working directory is not this gate's subject.
+        "ssh host 'git pull --ff-only'",
+        "git status",
+        "git log --oneline -3",
+        "git -C /home/u/repo commit -m x && git log --oneline -1",
+        "DESTRUCTIVE_GIT_GATE_OFF=1 git commit -m x",
+        "FOO=1 DESTRUCTIVE_GIT_GATE_OFF=1 git commit -m x",
+        "git --no-pager -C /home/u/repo push origin main",
+        'git -c "user.name=A B" -C /home/u/repo push origin main',
+        # `--` terminates cd's options; the directory follows it.
+        "cd -- /home/u/repo && git push origin feat/x",
+        # The same payload, with the directory named inside it.
+        'bash -c "echo \\"hi\\" && cd /srv && git push origin main"',
+        # No space around the separator, on either side of the check.
+        "cd /home/u/repo&&git push origin main",
+        # Behind the option terminator a hyphen belongs to the name.
+        "cd -- -repo && git push origin main",
+        # The same option-bearing payload, with its own cd.
+        "bash -euo pipefail -c 'cd /srv && git push origin main'",
+        "bash -c $'cd /srv && git push origin main'",
+        "bash -c 'cd /srv && git -c \"x=a;b\" push origin main'",
+        # An ANSI-C message is text, like any other quoted argument.
+        "git -C /r commit -m $'fix git push\\nsecond line'",
+        # The escape hatch must survive an assignment that carries a
+        # parenthesis, quoted or not, and a subshell (eighth round).
+        "FOO=(x) DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
+        "FOO='(x)' DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
+        "(DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main)",
+        "(cd /home/u/repo && git push origin main)",
+        # A quoted path is the ordinary way to write one, spaces or not.
+        'cd "/abs/path with spaces" && git push origin main',
+        'cd "/home/u/repo" && git push origin main',
+        "cd '/home/u/repo' && git push origin main",
+        # An assignment value may be quoted and hold spaces.
+        'FOO="a b" DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main',
+        "true;DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
+        # A backslash escapes a quote inside a double-quoted message, so
+        # the run does not end there and the rest stays text.
+        'git -C /r commit -m "fix \\" git push origin main"',
+        # The directory is named; the message only mentions a command.
+        "git -C /home/u/repo commit -m 'fix git push handling'",
+        "gh pr create --draft",
+    ]
+
+    def test_writes_without_a_named_directory_are_denied(self) -> None:
+        for command in self.DENIED:
+            with self.subTest(command=command):
+                out = run_hook(command)
+                self.assertEqual("deny", decision(out), out)
+                self.assertIn("without naming its directory", out)
+
+    def test_named_directories_reads_and_the_escape_hatch_pass(self) -> None:
+        for command in self.ALLOWED:
+            with self.subTest(command=command):
+                self.assertNotEqual("deny", decision(run_hook(command)), command)
+
+    def test_a_quoted_argument_is_text_and_a_shell_payload_is_a_command(self) -> None:
+        # The distinction the second review round asked for: `-m 'fix git
+        # push'` is a message that names a command, `bash -c 'git push'` is
+        # the command. Blanking every quoted run treated both as text; the
+        # payload of a local shell is read now.
+        self.assertNotEqual(
+            "deny", decision(run_hook("git -C /r commit -m 'fix git push handling'"))
+        )
+        self.assertEqual("deny", decision(run_hook("bash -c 'git push origin main'")))
+
+    def test_the_message_names_the_subcommand_and_both_fixes(self) -> None:
+        out = run_hook("git push origin main")
+        self.assertIn("`git push`", out)
+        self.assertIn("git -C /abs/path <subcommand>", out)
+        self.assertIn("cd /abs/path && git <subcommand>", out)
 
 
 if __name__ == "__main__":
