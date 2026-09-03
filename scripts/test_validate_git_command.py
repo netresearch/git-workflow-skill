@@ -447,6 +447,23 @@ class NamedDirectoryAdvisoryScope(unittest.TestCase):
         self.assertFalse(self.fired("ssh root@nova.nr 'git status'"))
         self.assertFalse(self.fired("docker exec app sh -c 'git rev-parse HEAD'"))
 
+    def test_a_cd_in_a_subshell_counts_as_named(self) -> None:
+        # The measurement pattern accepts `(` and `$(` as separators before
+        # `git`, so these match and then have to find their `cd`. Recognising
+        # the git command but not the cd that precedes it inside the same
+        # subshell is the advisory firing on a command that names its directory.
+        self.assertFalse(self.fired("(cd /etc && git status)"))
+        self.assertFalse(self.fired("(cd /etc; git status)"))
+
+    def test_a_cd_in_a_command_substitution_counts_as_named(self) -> None:
+        self.assertFalse(self.fired("$(cd /etc && git log -1)"))
+        self.assertFalse(self.fired("x=$(cd /srv && git rev-parse HEAD)"))
+
+    def test_a_subshell_without_a_cd_still_warns(self) -> None:
+        # The widening must not swallow the case the advisory exists for.
+        self.assertTrue(self.fired("(git status)"))
+        self.assertTrue(self.fired("x=$(git rev-parse HEAD)"))
+
     def test_a_cd_in_an_earlier_payload_does_not_silence_a_local_slip(self) -> None:
         # The remote `cd` belongs to the ssh payload; the local `git status`
         # after it is exactly the slip this advisory exists for.

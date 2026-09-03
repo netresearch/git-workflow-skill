@@ -563,12 +563,19 @@ def run_poll_problem(cmd: str) -> str | None:
 # repository (2026-08-12: an `ls-remote` answered from the wrong checkout and
 # produced a wrong "deviation" claim). Reads only; writes are covered by the
 # reference-worktree gate.
+#
+# One separator class for both halves. They must agree: whatever counts as a
+# statement boundary before `git` has to count as one before `cd`, or a command
+# that names its directory still draws the advisory. They did not agree —
+# `(` and `$(` opened a measurement but not a cd — so `(cd /etc && git status)`
+# and `x=$(cd /srv && git rev-parse HEAD)` were reported as unnamed.
+_SEP = r"(?:^|[|&;\n(]|\$\()"
 GIT_MEASURING_READ = re.compile(
-    r"(?:^|[|&;\n(]|\$\()\s*git\s+(?!-C\b)(?!--git-dir)(?:-c\s+\S+\s+)*"
+    _SEP + r"\s*git\s+(?!-C\b)(?!--git-dir)(?:-c\s+\S+\s+)*"
     r"(ls-remote|rev-parse|rev-list|log|status|diff|show|describe"
     r"|symbolic-ref|for-each-ref|ls-files|cat-file)\b"
 )
-CD_BEFORE = re.compile(r"(?:^|[|&;\n])\s*cd\s+\S")
+CD_BEFORE = re.compile(_SEP + r"\s*cd\s+\S")
 # A quote is not a statement separator, so `ssh host 'cd /etc && git log -1'`
 # used to read as "no cd" and drew the advisory on every remote inspection.
 # The cd counts only inside the same quoted run as the measurement, so a cd
