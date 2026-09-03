@@ -296,15 +296,27 @@ count and an equality, across every artifact rather than the one that happens to
 be convenient:
 
 ```bash
-find public -name index.html -print0 | while IFS= read -r -d '' f; do
+seen=0
+while IFS= read -r -d '' f; do
+  seen=$((seen + 1))
   n=$(grep -o '<select name="repository"' "$f" | wc -l)
   [ "$n" -eq 1 ] || { echo "$f carries $n, expected exactly 1" >&2; exit 1; }
-done
+done < <(find public -name index.html -print0)
+[ "$seen" -gt 0 ] || { echo "no index.html found — nothing was checked" >&2; exit 1; }
 ```
 
-`-print0` with a NUL-delimited read, not `for f in $(find …)`: the unquoted
-substitution word-splits, so a path containing a space silently becomes two
-paths and the gate checks neither of them.
+Three shapes in that loop, each of which has silently broken a gate:
+
+- **`-print0` with a NUL-delimited read**, not `for f in $(find …)`. The
+  unquoted substitution word-splits, so a path containing a space becomes two
+  paths and the gate checks neither.
+- **Process substitution, not a pipe.** `find … | while …` puts the loop in a
+  subshell, where `exit 1` ends the subshell and leaves the caller running — the
+  gate then reports its failure to nobody, unless `set -e` and `pipefail` happen
+  to be on in whatever copied it.
+- **Fail closed on an empty list.** Finding no artifacts is not a pass. A gate
+  that validated zero files is exactly as green as one that validated all of
+  them, which is how a renamed output directory goes unnoticed.
 
 Two habits follow:
 
