@@ -634,6 +634,7 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         # leaving the separator behind. Pinned so it stays that way.
         "cd\ngit push origin main",
         'cd "" ; git push origin main',
+        "(git push origin main)",
         "git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'",
         "cd && git push origin main",
         "cd - && git push origin main",
@@ -675,6 +676,12 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         "bash -c $'cd /srv && git push origin main'",
         # An ANSI-C message is text, like any other quoted argument.
         "git -C /r commit -m $'fix git push\\nsecond line'",
+        # The escape hatch must survive an assignment that carries a
+        # parenthesis, quoted or not, and a subshell (eighth round).
+        "FOO=(x) DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
+        "FOO='(x)' DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
+        "(DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main)",
+        "(cd /home/u/repo && git push origin main)",
         "true;DESTRUCTIVE_GIT_GATE_OFF=1 git push origin main",
         # A backslash escapes a quote inside a double-quoted message, so
         # the run does not end there and the rest stays text.

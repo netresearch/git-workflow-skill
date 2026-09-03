@@ -632,7 +632,10 @@ def _named_directory_before(cmd: str, end: int) -> bool:
 # assignment; anywhere else it is text. A substring test let
 # `git commit -m 'document DESTRUCTIVE_GIT_GATE_OFF=1'` through both gates,
 # and this repository's own commit messages name the marker (2026-09-03).
-_STATEMENT_BREAK = re.compile(r"[;&|\n]|\$\(|\(")
+# A parenthesis opens a statement only where a command could start. After
+# `=` it belongs to an array assignment, and `FOO=(x) DESTRUCTIVE_GIT_GATE_OFF=1
+# git push` is a legal prefix that the gate then failed to honour.
+_STATEMENT_BREAK = re.compile(r"[;&|\n]|\$\(|(?<![=\w])\(")
 _ASSIGNMENT = r"[A-Za-z_][A-Za-z0-9_]*=\S*\s+"
 _GATE_OFF_PREFIX = re.compile(
     rf"\s*(?:{_ASSIGNMENT})*DESTRUCTIVE_GIT_GATE_OFF=1\s*(?:{_ASSIGNMENT})*"
@@ -640,8 +643,14 @@ _GATE_OFF_PREFIX = re.compile(
 
 
 def _statement_start(cmd: str, end: int) -> int:
-    """Index just past the separator that opens the statement holding `end`."""
-    breaks = [m.end() for m in _STATEMENT_BREAK.finditer(cmd[:end])]
+    """Index just past the separator that opens the statement holding `end`.
+
+    Read on the masked view, so a separator inside a quoted value is text —
+    `FOO='(x)'` is one token, not the start of a new statement.
+    """
+    breaks = [
+        m.end() for m in _STATEMENT_BREAK.finditer(_without_quoted_runs(cmd)[:end])
+    ]
     return breaks[-1] if breaks else 0
 
 
