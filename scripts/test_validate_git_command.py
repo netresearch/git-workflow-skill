@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 from typing import ClassVar
 
@@ -296,12 +297,23 @@ class AdvisoryOncePerSession(unittest.TestCase):
         self.addCleanup(self.runtime.cleanup)
 
     def run_hook_session(
-        self, command: str, session: "str | None", runtime_dir: "str | None" = None
+        self,
+        command: str,
+        session: "str | None",
+        runtime_dir: "str | None" = None,
+        fallback_dir: "str | None" = None,
     ) -> str:
         env = dict(os.environ)
         env["XDG_RUNTIME_DIR"] = (
             runtime_dir if runtime_dir is not None else self.runtime.name
         )
+        # The hook falls back to the temp directory when XDG_RUNTIME_DIR cannot
+        # hold markers, so the temp directory has to be isolated per test too.
+        # Left at the real /tmp, markers from one run silence the next one and
+        # the suite passes or fails depending on what an earlier run left there.
+        fallback = fallback_dir if fallback_dir is not None else self.runtime.name
+        for var in ("TMPDIR", "TEMP", "TMP"):
+            env[var] = fallback
         payload: dict = {"command": command}
         if session is not None:
             payload["session_id"] = session
@@ -333,10 +345,11 @@ class AdvisoryOncePerSession(unittest.TestCase):
         self.assertIn("git-workflow:", first)
         self.assertIn("git-workflow:", second)
 
-    def test_an_unusable_runtime_dir_never_suppresses_the_warning(self) -> None:
-        # XDG_RUNTIME_DIR names an existing FILE: creating the marker directory
-        # cannot succeed. The advisory must fire anyway — storage failing is
-        # not the same as the warning having been seen.
+    def test_an_unusable_runtime_dir_still_reaches_the_user_the_first_time(
+        self,
+    ) -> None:
+        # XDG_RUNTIME_DIR names an existing FILE, so no marker can be written
+        # there. The warning must still reach the author.
         blocker = Path(self.runtime.name) / "blocker"
         blocker.write_text("not a directory\n")
         out = self.run_hook_session(self.ADVISORY_CMD, "sess-3", str(blocker))
@@ -352,6 +365,36 @@ class AdvisoryOncePerSession(unittest.TestCase):
         self.assertIn("Waiting on workflow runs", first)
         combined = self.run_hook_session(self.BOTH_CMD, "sess-4")
         self.assertIn("inherits its working directory", combined)
+
+    def test_a_permanently_unusable_runtime_dir_still_dedupes(self) -> None:
+        # XDG_RUNTIME_DIR is exported by the login shell but the directory does
+        # not exist and cannot be created (no systemd user session -- the normal
+        # case under WSL, in containers, and on cron-launched sessions). Falling
+        # back to "not fired" then repeats on EVERY matching command for the
+        # life of the session: four identical warnings in a row on 2026-09-02,
+        # which is what the once-per-session rule exists to prevent. A location
+        # that cannot hold markers must be replaced by one that can, not turned
+        # into permission to storm.
+        unusable = Path(self.runtime.name) / "blocker" / "nested"
+        unusable.parent.write_text("not a directory\n")
+        first = self.run_hook_session(self.ADVISORY_CMD, "sess-6", str(unusable))
+        self.assertIn("git-workflow:", first)
+        second = self.run_hook_session(self.ADVISORY_CMD, "sess-6", str(unusable))
+        self.assertEqual("", second.strip(), "unusable runtime dir: still dedupe")
+
+    def test_the_fallback_is_the_temp_directory_the_process_would_use(self) -> None:
+        # Naming the location is what makes the previous test more than "it
+        # went quiet somehow": the marker has to be findable where the hook
+        # says it puts it.
+        unusable = Path(self.runtime.name) / "blocker2" / "nested"
+        unusable.parent.write_text("not a directory\n")
+        self.run_hook_session(self.ADVISORY_CMD, "sess-7", str(unusable))
+        marker = (
+            Path(self.runtime.name)
+            / "git-workflow-advisories"
+            / "sess-7.git_read_without_named_dir"
+        )
+        self.assertTrue(marker.exists(), f"expected the marker at {marker}")
 
     def test_a_marker_older_than_the_rearm_window_fires_again_once(self) -> None:
         # A session can run for days and its context gets compacted, so a
@@ -369,6 +412,173 @@ class AdvisoryOncePerSession(unittest.TestCase):
         self.assertIn("git-workflow:", again)
         quiet = self.run_hook_session(self.ADVISORY_CMD, "sess-5")
         self.assertEqual("", quiet.strip(), "re-arm must also re-mark: quiet again")
+
+
+class NamedDirectoryAdvisoryScope(unittest.TestCase):
+    """A `cd` opening a quoted payload names the directory just as well.
+
+    `ssh host 'cd /etc && git log -1'` and `bash -c 'cd /srv && git status'`
+    both say where the measurement happens. The advisory used to fire anyway,
+    because it only recognised a `cd` preceded by a statement separator and a
+    quote is not one -- so every remote inspection drew the same paragraph
+    (four in a row on 2026-09-02, on an ssh loop that did `cd /etc` first).
+    """
+
+    def fired(self, command: str) -> bool:
+        return "inherits its working directory" in run_hook(command)
+
+    def test_a_bare_measurement_still_warns(self) -> None:
+        self.assertTrue(self.fired("git status"))
+
+    def test_a_cd_opening_a_quoted_payload_counts_as_named(self) -> None:
+        self.assertFalse(self.fired("bash -c 'cd /srv/app && git status'"))
+
+    def test_ssh_with_options_and_a_remote_cd(self) -> None:
+        self.assertFalse(
+            self.fired(
+                "timeout 60 ssh -o BatchMode=yes root@nova.nr 'cd /etc && git log -1'"
+            )
+        )
+
+    def test_a_quoted_payload_without_a_cd_never_matched_anyway(self) -> None:
+        # Characterization: `git` sits right behind the quote, which is not a
+        # statement separator, so the measurement pattern never matched here.
+        # Recorded so a future widening of that pattern has to face this case.
+        self.assertFalse(self.fired("ssh root@nova.nr 'git status'"))
+        self.assertFalse(self.fired("docker exec app sh -c 'git rev-parse HEAD'"))
+
+    def test_a_cd_in_a_subshell_counts_as_named(self) -> None:
+        # The measurement pattern accepts `(` and `$(` as separators before
+        # `git`, so these match and then have to find their `cd`. Recognising
+        # the git command but not the cd that precedes it inside the same
+        # subshell is the advisory firing on a command that names its directory.
+        self.assertFalse(self.fired("(cd /etc && git status)"))
+        self.assertFalse(self.fired("(cd /etc; git status)"))
+
+    def test_a_cd_in_a_command_substitution_counts_as_named(self) -> None:
+        self.assertFalse(self.fired("$(cd /etc && git log -1)"))
+        self.assertFalse(self.fired("x=$(cd /srv && git rev-parse HEAD)"))
+
+    def test_a_subshell_without_a_cd_still_warns(self) -> None:
+        # The widening must not swallow the case the advisory exists for.
+        self.assertTrue(self.fired("(git status)"))
+        self.assertTrue(self.fired("x=$(git rev-parse HEAD)"))
+
+    def test_a_cd_in_an_earlier_payload_does_not_silence_a_local_slip(self) -> None:
+        # The remote `cd` belongs to the ssh payload; the local `git status`
+        # after it is exactly the slip this advisory exists for.
+        self.assertTrue(self.fired("ssh host 'cd /etc && ls'; git status"))
+
+    def test_a_local_measurement_after_a_remote_one_still_warns(self) -> None:
+        self.assertTrue(self.fired("ssh host 'git status'; git log --oneline -1"))
+
+    def test_a_closed_subshell_cd_does_not_reach_the_next_command(self) -> None:
+        # `cd` inside a subshell dies with the subshell. Accepting it for a
+        # measurement that runs after the closing paren is the advisory going
+        # quiet on precisely the slip it exists for.
+        self.assertTrue(self.fired("(cd /etc && ls); git status"))
+        self.assertTrue(self.fired("x=$(cd /etc && pwd); git status"))
+
+    def test_a_cd_deeper_inside_a_closed_payload_does_not_leak_out(self) -> None:
+        # Same for a remote payload: the earlier test only covered a `cd` at
+        # the start of the quoted run, which no separator preceded anyway.
+        self.assertTrue(self.fired('ssh host "echo ok; cd /etc && ls"; git status'))
+
+    def test_every_measurement_is_checked_not_just_the_first(self) -> None:
+        # The remote measurement is named by its own `cd`; the local one that
+        # follows is not, and it is the one worth warning about.
+        self.assertTrue(self.fired("ssh host 'cd /etc && git status'; git status"))
+
+
+class NowhereToStoreAMarker(unittest.TestCase):
+    """When no location can hold a marker, the warning still reaches the author.
+
+    This cannot be provoked through the environment: `tempfile.gettempdir()`
+    validates its candidates and lands on /tmp whatever TMPDIR says, so the
+    branch is only reachable where /tmp itself is unwritable. Exercised
+    directly, because a defensive branch nothing ever runs is a claim, not a
+    guarantee.
+    """
+
+    def test_every_candidate_failing_reads_as_not_fired(self) -> None:
+        import validate_git_command as vgc
+
+        payload = {"session_id": "sess-nowhere"}
+        with unittest.mock.patch.object(
+            vgc.os, "makedirs", side_effect=OSError("read-only")
+        ):
+            first = vgc._advisory_already_fired(payload, "git_read_without_named_dir")
+            second = vgc._advisory_already_fired(payload, "git_read_without_named_dir")
+        self.assertFalse(first)
+        self.assertFalse(second, "storage failure must never read as 'already seen'")
+
+    def test_a_root_that_takes_the_directory_but_refuses_the_marker_falls_through(
+        self,
+    ) -> None:
+        # makedirs succeeding does not mean the marker can be written: the
+        # advisory directory may exist and be unwritable. Committing to the
+        # first root that accepts makedirs leaves the dedupe off for good,
+        # which is the storm this whole mechanism exists to prevent.
+        import validate_git_command as vgc
+
+        with (
+            tempfile.TemporaryDirectory() as runtime,
+            tempfile.TemporaryDirectory() as fallback,
+        ):
+            hostile = Path(runtime) / "git-workflow-advisories"
+            hostile.mkdir()
+            hostile.chmod(0o500)  # listable, not writable
+            try:
+                with (
+                    unittest.mock.patch.dict(
+                        vgc.os.environ, {"XDG_RUNTIME_DIR": runtime}
+                    ),
+                    unittest.mock.patch.object(
+                        vgc.tempfile, "gettempdir", return_value=fallback
+                    ),
+                ):
+                    first = vgc._advisory_already_fired(
+                        {"session_id": "sess-fall"}, "git_read_without_named_dir"
+                    )
+                    second = vgc._advisory_already_fired(
+                        {"session_id": "sess-fall"}, "git_read_without_named_dir"
+                    )
+            finally:
+                # restore before the TemporaryDirectory tries to remove it
+                hostile.chmod(0o700)
+            self.assertFalse(first)
+            self.assertTrue(second, "the fallback root must still dedupe")
+            self.assertTrue(
+                (
+                    Path(fallback)
+                    / "git-workflow-advisories"
+                    / "sess-fall.git_read_without_named_dir"
+                ).exists()
+            )
+
+    def test_the_runtime_dir_is_preferred_when_it_works(self) -> None:
+        import validate_git_command as vgc
+
+        with (
+            tempfile.TemporaryDirectory() as runtime,
+            tempfile.TemporaryDirectory() as fallback,
+        ):
+            with (
+                unittest.mock.patch.dict(vgc.os.environ, {"XDG_RUNTIME_DIR": runtime}),
+                unittest.mock.patch.object(
+                    vgc.tempfile, "gettempdir", return_value=fallback
+                ),
+            ):
+                vgc._advisory_already_fired(
+                    {"session_id": "sess-pref"}, "git_read_without_named_dir"
+                )
+            marker = (
+                Path(runtime)
+                / "git-workflow-advisories"
+                / "sess-pref.git_read_without_named_dir"
+            )
+            self.assertTrue(marker.exists(), "a working XDG_RUNTIME_DIR wins")
+            self.assertFalse((Path(fallback) / "git-workflow-advisories").exists())
 
 
 if __name__ == "__main__":

@@ -563,12 +563,65 @@ def run_poll_problem(cmd: str) -> str | None:
 # repository (2026-08-12: an `ls-remote` answered from the wrong checkout and
 # produced a wrong "deviation" claim). Reads only; writes are covered by the
 # reference-worktree gate.
+#
+# One separator class for both halves. They must agree: whatever counts as a
+# statement boundary before `git` has to count as one before `cd`, or a command
+# that names its directory still draws the advisory. They did not agree —
+# `(` and `$(` opened a measurement but not a cd — so `(cd /etc && git status)`
+# and `x=$(cd /srv && git rev-parse HEAD)` were reported as unnamed.
+_SEP = r"(?:^|[|&;\n(]|\$\()"
 GIT_MEASURING_READ = re.compile(
-    r"(?:^|[|&;\n(]|\$\()\s*git\s+(?!-C\b)(?!--git-dir)(?:-c\s+\S+\s+)*"
+    _SEP + r"\s*git\s+(?!-C\b)(?!--git-dir)(?:-c\s+\S+\s+)*"
     r"(ls-remote|rev-parse|rev-list|log|status|diff|show|describe"
     r"|symbolic-ref|for-each-ref|ls-files|cat-file)\b"
 )
-CD_BEFORE = re.compile(r"(?:^|[|&;\n])\s*cd\s+\S")
+CD_BEFORE = re.compile(_SEP + r"\s*cd\s+\S")
+# A quote is not a statement separator, so `ssh host 'cd /etc && git log -1'`
+# read as "no cd" and drew the advisory on every remote inspection.
+_QUOTES = "\"'"
+
+
+def _same_scope_prefix(cmd: str, end: int) -> str:
+    """`cmd[:end]` with everything outside the measurement's own scope blanked.
+
+    A `cd` only reaches a later command when it ran in the same shell. Two ways
+    it does not, and both were accepted before:
+
+    * `(cd /etc && ls); git status` — the subshell exited, taking its `cd` with
+      it, so the local `git status` is exactly the unnamed measurement the
+      advisory is for.
+    * `ssh host "echo ok; cd /etc && ls"; git status` — the `cd` ran on another
+      machine.
+
+    Closed quoted runs and closed `(...)` groups are therefore blanked out.
+    Whatever is still open at `end` is the scope the measurement sits in, so
+    the text before it is blanked instead — that makes the run's own start the
+    `^` the pattern needs, since a quote is not a separator.
+    """
+    out = list(cmd[:end])
+    quote, quote_start, opens = "", -1, []
+    for i, ch in enumerate(cmd[:end]):
+        if quote:
+            if ch == quote:
+                out[quote_start : i + 1] = " " * (i - quote_start + 1)
+                quote = ""
+            continue
+        if ch in _QUOTES:
+            quote, quote_start = ch, i
+        elif ch == "(":
+            opens.append(i)
+        elif ch == ")" and opens:
+            start = opens.pop()
+            out[start : i + 1] = " " * (i - start + 1)
+    innermost = max(quote_start if quote else -1, opens[-1] if opens else -1)
+    if innermost >= 0:
+        out[: innermost + 1] = " " * (innermost + 1)
+    return "".join(out)
+
+
+def _named_directory_before(cmd: str, end: int) -> bool:
+    """True when a `cd` names the directory the measurement at `end` runs in."""
+    return bool(CD_BEFORE.search(_same_scope_prefix(cmd, end)))
 
 
 # --- blanket `git add` (promoted from a harness-local hook, 2026-08-20) ------
@@ -644,8 +697,15 @@ def blanket_git_add(cmd: str, cwd: str = "", untracked=_untracked_files) -> str 
 
 def git_read_without_named_dir(cmd: str) -> str | None:
     """Warn when a git measurement does not say which directory it measures."""
-    m = GIT_MEASURING_READ.search(cmd or "")
-    if not m or CD_BEFORE.search(cmd[: m.start()]):
+    cmd = cmd or ""
+    # Every measurement, not just the first: `ssh host 'cd /etc && git status';
+    # git status` opens with a remote measurement that names its directory, and
+    # stopping there suppressed the local one that does not — the only line in
+    # that command the advisory is actually about.
+    if not any(
+        not _named_directory_before(cmd, m.start())
+        for m in GIT_MEASURING_READ.finditer(cmd)
+    ):
         return None
     return (
         "This git command inherits its working directory. `cd` survives between "
@@ -772,6 +832,15 @@ def _advisory_already_fired(data, name: str) -> bool:
     — if XDG_RUNTIME_DIR names something unusable, makedirs raises before any
     marker could exist, and that has to read as "not fired", not as
     FileExistsError at the marker call.
+
+    XDG_RUNTIME_DIR is only trusted once it has been shown to work. Login
+    shells export it whether or not the directory exists, and where there is no
+    systemd user session (WSL, containers, a cron-launched session) it names a
+    path under root-owned /run/user that cannot be created. Treating that as
+    "not fired" is permanent: the advisory then repeats on every matching
+    command for the life of the session, which is the storm the once-per-
+    session rule exists to prevent. So fall back to the temp directory, and
+    keep returning False only when nowhere at all can hold a marker.
     """
     session_id = data.get("session_id") if isinstance(data, dict) else None
     if not session_id:
@@ -779,28 +848,35 @@ def _advisory_already_fired(data, name: str) -> bool:
     slug = re.sub(r"[^A-Za-z0-9_-]", "", str(session_id))
     if not slug:
         return False
-    directory = os.path.join(
-        os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(),
-        "git-workflow-advisories",
-    )
-    try:
-        os.makedirs(directory, exist_ok=True)
-    except OSError:
-        return False
-    marker = os.path.join(directory, f"{slug}.{name}")
-    try:
-        os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-    except FileExistsError:
+    # A root is only usable once the MARKER itself can be written. makedirs
+    # succeeding proves nothing: the advisory directory can already exist and be
+    # unwritable, and committing to that root then leaves the dedupe off for the
+    # rest of the session — the storm this whole mechanism exists to prevent.
+    # So each root is tried all the way through, and only a write failure on the
+    # last one reads as "not fired".
+    for root in (os.environ.get("XDG_RUNTIME_DIR"), tempfile.gettempdir()):
+        if not root:
+            continue
+        directory = os.path.join(root, "git-workflow-advisories")
         try:
-            # A marker mtime in the future (backwards clock step) makes the
-            # delta negative and reads as fresh: stay quiet rather than storm.
-            if time.time() - os.stat(marker).st_mtime > ADVISORY_REARM_SECONDS:
-                os.utime(marker, None)
-                return False
+            os.makedirs(directory, exist_ok=True)
         except OSError:
-            return False
-        return True
-    except OSError:
+            continue
+        marker = os.path.join(directory, f"{slug}.{name}")
+        try:
+            os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        except FileExistsError:
+            try:
+                # A marker mtime in the future (backwards clock step) makes the
+                # delta negative and reads as fresh: stay quiet rather than storm.
+                if time.time() - os.stat(marker).st_mtime > ADVISORY_REARM_SECONDS:
+                    os.utime(marker, None)
+                    return False
+            except OSError:
+                return False
+            return True
+        except OSError:
+            continue  # this root cannot hold markers — try the next
         return False
     return False
 
