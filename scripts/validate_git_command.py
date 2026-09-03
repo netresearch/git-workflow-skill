@@ -830,18 +830,32 @@ _LOCAL_SHELL_PAYLOAD = re.compile(
 )
 
 
+def _mask_quoted(text: str) -> str:
+    """`text` with each quoted run replaced by filler of the same width."""
+    return _QUOTED_RUN.sub(lambda m: " " * len(m.group(0)), text)
+
+
 def _without_quoted_runs(cmd: str) -> str:
-    """`cmd` with quoted runs blanked to spaces, positions preserved.
+    """`cmd` with quoted runs masked, positions preserved.
 
     A `git push` inside quotes is usually text — a commit message naming the
     command — so `git -C /r commit -m "fix git push"` must not read as a
     second, unnamed write. A payload a local shell will run is the exception
-    and stays visible, so `bash -c 'git push'` is seen as the write it is.
+    and comes back, so `bash -c 'git push'` is seen as the write it is.
+
+    The payload comes back with its OWN quoting masked, though. Restoring it
+    verbatim handed its inner quotes to the separator search, and a separator
+    inside a quoted value there — `bash -c 'git -c "x=a;b" push'` — ended the
+    invocation before its subcommand, so the write went unseen.
     """
-    masked = list(_QUOTED_RUN.sub(lambda m: " " * len(m.group(0)), cmd))
+    masked = list(_mask_quoted(cmd))
     for match in _LOCAL_SHELL_PAYLOAD.finditer(cmd):
         start, end = match.span("payload")
-        masked[start:end] = cmd[start:end]
+        # The interior, not the run itself: masking the payload whole would
+        # mask its own opening quote and hide the payload from this very scan.
+        opener = 2 if cmd[start : start + 2] == "$'" else 1
+        inner_start, inner_end = start + opener, end - 1
+        masked[inner_start:inner_end] = _mask_quoted(cmd[inner_start:inner_end])
     return "".join(masked)
 
 
