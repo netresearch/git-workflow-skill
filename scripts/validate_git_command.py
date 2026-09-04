@@ -906,9 +906,35 @@ def _git_invocations(cmd: str):
         yield subcommand, match.start(), names_directory
 
 
+# A heredoc body is data, not a command: `cat > doc.md <<'EOF' … git commit …
+# EOF` writes text ABOUT a commit, it does not make one. Scanning it denies
+# writing documentation, test fixtures and release notes — the same false
+# denial this gate's harness-local ancestor produced, from the same cause.
+#
+# An UNQUOTED body still expands, so a command substitution inside one really
+# does run. Those spans are kept; the prose around them is not. Replacement is
+# length-preserving because the callers below reason about offsets.
+_HEREDOC_BODY = re.compile(r"<<-?\s*(['\"]?)(\w+)\1(.*?^\2$)", re.DOTALL | re.MULTILINE)
+_SUBSTITUTION = re.compile(r"\$\([^()]*\)|`[^`]*`")
+
+
+def _mask_heredoc_bodies(cmd: str) -> str:
+    """Blank heredoc bodies, keeping what an unquoted one would still execute."""
+
+    def blank(match: "re.Match[str]") -> str:
+        body = match.group(3)
+        kept = [" "] * len(body)
+        if not match.group(1):
+            for sub in _SUBSTITUTION.finditer(body):
+                kept[sub.start() : sub.end()] = body[sub.start() : sub.end()]
+        return match.group(0)[: len(match.group(0)) - len(body)] + "".join(kept)
+
+    return _HEREDOC_BODY.sub(blank, cmd or "")
+
+
 def git_write_without_named_dir(cmd: str) -> str | None:
     """Deny a git write that neither uses `-C` nor follows a `cd` in its scope."""
-    cmd = cmd or ""
+    cmd = _mask_heredoc_bodies(cmd or "")
     unnamed = [
         subcommand
         for subcommand, start, names_directory in _git_invocations(cmd)

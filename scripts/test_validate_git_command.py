@@ -604,6 +604,11 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         # A payload a local shell runs is a command, not text (second round).
         "bash -c 'git push origin main'",
         "sh -c 'git commit -m x'",
+        # An UNQUOTED heredoc expands, so a substitution inside its body is a
+        # command that really runs — unlike the prose around it.
+        "cat > f.md <<EOF\nnow: $(git commit -m x)\nEOF",
+        # A heredoc earlier in the call does not excuse a write after it.
+        "cat > f.md <<'EOF'\ndoc\nEOF\ngit commit -m x",
         # git reads an empty -C as no directory change at all (git 2.55.0).
         'git -C "" push origin main',
         "git --git-dir= push origin main",
@@ -703,6 +708,13 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         # The directory is named; the message only mentions a command.
         "git -C /home/u/repo commit -m 'fix git push handling'",
         "gh pr create --draft",
+        # A heredoc body is text being written, not a command being run. The
+        # gate denied writing any document that mentioned a git write —
+        # documentation, release notes, its own test fixtures.
+        "cat > doc.md <<'EOF'\nrun: git commit -m x\nEOF",
+        "cat > doc.md <<EOF\nrun: git commit -m x\nEOF",
+        # In a QUOTED body a substitution does not expand, so nothing runs.
+        "cat > doc.md <<'EOF'\nnow: $(git commit -m x)\nEOF",
     ]
 
     def test_writes_without_a_named_directory_are_denied(self) -> None:
@@ -726,6 +738,20 @@ class NamedDirectoryWriteGate(unittest.TestCase):
             "deny", decision(run_hook("git -C /r commit -m 'fix git push handling'"))
         )
         self.assertEqual("deny", decision(run_hook("bash -c 'git push origin main'")))
+
+    def test_a_heredoc_body_is_text_unless_it_expands(self) -> None:
+        # The whole distinction in one place. Writing a file that mentions a
+        # git write is not a git write; a substitution inside an UNQUOTED body
+        # is, because that body expands before the command reads it.
+        self.assertNotEqual(
+            "deny", decision(run_hook("cat > d.md <<'EOF'\nrun: git commit -m x\nEOF"))
+        )
+        self.assertNotEqual(
+            "deny", decision(run_hook("cat > d.md <<EOF\nrun: git commit -m x\nEOF"))
+        )
+        self.assertEqual(
+            "deny", decision(run_hook("cat > d.md <<EOF\nnow: $(git commit -m x)\nEOF"))
+        )
 
     def test_the_message_names_the_subcommand_and_both_fixes(self) -> None:
         out = run_hook("git push origin main")
