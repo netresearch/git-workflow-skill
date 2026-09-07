@@ -33,7 +33,19 @@ Add the [Netresearch marketplace](https://github.com/netresearch/claude-code-mar
 ```bash
 # Claude Code
 /plugin marketplace add netresearch/claude-code-marketplace
+/plugin install git-workflow@netresearch-claude-code-marketplace
 ```
+
+### Without a marketplace
+
+Since Claude Code 2.1.157 a plugin directory under your personal skills directory loads on its own, hooks and commands included:
+
+```bash
+git clone https://github.com/netresearch/git-workflow-skill.git \
+  ~/.claude/skills/git-workflow
+```
+
+It loads as `git-workflow@skills-dir` on the next session. Update with `git pull`; remove it by deleting the directory. This route has no `claude plugin update`.
 
 ### npx ([skills.sh](https://skills.sh))
 
@@ -50,6 +62,8 @@ Download the [latest release](https://github.com/netresearch/git-workflow-skill/
 ### Git Clone
 
 ```bash
+
+> **Limitation:** `npx skills` installs `SKILL.md`-based skills only. This repo also ships `hooks`, `commands`, which it does not install — use the marketplace or the skills directory for those.
 git clone https://github.com/netresearch/git-workflow-skill.git
 ```
 
