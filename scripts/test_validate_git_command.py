@@ -607,6 +607,12 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         # An UNQUOTED heredoc expands, so a substitution inside its body is a
         # command that really runs — unlike the prose around it.
         "cat > f.md <<EOF\nnow: $(git commit -m x)\nEOF",
+        # Nesting: a flat $(...) scan matched only the inner $(date) and blanked
+        # the outer write away with the prose, so this passed the gate.
+        'cat > f.md <<EOF\n$(git commit -m x "$(date)")\nEOF',
+        # Two backslashes are an escaped backslash, so the substitution does
+        # expand — the escape rule must not overshoot into this case.
+        "cat > f.md <<EOF\n\\\\$(git commit -m x)\nEOF",
         # A heredoc earlier in the call does not excuse a write after it.
         "cat > f.md <<'EOF'\ndoc\nEOF\ngit commit -m x",
         # git reads an empty -C as no directory change at all (git 2.55.0).
@@ -715,6 +721,14 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         "cat > doc.md <<EOF\nrun: git commit -m x\nEOF",
         # In a QUOTED body a substitution does not expand, so nothing runs.
         "cat > doc.md <<'EOF'\nnow: $(git commit -m x)\nEOF",
+        # A delimiter may contain characters outside \w: bash accepts END-MARK,
+        # and the hyphen used to break the match so the body stayed visible.
+        "cat > doc.md <<'END-MARK'\ngit commit -m x\nEND-MARK",
+        # <<- strips leading TABS from the terminator; requiring column 0 left
+        # the body unmasked.
+        "cat > doc.md <<-'EOF'\n\tgit commit -m x\n\tEOF",
+        # A single backslash makes the substitution literal text to bash.
+        "cat > doc.md <<EOF\n\\$(git commit -m x)\nEOF",
     ]
 
     def test_writes_without_a_named_directory_are_denied(self) -> None:

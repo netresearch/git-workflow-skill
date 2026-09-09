@@ -914,22 +914,86 @@ def _git_invocations(cmd: str):
 # An UNQUOTED body still expands, so a command substitution inside one really
 # does run. Those spans are kept; the prose around them is not. Replacement is
 # length-preserving because the callers below reason about offsets.
-_HEREDOC_BODY = re.compile(r"<<-?\s*(['\"]?)(\w+)\1(.*?^\2$)", re.DOTALL | re.MULTILINE)
-_SUBSTITUTION = re.compile(r"\$\([^()]*\)|`[^`]*`")
+# A delimiter is a shell word, not `\w+`: `<<\'END-MARK\'` is valid, and its
+# hyphen broke the match, so the body stayed visible and the write was denied.
+# `<<-` additionally strips leading TABS from its terminator, so that form needs
+# its own terminator pattern — accepting indentation for the plain form would
+# mask more than bash does, which is the dangerous direction.
+_HEREDOC_START = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_.-]*)\2")
+
+
+def _substitution_spans(body: str) -> list[tuple[int, int]]:
+    r"""Spans an unquoted heredoc would still execute, nesting- and escape-aware.
+
+    A flat `\$\([^()]*\)` cannot see `$(git commit -m "$(date)")`: it matches only
+    the inner `$(date)`, so the outer `git` was blanked away with the prose and
+    an unnamed write passed the gate. Escapes matter in the other direction —
+    `\\$(git commit …)` is literal text to bash, and keeping it executable denied a
+    command that never runs.
+    """
+    spans: list[tuple[int, int]] = []
+    i, n = 0, len(body)
+    while i < n:
+        char = body[i]
+        if char == "\\":
+            i += 2
+            continue
+        if char == "$" and i + 1 < n and body[i + 1] == "(":
+            depth, j = 0, i + 1
+            while j < n:
+                if body[j] == "\\":
+                    j += 2
+                    continue
+                if body[j] == "(":
+                    depth += 1
+                elif body[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        spans.append((i, j + 1))
+                        break
+                j += 1
+            i = j + 1 if j < n else n
+            continue
+        if char == "`":
+            j = i + 1
+            while j < n:
+                if body[j] == "\\":
+                    j += 2
+                    continue
+                if body[j] == "`":
+                    spans.append((i, j + 1))
+                    break
+                j += 1
+            i = j + 1 if j < n else n
+            continue
+        i += 1
+    return spans
 
 
 def _mask_heredoc_bodies(cmd: str) -> str:
     """Blank heredoc bodies, keeping what an unquoted one would still execute."""
-
-    def blank(match: "re.Match[str]") -> str:
-        body = match.group(3)
+    cmd = cmd or ""
+    out = list(cmd)
+    pos = 0
+    while True:
+        start = _HEREDOC_START.search(cmd, pos)
+        if start is None:
+            break
+        dash, quote, delimiter = start.group(1), start.group(2), start.group(3)
+        indent = "[ \t]*" if dash else ""
+        terminator = re.compile(rf"^{indent}{re.escape(delimiter)}$", re.MULTILINE)
+        end = terminator.search(cmd, start.end())
+        if end is None:
+            pos = start.end()
+            continue
+        body = cmd[start.end() : end.start()]
         kept = [" "] * len(body)
-        if not match.group(1):
-            for sub in _SUBSTITUTION.finditer(body):
-                kept[sub.start() : sub.end()] = body[sub.start() : sub.end()]
-        return match.group(0)[: len(match.group(0)) - len(body)] + "".join(kept)
-
-    return _HEREDOC_BODY.sub(blank, cmd or "")
+        if not quote:
+            for sub_start, sub_end in _substitution_spans(body):
+                kept[sub_start:sub_end] = body[sub_start:sub_end]
+        out[start.end() : end.start()] = kept
+        pos = end.end()
+    return "".join(out)
 
 
 def git_write_without_named_dir(cmd: str) -> str | None:
