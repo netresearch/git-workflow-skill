@@ -122,6 +122,88 @@ A force-push invalidates a prior review: the old review stays attached to the
 old commit, so a repo with a `copilot_code_review` rule goes back to BLOCKED
 and needs a fresh request against the new head.
 
+It also throws away a review that has been *requested and not yet delivered*,
+which is the more expensive half because nothing reports it. **Rebase before
+requesting, never after.** On 2026-09-09 three reviews were requested, each
+acknowledged, and the branches were then rebased onto a merged sibling: the
+force-push discarded all three runs and no review ever arrived. The PRs sat
+`CLEAN` with `reviews: NONE on current head` and nothing said why.
+
+#### CodeRabbit answers when it declines, and does not catch up afterwards
+
+Two properties decide whether waiting for CodeRabbit is worth anything:
+
+- **It reviews on events, not on request backlog.** Its own wording: *"CodeRabbit
+  is an incremental review system and does not re-review already reviewed
+  commits."* A review that did not happen at push or ready-for-review time is not
+  pending — it is not going to happen, and waiting produces nothing.
+- **A rate limit is an answer, not silence.** The reply to `@coderabbitai review`
+  is a comment reading `Review rate limited.` under an **`⚠️ Action not
+  completed`** heading. Read it: a request that was refused looks identical to
+  one still running if you only count `reviews: []`. The allowance is hourly and
+  applies to public repositories independently of the organisation's plan — the
+  same notice reports `Plan: Advanced`, `up to 1 included review per hour` and
+  "you've used all free OSS reviews for now" together, so a paid plan is no
+  reason to assume this does not apply.
+
+- **A clean review leaves no review object.** With nothing to report it posts a
+  summary comment reading `No actionable comments were generated in the recent
+  review.` and submits no review and no inline comments. `reviews[]` stays empty
+  and `pr-status.sh` still says `reviews: NONE on current head` — identical to
+  never having run.
+
+So `reviews[]` alone cannot distinguish *refused*, *never triggered* and
+*reviewed, nothing found*. This is the delivery-side twin of the request-side
+trap below — an empty `requested_reviewers` has three producers of its own and
+does not establish the Copilot wall. Same shape, different array, different
+bot: neither array carries the reason it is empty. The summary comment is the
+only place all three are told apart, and each is terminal — a wait loop keyed
+on "a review will appear" spins forever through all of them:
+
+**Read it by commit range, not by grepping for a phrase.** CodeRabbit keeps
+**one** summary comment and edits it in place — `created_at` differs from
+`updated_at`, there is no second comment — and it accumulates a block per push,
+each naming the range it covers:
+
+```text
+<!-- rate limited by coderabbit.ai -->
+> Reviewing files that changed … between 78e7936d and 0dcc7ea1     <- current head, REFUSED
+<!-- end of auto-generated comment: rate limited by coderabbit.ai -->
+
+No actionable comments were generated in the recent review. 🎉
+Reviewing files that changed … between 8b867a4d and 78e7936d       <- previous head, clean
+```
+
+So the same body carries "rate limited" *and* "No actionable comments" at once,
+about different commits. A grep for either phrase answers about whichever push
+happened to leave it — on the body above, matching `No actionable comments`
+reports the head as reviewed and clean when it was in fact refused, which is the
+direction that authorises a merge it should not.
+
+The sound read is to locate the block whose range **ends at the current head**
+and see which marker encloses it:
+
+```bash
+R=owner/repo; PR=123
+H=$(gh pr view "$PR" --repo "$R" --json headRefOid --jq .headRefOid)
+gh api "repos/$R/issues/$PR/comments" \
+  | jq -r '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .body' \
+  | grep -nE "rate limited by coderabbit|No actionable comments|and ${H}\."
+# the marker ABOVE the line naming $H is the verdict for $H;
+# no line naming $H at all -> this head was never reviewed
+```
+
+Three markers, three terminal states: refused, reviewed-clean, never triggered.
+None of them will change by waiting.
+
+When *both* reviewers are walled — Copilot out of monthly quota, CodeRabbit rate
+limited — no bot review is obtainable and the documented path is to read the diff
+yourself and merge on the attestation (`pr-merge.sh --self-reviewed`), noting in
+the PR that the bot review was unavailable. That is not a shortcut around the
+gate; it is the gate's own fallback, and it is worth doing properly: in the same
+session, the one PR CodeRabbit *did* review returned a genuine defect, and the
+hand review of the remaining three found four more.
+
 **On a DRAFT PR the request is silently dropped.** The REST call above answers
 200, but the returned object's `requested_reviewers` stays `[]` and no review
 ever starts — nothing errors, the request just does not take. A
