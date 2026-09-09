@@ -156,18 +156,41 @@ bot: neither array carries the reason it is empty. The summary comment is the
 only place all three are told apart, and each is terminal — a wait loop keyed
 on "a review will appear" spins forever through all of them:
 
-```bash
-gh api "repos/$R/issues/$PR/comments" \
-  | jq -r '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .body' | head -5
-# "Review rate limited." + "Action not completed"  -> refused, not coming
-# "No actionable comments were generated"          -> reviewed, clean
-# no comment at all                                -> never triggered
+**Read it by commit range, not by grepping for a phrase.** CodeRabbit keeps
+**one** summary comment and edits it in place — `created_at` differs from
+`updated_at`, there is no second comment — and it accumulates a block per push,
+each naming the range it covers:
+
+```text
+<!-- rate limited by coderabbit.ai -->
+> Reviewing files that changed … between 78e7936d and 0dcc7ea1     <- current head, REFUSED
+<!-- end of auto-generated comment: rate limited by coderabbit.ai -->
+
+No actionable comments were generated in the recent review. 🎉
+Reviewing files that changed … between 8b867a4d and 78e7936d       <- previous head, clean
 ```
 
-The clean case names the range it covered (`Reviewing files that changed …
-between <base> and <head>`), so it is checkable rather than assumed — read that
-line and confirm the head matches before treating it as a review of the current
-code.
+So the same body carries "rate limited" *and* "No actionable comments" at once,
+about different commits. A grep for either phrase answers about whichever push
+happened to leave it — on the body above, matching `No actionable comments`
+reports the head as reviewed and clean when it was in fact refused, which is the
+direction that authorises a merge it should not.
+
+The sound read is to locate the block whose range **ends at the current head**
+and see which marker encloses it:
+
+```bash
+R=owner/repo; PR=123
+H=$(gh pr view "$PR" --repo "$R" --json headRefOid --jq .headRefOid)
+gh api "repos/$R/issues/$PR/comments" \
+  | jq -r '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .body' \
+  | grep -nE "rate limited by coderabbit|No actionable comments|and ${H}\."
+# the marker ABOVE the line naming $H is the verdict for $H;
+# no line naming $H at all -> this head was never reviewed
+```
+
+Three markers, three terminal states: refused, reviewed-clean, never triggered.
+None of them will change by waiting.
 
 When *both* reviewers are walled — Copilot out of monthly quota, CodeRabbit rate
 limited — no bot review is obtainable and the documented path is to read the diff
