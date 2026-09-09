@@ -183,14 +183,21 @@ reset rather than being aged out; delete the file to undo a verdict recorded in
 error.
 
 The quota wall has a second, earlier face: the `requested_reviewers` POST
-itself can be **silently dropped** — HTTP 200, but the response's
-`requested_reviewers` array is empty and a read-back seconds later still shows
-no pending request, with no errored review anywhere yet. That empty read-back
-right after the POST is the earliest quota tell there is; it looks like "the
-bot will pick it up asynchronously" and is not (five requests across four repos
-were swallowed this way on 2026-08-18 before a later errored review named the
-quota). Read `requested_reviewers` back after the **first** request of a
-session; empty means stop requesting — everywhere — and go straight to the
+itself can be **silently dropped** — HTTP 200, but no pending request appears
+and no errored review follows either (five requests across four repos were
+swallowed this way on 2026-08-18 before a later errored review named the
+quota).
+
+An empty `requested_reviewers` does **not** establish that, and reading it as
+the quota tell states a swallowed request where there was none. The array has
+three producers and cannot tell them apart: the response body never echoes a
+**bot** reviewer at all, a reviewer that has **started** drops off the list
+without having submitted, and only the third case is a genuinely dropped POST.
+Confirm off the **timeline** or the reviews list instead, as
+`merge-gate-watcher.md` § *"What still works while GraphQL is drained"*
+prescribes — an errored Copilot row on the head is the same wall, said out
+loud, and `pr-status.sh` reports it as `copilot_quota_hit`. Once the wall is
+established by either route, stop requesting everywhere and go to the
 self-review path above.
 
 ### Putting the self-review on the record (#203)
@@ -254,6 +261,16 @@ review on the record rather than a flag. This is the case `deps-no-automerge`
 and `deps-major` route to a human by design — `netresearch/.github`'s
 `auto-merge-deps.yml` excludes both labels, and its own documentation says
 majors are approved but left for a human to merge.
+
+**One bot account reaches you under three logins**, so any check written
+against a hardcoded name is wrong for two of them. Measured on
+`netresearch/github-release-skill#110`, all three naming the same Renovate
+install: GraphQL answers `renovate` with `__typename: Bot`, `gh pr view --json
+author` answers `app/renovate` with `is_bot: true`, and the webhook payload
+(what `auto-merge-deps.yml` matches on) answers `renovate[bot]`. `__typename`
+is the only authority — prefer it, and anchor every login pattern you fall back
+to, or `renovate-maintainer` reads as a bot and that person is refused
+`--self-reviewed` on their own pull request.
 
 ### Before believing a script cannot do something: ask which copy is running
 
