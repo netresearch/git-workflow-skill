@@ -246,6 +246,10 @@ The write is found by scanning tokens rather than by one pattern, because a patt
 
 Quoting decides whether text is a command. A quoted run is blanked before the scan, so `git -C /r commit -m "fix git push"` is not read as a second, unnamed write. The exception is a payload a local shell will run: `bash -c 'git push'` is the write it looks like and is denied, while `bash -c 'cd /repo && git push'` passes because the `cd` is in the payload's own scope. `ssh host '…'` is deliberately not inspected — its working directory is on another machine, which is not what this gate is about.
 
+A heredoc body is data, not a command. `cat > doc.md <<'EOF' … git commit … EOF` writes text ABOUT a commit; it makes none. Scanning it denied writing documentation, release notes and the gate's own test fixtures — the same false denial the harness-local ancestor of this gate produced, from the same cause. Bodies are blanked before the scan, with one exception that decides the rule: an UNQUOTED body expands, so a `$( … )` or backtick span inside one really does run and stays in, while the prose around it does not. In a quoted body nothing expands, so the whole body goes. The blanking is length-preserving, because the scan reasons about offsets when it looks backwards for a `cd`.
+
+The same blind spot bit a harness-local attribution gate on the same day, in its other form: it read a `git commit` inside `bash -c '…'` as text and let an undisclosed commit through. Both are the one question — does this span reach a shell? — and a hook that answers it in one place should answer it in the other.
+
 The escape hatch counts only where a shell would read it as an environment assignment, and only on the statement it prefixes: as a substring it disabled the gate from inside a commit message that merely named it (which the messages in this repository do), and as a whole-command test `DESTRUCTIVE_GIT_GATE_OFF=1 true; git push origin main` disabled it for a write the assignment never prefixed. That predicate is shared with `blanket_git_add()`, which had the same weakness.
 
 Escape hatch, shared with the destructive-git gate: `DESTRUCTIVE_GIT_GATE_OFF=1`. Verify both directions: `python3 -m unittest discover -s scripts -p 'test_*.py'` denies `git push origin x` and passes `git -C /repo push origin x`.
@@ -261,6 +265,7 @@ Escape hatch, shared with the destructive-git gate: `DESTRUCTIVE_GIT_GATE_OFF=1`
 | Per-hook large shell scripts inline in JSON | Unreadable, un-testable | Keep inline ≤3 lines; call external script for more |
 | An exception the gate reads from the environment | The hook is its own process; a `VAR=1 cmd` prefix never reaches it, so the documented way out is inert | Read it off the command text, anchored as a leading assignment, and copy the mechanism from the gate already shipping in that hook |
 | A deny text whose promises nothing tests | The message is the contract; an untested promise is usually the case the gate gets wrong | One test per clause of the message — see below |
+| A gate that scans a heredoc body | A body is data unless it expands; scanning it denies writing any document that mentions the command | Blank the body, length-preserving, keeping `$( … )` spans in an unquoted one |
 | A gate built from an incident that covers one command shape | An incident is plural; the shape you remember is rarely the only one it used | Extract every command shape from the transcript and assert the predicate on each |
 
 ### The deny message is a specification
