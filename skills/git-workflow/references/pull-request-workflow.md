@@ -149,9 +149,12 @@ Two properties decide whether waiting for CodeRabbit is worth anything:
   never having run.
 
 So `reviews[]` alone cannot distinguish *refused*, *never triggered* and
-*reviewed, nothing found*. The summary comment is the only place all three are
-told apart, and each is terminal — a wait loop keyed on "a review will appear"
-spins forever through all of them:
+*reviewed, nothing found*. This is the delivery-side twin of the request-side
+trap below — an empty `requested_reviewers` has three producers of its own and
+does not establish the Copilot wall. Same shape, different array, different
+bot: neither array carries the reason it is empty. The summary comment is the
+only place all three are told apart, and each is terminal — a wait loop keyed
+on "a review will appear" spins forever through all of them:
 
 ```bash
 gh api "repos/$R/issues/$PR/comments" \
