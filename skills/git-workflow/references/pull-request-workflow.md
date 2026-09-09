@@ -122,6 +122,37 @@ A force-push invalidates a prior review: the old review stays attached to the
 old commit, so a repo with a `copilot_code_review` rule goes back to BLOCKED
 and needs a fresh request against the new head.
 
+It also throws away a review that has been *requested and not yet delivered*,
+which is the more expensive half because nothing reports it. **Rebase before
+requesting, never after.** On 2026-09-09 three reviews were requested, each
+acknowledged, and the branches were then rebased onto a merged sibling: the
+force-push discarded all three runs and no review ever arrived. The PRs sat
+`CLEAN` with `reviews: NONE on current head` and nothing said why.
+
+#### CodeRabbit answers when it declines, and does not catch up afterwards
+
+Two properties decide whether waiting for CodeRabbit is worth anything:
+
+- **It reviews on events, not on request backlog.** Its own wording: *"CodeRabbit
+  is an incremental review system and does not re-review already reviewed
+  commits."* A review that did not happen at push or ready-for-review time is not
+  pending — it is not going to happen, and waiting produces nothing.
+- **A rate limit is an answer, not silence.** On the free OSS tier the reply to
+  `@coderabbitai review` is a comment reading `Review rate limited.` under an
+  **`⚠️ Action not completed`** heading. Read it: a request that was refused looks
+  identical to one still running if you only count `reviews: []`.
+
+So a wait loop keyed on "a review will appear" can spin forever. Check for the
+refusal comment, and treat it as the terminal state it is.
+
+When *both* reviewers are walled — Copilot out of monthly quota, CodeRabbit rate
+limited — no bot review is obtainable and the documented path is to read the diff
+yourself and merge on the attestation (`pr-merge.sh --self-reviewed`), noting in
+the PR that the bot review was unavailable. That is not a shortcut around the
+gate; it is the gate's own fallback, and it is worth doing properly: in the same
+session, the one PR CodeRabbit *did* review returned a genuine defect, and the
+hand review of the remaining three found four more.
+
 **On a DRAFT PR the request is silently dropped.** The REST call above answers
 200, but the returned object's `requested_reviewers` stays `[]` and no review
 ever starts — nothing errors, the request just does not take. A
