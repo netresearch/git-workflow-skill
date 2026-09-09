@@ -142,8 +142,29 @@ Two properties decide whether waiting for CodeRabbit is worth anything:
   **`⚠️ Action not completed`** heading. Read it: a request that was refused looks
   identical to one still running if you only count `reviews: []`.
 
-So a wait loop keyed on "a review will appear" can spin forever. Check for the
-refusal comment, and treat it as the terminal state it is.
+- **A clean review leaves no review object.** With nothing to report it posts a
+  summary comment reading `No actionable comments were generated in the recent
+  review.` and submits no review and no inline comments. `reviews[]` stays empty
+  and `pr-status.sh` still says `reviews: NONE on current head` — identical to
+  never having run.
+
+So `reviews[]` alone cannot distinguish *refused*, *never triggered* and
+*reviewed, nothing found*. The summary comment is the only place all three are
+told apart, and each is terminal — a wait loop keyed on "a review will appear"
+spins forever through all of them:
+
+```bash
+gh api "repos/$R/issues/$PR/comments" \
+  | jq -r '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .body' | head -5
+# "Review rate limited." + "Action not completed"  -> refused, not coming
+# "No actionable comments were generated"          -> reviewed, clean
+# no comment at all                                -> never triggered
+```
+
+The clean case names the range it covered (`Reviewing files that changed …
+between <base> and <head>`), so it is checkable rather than assumed — read that
+line and confirm the head matches before treating it as a review of the current
+code.
 
 When *both* reviewers are walled — Copilot out of monthly quota, CodeRabbit rate
 limited — no bot review is obtainable and the documented path is to read the diff
