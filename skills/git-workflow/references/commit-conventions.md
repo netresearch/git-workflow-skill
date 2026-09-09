@@ -28,6 +28,44 @@
 | `chore` | Maintenance tasks | - |
 | `revert` | Reverting changes | - |
 
+### The type is not the whole answer for the version
+
+The table maps the *intent* of a change. The version has to describe what a
+**consumer** observes, and the two come apart in one recurring case:
+
+> **If a change takes away something the consumer was getting before, it is at
+> least MINOR — even when the commit is a `fix:`.**
+
+`fix:` says *why* you are doing it. It does not say that nobody depended on
+the behaviour you removed. Fixing a defect that was quietly doing someone a
+favour still changes what they get.
+
+A worked case, because a rule without the case it came from reads as an
+opinion:
+
+```
+fix(apt): never upgrade docker-ce or containerd.io unattended
+```
+
+Genuinely a defect — the role pulled from every APT origin including
+third-party repositories, so unattended-upgrades restarted `dockerd` on an
+ingress node and on both halves of a DNS resolver pair, outside any window.
+The sibling platform had been scoped correctly all along, so this was
+repairing an oversight, and it was tagged as a PATCH.
+
+But hosts that had been getting third-party packages automatically stopped
+getting them. Nothing in the version said so. A consumer upgrading a patch
+level does not read release notes, which is the entire point of patch levels.
+
+**What to do instead:** bump MINOR, and say in the tag or release notes what
+stops happening. If a patch tag is already published, do not re-tag the same
+commit — two tags on one commit create two truths for one change, which is
+worse in hindsight than a version that was one step too low. Put the
+behaviour change where the next reader will look and move on.
+
+`BREAKING CHANGE:` is still reserved for what breaks a consumer outright. This
+rule covers the quieter case in between: nothing breaks, something stops.
+
 ### Examples
 
 ```bash
