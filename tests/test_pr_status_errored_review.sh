@@ -66,6 +66,10 @@ STUB
 import sys, json, os
 out, bodies = sys.argv[1], sys.argv[2:]
 head = "deadbeefcafe"
+# PR_AUTHOR / AUTHOR_TYPE: the PR author as GraphQL reports it. AUTHOR_TYPE is
+# the authority for bot-ness (#280); the login is only the fallback.
+author = {"login": os.environ.get("PR_AUTHOR", "someone"),
+          "__typename": os.environ.get("AUTHOR_TYPE", "User")}
 # COMMENTS_JSON: issue comments on the PR, as [{"author": ..., "body": ...}] —
 # the surface the Self-review attestation (#203) is read from.
 comments = [{"author": {"login": c["author"]}, "body": c["body"],
@@ -95,7 +99,7 @@ json.dump({"data": {"repository": {
     "pullRequest": {
         "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
         "mergeable": "MERGEABLE", "mergeStateStatus": merge_state, "reviewDecision": review_decision,
-        "author": {"login": "someone"},
+        "author": author,
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
         "isCrossRepository": False,
         "comments": {"nodes": comments},
@@ -139,8 +143,10 @@ cat "$STUB_DIR/graphql.json"
 STUB
     chmod +x "$STUB_DIR/gh"
     python3 - "$STUB_DIR/graphql.json" "$@" <<'PY'
-import sys, json
+import sys, json, os
 out, specs = sys.argv[1], sys.argv[2:]
+author = {"login": os.environ.get("PR_AUTHOR", "someone"),
+          "__typename": os.environ.get("AUTHOR_TYPE", "User")}
 head = "deadbeefcafe"
 reviews = []
 approved = False
@@ -162,7 +168,7 @@ json.dump({"data": {"repository": {
         "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
         "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
         "reviewDecision": ("APPROVED" if approved else None),
-        "author": {"login": "someone"},
+        "author": author,
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
         "isCrossRepository": False,
         "reviews": {"nodes": reviews},
@@ -833,6 +839,88 @@ echo "case SR11: CHANGES_REQUESTED + attestation + quota — a human NO is a liv
 COMMENTS_JSON="$SR_MARKER" REVIEW_DECISION=CHANGES_REQUESTED make_stub
 plant_marker
 check "next.action" "request-review" "$(run_next)"
+
+# --- #280: a bot-authored PR cannot use the attestation, so the advice must ---
+# --- name the path that is open to a human instead.                        ---
+APPROVE_CMD="gh pr review 1 --repo o/r --approve"
+SELF_REVIEW_ADVICE="post a PR comment (as the PR author)"
+
+echo "case B1: quota marker + renovate-authored PR — the why names the approve path"
+PR_AUTHOR="renovate[bot]" AUTHOR_TYPE=Bot make_stub
+plant_marker
+check "author_is_bot" "true"           "$(run_flag author_is_bot)"
+check "next.action"   "request-review" "$(run_next)"
+if status | jq -e --arg c "$APPROVE_CMD" '.next.why | index($c) != null' >/dev/null; then
+    echo "  ok   why names the approve command"
+else
+    echo "  FAIL why does not name the approve command"
+    fail=1
+fi
+# The attestation sentence is not merely redundant here, it is unfollowable:
+# nobody can authenticate as the bot, so leaving it in sends the operator at a
+# refusal pr-merge.sh will always answer.
+if status | jq -e --arg a "$SELF_REVIEW_ADVICE" '.next.why | index($a) != null' >/dev/null; then
+    echo "  FAIL why still advertises the attestation a bot author cannot make"
+    fail=1
+else
+    echo "  ok   the unusable attestation advice is gone"
+fi
+
+# The login is the fallback, not the authority: an App-backed author reaches
+# GraphQL as __typename Bot with an ordinary-looking login and no [bot] suffix.
+echo "case B2: __typename Bot with a plain login — still a bot author"
+PR_AUTHOR="some-app" AUTHOR_TYPE=Bot make_stub
+plant_marker
+check "author_is_bot" "true" "$(run_flag author_is_bot)"
+
+# ... and the authority can be absent: a REST-shaped author carries no
+# __typename at all, which is what the login patterns are kept for.
+echo "case B3: renovate login without __typename — the fallback still catches it"
+PR_AUTHOR="renovate[bot]" AUTHOR_TYPE="" make_stub
+plant_marker
+check "author_is_bot" "true" "$(run_flag author_is_bot)"
+
+# The REST-shaped form `gh pr view --json author` answers for the very same
+# account — measured on netresearch/github-release-skill#110, which GraphQL
+# reports as login `renovate` with __typename Bot.
+echo "case B3b: the app/ prefix — the other login form of the same account"
+PR_AUTHOR="app/renovate" AUTHOR_TYPE="" make_stub
+plant_marker
+check "author_is_bot" "true" "$(run_flag author_is_bot)"
+
+# The fallback must not reach past the bot logins it names: a person called
+# renovate-maintainer would otherwise be refused --self-reviewed on their own
+# pull request and handed advice written for a bot.
+echo "case B3c: a human login merely starting with a bot name — not a bot"
+PR_AUTHOR="renovate-maintainer" AUTHOR_TYPE="" make_stub
+plant_marker
+check "author_is_bot" "false" "$(run_flag author_is_bot)"
+if status | jq -e --arg a "$SELF_REVIEW_ADVICE" '.next.why | index($a) != null' >/dev/null; then
+    echo "  ok   the attestation stays available to them"
+else
+    echo "  FAIL a human was handed the bot-only advice"
+    fail=1
+fi
+
+echo "case B4: a human author is untouched — the attestation advice stays"
+make_stub
+plant_marker
+check "author_is_bot" "false" "$(run_flag author_is_bot)"
+if status | jq -e --arg a "$SELF_REVIEW_ADVICE" '.next.why | index($a) != null' >/dev/null; then
+    echo "  ok   the attestation advice survives for a human author"
+else
+    echo "  FAIL the attestation advice was dropped for a human author"
+    fail=1
+fi
+
+# The load-bearing half: the command the advice names must actually open the
+# gate. Without this the fix would be a message pointing at a second dead end.
+echo "case B5: bot author + human APPROVED on the head — the gate opens"
+PR_AUTHOR="renovate[bot]" AUTHOR_TYPE=Bot make_stub_reviews "a-human|APPROVED|reviewed the diff, LGTM"
+plant_marker
+check "author_is_bot"      "true"  "$(run_flag author_is_bot)"
+check "has_review_on_head" "true"  "$(run_flag has_review_on_head)"
+check "next.action"        "merge" "$(run_next)"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"

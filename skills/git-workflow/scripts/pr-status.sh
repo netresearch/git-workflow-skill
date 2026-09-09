@@ -73,7 +73,7 @@
 # `.mergeStateStatus == "CLEAN"` never fires and reads as "still running"
 # forever. Top-level keys:
 #
-#   state mergeable mergeState draft number title repo author
+#   state mergeable mergeState draft number title repo author author_is_bot
 #   base head headOid
 #   checks checks_settled threads unresolved_threads
 #   unanswered_comments unanswered_human unanswered_by unanswered_urls
@@ -259,7 +259,7 @@ collect() {
       pullRequest(number:$pr){
         number title state isDraft mergeable mergeStateStatus reviewDecision
         mergeQueueEntry{ state position estimatedTimeToMerge }
-        author{login}
+        author{login __typename}
         baseRefName headRefName headRefOid isCrossRepository
         # The last page, not the first: a Self-review attestation (see the
         # header) is posted at the end of a conversation, and an old page
@@ -358,6 +358,20 @@ evaluate() {
     | ([$r[]? | .type] | unique) as $ruletypes
     | (($ruletypes | index("copilot_code_review")) != null) as $needs_copilot
     | ($p.author.login) as $author
+    # A bot author can never post the attestation below: it authenticates as
+    # nobody and reviews nothing, so the whole `Self-review:` path is closed on
+    # a Renovate or Dependabot pull request and the advice has to name a
+    # different one (#280). Same predicate as $unanswered_human further down —
+    # __typename is the authority, the login patterns are the fallback for a
+    # REST-shaped author and for App-backed User accounts.
+    # Every alternative is anchored, and each covers a form measured on a real
+    # Renovate pull request: GraphQL answers login `renovate` with __typename
+    # Bot, `gh pr view --json author` answers `app/renovate`, and the webhook
+    # payload answers `renovate[bot]`. An unanchored `^renovate` would also
+    # read the human login `renovate-maintainer` as a bot, which refuses that
+    # person --self-reviewed on their own pull request.
+    | ((($p.author.__typename // "") == "Bot")
+       or ($author | test("\\[bot\\]$|^app/|^(dependabot|renovate)$"; "i"))) as $author_is_bot
     # Self-review attestation (#203). An EXPLICIT operator assertion, not an
     # observation: a PR comment BY THE AUTHOR whose body carries a line
     # `Self-review: <sha>` prefix-matching the current head. This is the
@@ -570,6 +584,7 @@ evaluate() {
                           then ($self_review_comments | last | .url)
                           else null end),
         author: $author,
+        author_is_bot: $author_is_bot,
         requested_reviewers: [$p.reviewRequests.nodes[]?.requestedReviewer|(.login // .slug)],
         unresolved_threads: ($unresolved|length),
         unanswered_comments: ($unanswered_comments|length),
@@ -660,13 +675,26 @@ evaluate() {
        + " same month and go again minutes later, so the record above expires on its own and"
        + " is dropped as soon as a Copilot review is observed. Review the diff yourself, note"
        + " in the PR that the bot review was unavailable, and decide on that."
-       + " To proceed on a documented self-review, post a PR comment (as the PR author)"
-       + " containing the line `Self-review: <head-sha>` with at least the first 12"
-       + " chars of \($s.headOid[0:12]) — pr-merge.sh --self-reviewed posts it and merges in"
-       + " one step; the attestation is honoured only while this wall stands and dies with"
-       + " the next push. The placeholder here is deliberate: this very advice gets pasted"
-       + " into PR comments, and a paste must never mint an attestation, so the accepting"
-       + " sequence never appears in it") as $quota_why
+       # The attestation is an assertion BY THE AUTHOR, so on a bot-authored pull
+       # request nobody can make it and pr-merge.sh --self-reviewed refuses. What
+       # is left there is the ordinary review a human can give: an APPROVED review
+       # on this head satisfies the policy on its own, in this branch and in the
+       # generic one below (#280).
+       + (if $s.author_is_bot
+          then " The pull request is authored by \($author), so the self-review attestation is"
+               + " not available on it: that attestation is an assertion by the author, and a bot"
+               + " never authenticates and never reads a diff. Review the diff and approve it as"
+               + " yourself instead — an approval on this head satisfies the gate, and pr-merge.sh"
+               + " then merges without any flag:"
+               + " gh pr review \($s.number) --repo \($s.repo) --approve"
+          else " To proceed on a documented self-review, post a PR comment (as the PR author)"
+               + " containing the line `Self-review: <head-sha>` with at least the first 12"
+               + " chars of \($s.headOid[0:12]) — pr-merge.sh --self-reviewed posts it and merges in"
+               + " one step; the attestation is honoured only while this wall stands and dies with"
+               + " the next push. The placeholder here is deliberate: this very advice gets pasted"
+               + " into PR comments, and a paste must never mint an attestation, so the accepting"
+               + " sequence never appears in it"
+          end)) as $quota_why
     | .next =
         (if $s.state != "OPEN" then
            {action:"none", why:"PR is \($s.state)"}

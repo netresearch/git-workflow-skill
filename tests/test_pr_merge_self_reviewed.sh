@@ -53,7 +53,8 @@ make_status_json() {
 {
   "repo": "o/r", "number": 559, "queue_active": false,
   "merge_methods": ["merge", "rebase"],
-  "headOid": "$HEAD_OID", "author": "the-author",
+  "headOid": "$HEAD_OID", "author": "${PR_AUTHOR:-the-author}",
+  "author_is_bot": ${AUTHOR_IS_BOT:-false},
   "copilot_quota_exhausted": true, "copilot_error_count": 2,
   "self_review_on_head": $4,
   "next": {"action": "$2", $reason_line "why": "$why", "method": "--merge"}
@@ -217,6 +218,37 @@ if grep -q '^pr merge$' "$STUB_DIR/calls.log"; then
 else
     echo "  ok   no merge on a refusing re-read"
 fi
+
+# --- #280: on a bot-authored PR the author check can never be satisfied. The
+# --- refusal must say so and name the path that IS open, instead of asking the
+# --- operator to become renovate.
+echo "case 8: bot-authored PR + --self-reviewed — refused, and the refusal names the approve path"
+make_status_stub; make_gh; set_viewer_raw "a-human"
+PR_AUTHOR="renovate[bot]" AUTHOR_IS_BOT=true \
+  make_status_json status.1.json request-review bot-review-unsatisfiable false
+out=$(run --self-reviewed); rc=$?
+err=$(cat "$STUB_DIR/err")
+check "exit code" "2" "$rc"
+says "names the bot author"   "renovate[bot] is a bot"                     "$err"
+says "names the approve path" "gh pr review 559 --repo o/r --approve"      "$err"
+# The generic author-identity refusal is the one this case exists to replace:
+# it is true but unactionable here, and it was what sent a merge around the
+# script.
+says_not "not the generic identity refusal" "the attestation must come from the PR author" "$err"
+if grep -q '^pr comment$' "$STUB_DIR/calls.log"; then
+    echo "  FAIL an attestation was posted for a bot-authored PR"; fail=1
+else
+    echo "  ok   no comment was posted"
+fi
+# The flag is refused; the gate itself is not relaxed. Once a human has
+# approved, pr-status answers merge and the plain call goes through.
+echo "case 9: same PR after a human approval — the plain call merges"
+make_status_stub; make_gh; set_viewer_raw "a-human"
+PR_AUTHOR="renovate[bot]" AUTHOR_IS_BOT=true \
+  make_status_json status.1.json merge - false
+out=$(run); rc=$?
+check "exit code" "0" "$rc"
+says "merged" "559 merged (--merge)" "$out"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"

@@ -125,9 +125,10 @@ if [ "$SELF_REVIEWED" = "1" ] && [ "$ACTION" = "request-review" ]; then
   SR_FIELDS=$(printf '%s' "$STATUS" | jq -er '
     [ (.next.reason // "-"),
       ((.self_review_on_head // false)|tostring),
-      (.headOid // ""), (.author // "")
+      (.headOid // ""), (.author // ""),
+      ((.author_is_bot // false)|tostring)
     ] | @tsv') || die "pr-status.sh returned unexpected JSON"
-  IFS=$'\t' read -r SR_REASON SR_HAVE SR_HEAD SR_AUTHOR <<EOF
+  IFS=$'\t' read -r SR_REASON SR_HAVE SR_HEAD SR_AUTHOR SR_AUTHOR_BOT <<EOF
 $SR_FIELDS
 EOF
   # Keyed on the reason the REFUSING BRANCH stamped, never re-derived from the
@@ -138,6 +139,15 @@ EOF
   # history there.
   if [ "$SR_REASON" != "bot-review-unsatisfiable" ]; then
     die "--self-reviewed refused: this request-review is not the unsatisfiable-bot-review case (reason: $SR_REASON) — a live review path exists, use it"
+  fi
+  # A bot-authored pull request can never satisfy the author check below, so
+  # the generic refusal would send the operator looking for a way to become
+  # renovate. Named separately, with the path that does exist: approving the
+  # head as yourself satisfies the same gate, and pr-merge then merges without
+  # any flag (#280). No relaxation — a third party still cannot mint an
+  # attestation for someone else's pull request.
+  if [ "$SR_AUTHOR_BOT" = "true" ]; then
+    die "--self-reviewed refused: $SR_AUTHOR is a bot, and the attestation is an assertion by the PR author — a bot never reads the diff, so this flag has no meaning here. Review the diff and approve it as yourself: gh pr review $PR --repo $REPO --approve, then re-run this script without --self-reviewed."
   fi
   VIEWER=$(gh api user --jq .login 2>/dev/null) || die "--self-reviewed: could not resolve the authenticated gh user"
   if [ "$VIEWER" != "$SR_AUTHOR" ]; then
