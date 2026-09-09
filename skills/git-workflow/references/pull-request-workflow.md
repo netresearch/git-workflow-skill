@@ -137,10 +137,14 @@ Two properties decide whether waiting for CodeRabbit is worth anything:
   is an incremental review system and does not re-review already reviewed
   commits."* A review that did not happen at push or ready-for-review time is not
   pending — it is not going to happen, and waiting produces nothing.
-- **A rate limit is an answer, not silence.** On the free OSS tier the reply to
-  `@coderabbitai review` is a comment reading `Review rate limited.` under an
-  **`⚠️ Action not completed`** heading. Read it: a request that was refused looks
-  identical to one still running if you only count `reviews: []`.
+- **A rate limit is an answer, not silence.** The reply to `@coderabbitai review`
+  is a comment reading `Review rate limited.` under an **`⚠️ Action not
+  completed`** heading. Read it: a request that was refused looks identical to
+  one still running if you only count `reviews: []`. The allowance is hourly and
+  applies to public repositories independently of the organisation's plan — the
+  same notice reports `Plan: Advanced`, `up to 1 included review per hour` and
+  "you've used all free OSS reviews for now" together, so a paid plan is no
+  reason to assume this does not apply.
 
 - **A clean review leaves no review object.** With nothing to report it posts a
   summary comment reading `No actionable comments were generated in the recent
