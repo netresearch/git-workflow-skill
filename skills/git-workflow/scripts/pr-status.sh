@@ -364,8 +364,14 @@ evaluate() {
     # different one (#280). Same predicate as $unanswered_human further down —
     # __typename is the authority, the login patterns are the fallback for a
     # REST-shaped author and for App-backed User accounts.
+    # Every alternative is anchored, and each covers a form measured on a real
+    # Renovate pull request: GraphQL answers login `renovate` with __typename
+    # Bot, `gh pr view --json author` answers `app/renovate`, and the webhook
+    # payload answers `renovate[bot]`. An unanchored `^renovate` would also
+    # read the human login `renovate-maintainer` as a bot, which refuses that
+    # person --self-reviewed on their own pull request.
     | ((($p.author.__typename // "") == "Bot")
-       or ($author | test("\\[bot\\]$|^(dependabot|renovate)"; "i"))) as $author_is_bot
+       or ($author | test("\\[bot\\]$|^app/|^(dependabot|renovate)$"; "i"))) as $author_is_bot
     # Self-review attestation (#203). An EXPLICIT operator assertion, not an
     # observation: a PR comment BY THE AUTHOR whose body carries a line
     # `Self-review: <sha>` prefix-matching the current head. This is the

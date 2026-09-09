@@ -880,6 +880,28 @@ PR_AUTHOR="renovate[bot]" AUTHOR_TYPE="" make_stub
 plant_marker
 check "author_is_bot" "true" "$(run_flag author_is_bot)"
 
+# The REST-shaped form `gh pr view --json author` answers for the very same
+# account — measured on netresearch/github-release-skill#110, which GraphQL
+# reports as login `renovate` with __typename Bot.
+echo "case B3b: the app/ prefix — the other login form of the same account"
+PR_AUTHOR="app/renovate" AUTHOR_TYPE="" make_stub
+plant_marker
+check "author_is_bot" "true" "$(run_flag author_is_bot)"
+
+# The fallback must not reach past the bot logins it names: a person called
+# renovate-maintainer would otherwise be refused --self-reviewed on their own
+# pull request and handed advice written for a bot.
+echo "case B3c: a human login merely starting with a bot name — not a bot"
+PR_AUTHOR="renovate-maintainer" AUTHOR_TYPE="" make_stub
+plant_marker
+check "author_is_bot" "false" "$(run_flag author_is_bot)"
+if status | jq -e --arg a "$SELF_REVIEW_ADVICE" '.next.why | index($a) != null' >/dev/null; then
+    echo "  ok   the attestation stays available to them"
+else
+    echo "  FAIL a human was handed the bot-only advice"
+    fail=1
+fi
+
 echo "case B4: a human author is untouched — the attestation advice stays"
 make_stub
 plant_marker
