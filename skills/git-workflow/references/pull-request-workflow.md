@@ -230,6 +230,31 @@ state it claims to observe — the same reason the old "review-yourself"
 it only when the diff was actually reviewed, and say what was looked at in
 the review-note comment beside it.
 
+### A bot-authored pull request takes the other path (#280)
+
+The attestation is an assertion by the author, so it is unavailable on a
+Renovate or Dependabot pull request: nobody can authenticate as the bot, and
+`--self-reviewed` refuses. That leaves the ordinary path, which was open the
+whole time and went unnamed — a human `APPROVED` review on the current head
+satisfies the never-merge-unreviewed policy on its own, in the
+`copilot_code_review` branch as well as the generic one:
+
+```bash
+gh pr review 123 --repo owner/repo --approve   # after reading the diff
+pr-merge.sh -R owner/repo 123                  # no flag
+```
+
+A `COMMENTED` review is not enough — that is what a CodeRabbit note or a
+thread reply registers as, and the gate reads the approval list, not
+`has_review_on_head`. `pr-status.sh` reports `author_is_bot` and swaps the
+attestation advice for this command; `pr-merge.sh --self-reviewed` names it in
+its refusal. Nothing about the gate is relaxed: a third party still cannot mint
+an attestation for someone else's pull request, and the approval is a real
+review on the record rather than a flag. This is the case `deps-no-automerge`
+and `deps-major` route to a human by design — `netresearch/.github`'s
+`auto-merge-deps.yml` excludes both labels, and its own documentation says
+majors are approved but left for a human to merge.
+
 ### Before believing a script cannot do something: ask which copy is running
 
 Every script in `scripts/` answers `--version`, and prints the resolved path beneath it:
