@@ -1301,6 +1301,62 @@ grep -E 'OK|FAILURES' out.txt          # read it, but don't gate on it
 (`set -o pipefail` does the same in bash, zsh and ksh, but it is not in POSIX
 `sh` — a script with `#!/bin/sh` under dash will fail on it.)
 
+#### `pipefail` makes `… | grep … || echo "not found"` lie
+
+The `||` fallback beside a pipeline reads as "the grep found nothing". Under
+`pipefail` it also fires when the grep *matched* and the command feeding it
+failed, because the pipeline then carries the writer's status:
+
+```bash
+bash -c '(echo MATCH; exit 1) | grep -q MATCH; echo $?'                  # 0 — grep's
+bash -c 'set -o pipefail; (echo MATCH; exit 1) | grep -q MATCH; echo $?'  # 1 — the writer's
+```
+
+The result is a message contradicting the output directly above it — a verifier
+printing its findings and then "nothing found", or a guard visibly firing under
+the line `GUARD DID NOT FIRE`. Both were observed within one session, and the
+false line was believed once.
+
+**The writer does not have to be broken.** `grep -q` exits at the first match,
+which closes the pipe; a writer still pushing data then dies of SIGPIPE and the
+pipeline carries *its* status. So the fallback fires on a match — the more input
+there is, the more reliably:
+
+```bash
+set -o pipefail
+out=$(awk 'BEGIN { for (i = 1; i <= 100000; i++) print "MATCH" }')
+printf '%s\n' "$out" | grep -q MATCH || echo "pattern absent"   # prints it
+```
+
+This is what makes the trap durable: the same line passes on a one-line
+fixture and fails on real data, so a test written alongside it agrees with the
+bug.
+
+Since `set -o pipefail` belongs at the top of every multi-step block, the
+fallback is the part to change, not the option. Remove the pipe where the input
+is already in hand — a here-string cannot SIGPIPE and has no pipeline status:
+
+```bash
+set -o pipefail
+out=$(producer) || { echo "producer failed"; exit 1; }   # writer, on its own
+grep -q PATTERN <<< "$out" || echo "pattern absent"      # reader, on its own
+```
+
+Where the producer must stream, read the grep's own status out of
+`PIPESTATUS` — `$?` after a pipeline is the *pipeline's* status, so under
+`pipefail` it is 141 (SIGPIPE) on exactly the match this is meant to detect:
+
+```bash
+set -o pipefail
+producer | grep -q PATTERN
+found=${PIPESTATUS[1]}          # 0 matched, 1 absent — $? here would be 141
+[ "$found" -eq 0 ] || echo "pattern absent"
+```
+
+That also keeps a broken producer visible: `${PIPESTATUS[0]}` is its status, and
+it is worth checking separately rather than folding into one verdict about the
+data.
+
 Afterwards verify what actually landed, on the remote rather than locally.
 Match one unique line from the change — `grep -c` counts matching *lines*, so a
 multi-line pattern will not match at all; `-F` avoids regex surprises in code:
