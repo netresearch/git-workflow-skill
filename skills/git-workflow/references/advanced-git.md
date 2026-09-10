@@ -1301,6 +1301,36 @@ grep -E 'OK|FAILURES' out.txt          # read it, but don't gate on it
 (`set -o pipefail` does the same in bash, zsh and ksh, but it is not in POSIX
 `sh` — a script with `#!/bin/sh` under dash will fail on it.)
 
+#### `pipefail` makes `… | grep … || echo "not found"` lie
+
+The `||` fallback beside a pipeline reads as "the grep found nothing". Under
+`pipefail` it also fires when the grep *matched* and the command feeding it
+failed, because the pipeline then carries the writer's status:
+
+```bash
+bash -c '(echo MATCH; exit 1) | grep -q MATCH; echo $?'                  # 0 — grep's
+bash -c 'set -o pipefail; (echo MATCH; exit 1) | grep -q MATCH; echo $?'  # 1 — the writer's
+```
+
+The result is a message contradicting the output directly above it — a verifier
+printing its findings and then "nothing found", or a guard visibly firing under
+the line `GUARD DID NOT FIRE`. Both were observed within one session, and the
+false line was believed once.
+
+Since `set -o pipefail` belongs at the top of every multi-step block, the
+fallback is the part to change, not the option. Test the exit code you actually
+mean:
+
+```bash
+set -o pipefail
+out=$(producer) || { echo "producer failed"; exit 1; }   # writer, on its own
+printf '%s\n' "$out" | grep -q PATTERN || echo "pattern absent"
+```
+
+Failing that, put the fallback on the grep alone (`{ grep -q P || echo absent; }`)
+so a broken producer surfaces as a failure rather than as a finding about the
+data.
+
 Afterwards verify what actually landed, on the remote rather than locally.
 Match one unique line from the change — `grep -c` counts matching *lines*, so a
 multi-line pattern will not match at all; `-F` avoids regex surprises in code:
