@@ -1317,18 +1317,44 @@ printing its findings and then "nothing found", or a guard visibly firing under
 the line `GUARD DID NOT FIRE`. Both were observed within one session, and the
 false line was believed once.
 
+**The writer does not have to be broken.** `grep -q` exits at the first match,
+which closes the pipe; a writer still pushing data then dies of SIGPIPE and the
+pipeline carries *its* status. So the fallback fires on a match — the more input
+there is, the more reliably:
+
+```bash
+set -o pipefail
+out=$(awk 'BEGIN { for (i = 1; i <= 100000; i++) print "MATCH" }')
+printf '%s\n' "$out" | grep -q MATCH || echo "pattern absent"   # prints it
+```
+
+This is what makes the trap durable: the same line passes on a one-line
+fixture and fails on real data, so a test written alongside it agrees with the
+bug.
+
 Since `set -o pipefail` belongs at the top of every multi-step block, the
-fallback is the part to change, not the option. Test the exit code you actually
-mean:
+fallback is the part to change, not the option. Remove the pipe where the input
+is already in hand — a here-string cannot SIGPIPE and has no pipeline status:
 
 ```bash
 set -o pipefail
 out=$(producer) || { echo "producer failed"; exit 1; }   # writer, on its own
-printf '%s\n' "$out" | grep -q PATTERN || echo "pattern absent"
+grep -q PATTERN <<< "$out" || echo "pattern absent"      # reader, on its own
 ```
 
-Failing that, put the fallback on the grep alone (`{ grep -q P || echo absent; }`)
-so a broken producer surfaces as a failure rather than as a finding about the
+Where the producer must stream, read the grep's own status out of
+`PIPESTATUS` — `$?` after a pipeline is the *pipeline's* status, so under
+`pipefail` it is 141 (SIGPIPE) on exactly the match this is meant to detect:
+
+```bash
+set -o pipefail
+producer | grep -q PATTERN
+found=${PIPESTATUS[1]}          # 0 matched, 1 absent — $? here would be 141
+[ "$found" -eq 0 ] || echo "pattern absent"
+```
+
+That also keeps a broken producer visible: `${PIPESTATUS[0]}` is its status, and
+it is worth checking separately rather than folding into one verdict about the
 data.
 
 Afterwards verify what actually landed, on the remote rather than locally.
