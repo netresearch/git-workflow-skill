@@ -27,10 +27,15 @@ The usual shape is a CI job that fetches other branch heads cheaply, two lines
 above the command that needs history. Both look innocent; only the pair is
 wrong. If a job needs ancestry, it needs the history:
 
-- GitLab: `GIT_DEPTH: 0` on that job, and no `--depth` in any fetch the script
-  runs. `git fetch --unshallow` does **not** rescue it when the runner's own
-  refspec is a single ref.
-- GitHub Actions: `actions/checkout` with `fetch-depth: 0`.
+- GitLab: `GIT_DEPTH: 0` on that job, **and no `--depth` in any fetch the script
+  runs**. The second half is the one that gets missed: a job can start with full
+  history and lose it to a `--depth=1` line of its own three commands later.
+- GitHub Actions: `actions/checkout` with `fetch-depth: 0`, same caveat.
+
+`git fetch --unshallow` does recover a shallow checkout — with or without a ref
+argument, and even where the remote's configured refspec is a single ref
+(measured both ways). It is not a defence against the above, because a later
+`--depth` fetch simply makes the repository shallow again; order decides.
 
 A tool that depends on ancestry should say which state it is in rather than
 answer from a truncated graph — `git rev-parse --is-shallow-repository` is one
@@ -102,7 +107,13 @@ git cherry -v <base> <branch>         # '+' = unique to branch, '-' = already in
 # whose content is entirely in main. Deleting on that answer feels unsafe;
 # keeping on it leaves dead branches forever. `git cherry` compares patch-ids
 # and gives the content answer:
-git cherry origin/main <branch> | grep -c '^+'   # 0 = nothing outstanding, safe to delete
+git cherry origin/main <branch> | grep -c '^+'   # 0 = no commit carries a patch main lacks
+
+# `git cherry` compares patch-ids, and patch-id NORMALISES WHITESPACE. Two
+# commits that differ only in indentation have the same patch-id, so a branch
+# whose sole change is a reformat reports 0 outstanding while its tree really
+# does differ. Confirm with a tree comparison before deleting anything:
+git diff --quiet origin/main...<branch> || echo "trees differ — do NOT delete on cherry alone"
 git merge-base <base> <branch>        # confirm how far back it forks
 
 # Replay ONLY the commits after <keep-base> onto the current base, dropping the

@@ -962,6 +962,10 @@
       {
         "type": "content",
         "pattern": "(GIT_DEPTH: ?0|fetch-depth: ?0|is-shallow-repository)"
+      },
+      {
+        "type": "content",
+        "pattern": "(no --depth|order|later fetch|again)"
       }
     ]
   },
@@ -980,6 +984,10 @@
       {
         "type": "content",
         "pattern": "(rebase|new (objects|SHAs|commits)|rewritten)"
+      },
+      {
+        "type": "content",
+        "pattern": "(whitespace|patch.?id normalis|git diff --quiet|tree comparison)"
       }
     ]
   },
@@ -998,6 +1006,10 @@
       {
         "type": "content",
         "pattern": "(code (block|fence)|regex|squash)"
+      },
+      {
+        "type": "content",
+        "pattern": "(divider line|line beginning with)"
       }
     ]
   }

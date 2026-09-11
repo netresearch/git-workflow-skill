@@ -163,21 +163,28 @@ Three ways the regex is wrong, all reproduced rather than imagined:
   an opt-in should be written the way it is documented — match the name as
   written.
 
-`--no-divider` is not optional for this: without it `---` anywhere in the body
-ends the parse, so a markdown rule or a pasted diffstat silently drops a
-trailer that is really there. Failing closed is right; failing closed *silently*
-sends the author to debug the wrong thing.
+`--no-divider` is not optional for this. Without it a **divider line** ends the
+parse and every trailer after it disappears — that is a line beginning with
+`---` followed by a space or the end of the line, so a markdown rule or the
+`---` git itself puts above a diffstat both count. Measured: `--- a note` and a
+bare `---` both swallow the trailer; `----` and a `---` in the middle of a line
+do not. A pasted patch or a rule in the body therefore drops a trailer that is
+really there. Failing closed is right; failing closed *silently* sends the
+author to debug the wrong thing.
 
 Two properties worth knowing before designing around trailers:
 
 - What counts as the trailer block is a **heuristic**. A prose line directly
   above can put a trailer outside it; a `Signed-off-by` footer usually keeps it
   in. Check with the command above rather than by eye.
-- A **squash merge does not carry them**. GitHub and GitLab both build the
-  squash message from the pull/merge request, not from the source commits, so
-  any mechanism that reads a trailer on the target branch breaks the moment
-  someone squashes. If the mechanism matters, turn squash off for the project
-  (`squash_option: never` on GitLab) rather than documenting the hazard.
+- A **squash merge does not reliably preserve them**. Both forges compose that
+  message from the pull/merge request rather than by aggregating the source
+  commits' trailers; GitLab can inject some metadata through
+  `squash_commit_template`, but neither platform guarantees that a particular
+  source trailer survives. So a mechanism that reads a trailer on the target
+  branch cannot depend on one being there after a squash. If the mechanism
+  matters, turn squash off for the project (`squash_option: never` on GitLab)
+  rather than documenting the hazard.
 
 ## Signed Commits + DCO Sign-Off (Required)
 
