@@ -988,7 +988,12 @@ def _unquoted_heredoc_offsets(cmd: str) -> set[int]:
     i, n, quote = 0, len(cmd), ""
     while i < n:
         char = cmd[i]
-        if char == "\\":
+        # A backslash escapes only where the active quote mode lets it. Inside
+        # '…' bash takes it literally, so consuming the next character there
+        # swallows the CLOSING quote, leaves the scan inside the string, and the
+        # real opener after it is missed — then a heredoc body is read as
+        # commands and text the call only writes gets denied.
+        if char == "\\" and quote != "'":
             i += 2
             continue
         if quote:
@@ -999,6 +1004,21 @@ def _unquoted_heredoc_offsets(cmd: str) -> set[int]:
         if char in "'\"":
             quote = char
             i += 1
+            continue
+        # "<<" inside $(( … )) is a left shift, not a redirection. Taking it for
+        # an opener and finding a later line equal to the right operand blanks
+        # everything between, so a destructive write in that span disappears.
+        if char == "$" and cmd.startswith("$((", i):
+            depth, j = 0, i + 1
+            while j < n:
+                if cmd[j] == "(":
+                    depth += 1
+                elif cmd[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            i = j + 1 if j < n else n
             continue
         if char == "<" and cmd.startswith("<<", i):
             match = _HEREDOC_START.match(cmd, i)

@@ -779,6 +779,26 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         self.assertEqual("deny", decision(run_hook(control)))
         self.assertEqual("deny", decision(run_hook(hidden)))
 
+    def test_an_arithmetic_shift_is_not_a_heredoc_opener(self) -> None:
+        # `<<` inside $(( … )) is a left shift. Taking it for an opener and
+        # finding a later line equal to the right operand blanks everything
+        # between, so a destructive write in that span disappears. The control
+        # differs only in the operator.
+        hidden = ": $(( FLAG << SHIFT ))\ngit tag -d release\nSHIFT"
+        control = ": $(( FLAG + SHIFT ))\ngit tag -d release\nSHIFT"
+        self.assertEqual("deny", decision(run_hook(control)))
+        self.assertEqual("deny", decision(run_hook(hidden)))
+
+    def test_a_backslash_is_literal_inside_single_quotes(self) -> None:
+        # Bash does not honour escapes inside '…', so the quote after `a\`
+        # closes it. Treating the backslash as an escape swallows that quote,
+        # leaves the scanner inside the string, and the real `<<EOF` opener is
+        # missed — then a heredoc BODY is read as commands and text is denied.
+        body_only = "printf '%s\\n' 'a\\' <<EOF\ngit commit -m x\nEOF"
+        control = "printf '%s\\n' 'a' <<EOF\ngit commit -m x\nEOF"
+        self.assertNotEqual("deny", decision(run_hook(control)))
+        self.assertNotEqual("deny", decision(run_hook(body_only)))
+
     def test_the_message_names_the_subcommand_and_both_fixes(self) -> None:
         out = run_hook("git push origin main")
         self.assertIn("`git push`", out)
