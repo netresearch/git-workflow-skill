@@ -1734,12 +1734,14 @@ The tell is in the fetch, not the push, and it is easy to miss because the fetch
 
 ```bash
 git fetch origin "$BR:refs/remotes/origin/$BR"
-# fatal: couldn't find remote ref release/v1.8.2
-git push --force-with-lease="$BR:$(git rev-parse origin/"$BR")"
-# ! [rejected]  (stale info)     ← same message, different world
+# fatal: couldn't find remote ref release/v1.8.2   ← the answer is HERE
+git push --force-with-lease
+# ! [rejected]  (stale info)                       ← same message, different world
 ```
 
-So when a lease refresh does not fix `stale info`, read the fetch's own output before pinning the lease harder, and check the PR rather than the ref: `gh pr view <n> --json state,mergedAt`. If it says `MERGED`, the amend is no longer available — the commit is on the default branch, and rewriting shared history to improve a commit message is worse than the message. Observed on a fleet release sweep where four bump PRs auto-merged between the commit and the amend; two rounds went into the lease before the `couldn't find remote ref` line was read.
+The local `origin/<branch>` usually still exists — your own earlier push created it — so the tracking ref looks healthy and only the fetch knows the truth. Do not pin the lease to it as a workaround: `--force-with-lease="$BR:$(git rev-parse origin/"$BR")"` is the documented remedy for the *first* cause, and here `git rev-parse` may fail outright, leaving the substitution empty and the expectation meaningless.
+
+So when a lease refresh does not fix `stale info`, read the fetch's own output before pinning the lease harder, and check the PR rather than the ref: `gh pr view <n> --json state,mergedAt`. If it says `MERGED`, the PR's changes are on its base branch — under squash or rebase merges as new commits, so the original head SHA need not be there at all — and a local `git commit --amend` cannot change the merged result. Do not recreate or rewrite the branch only to change a commit message. Observed on a fleet release sweep where four bump PRs auto-merged between the commit and the amend; two rounds went into the lease before the `couldn't find remote ref` line was read.
 
 ### Complex Conflicts
 
