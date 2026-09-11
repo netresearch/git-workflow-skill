@@ -946,5 +946,59 @@
         "pattern": "(conflict marker|<<<<<<<|gate|pre-commit)"
       }
     ]
+  },
+  {
+    "name": "shallow_fetch_truncates_repository",
+    "prompt": "A CI job fetches other branch heads with `git fetch --depth=1 origin '+refs/heads/*:refs/remotes/origin/*'` and then a later step checks whether a commit is an ancestor of main. The check passes but appears to verify nothing. Why?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(shallow|\\.git/shallow|truncat)"
+      },
+      {
+        "type": "content",
+        "pattern": "(whole repository|entire repository|not (just|only) the refs|all ancestry)"
+      },
+      {
+        "type": "content",
+        "pattern": "(GIT_DEPTH: ?0|fetch-depth: ?0|is-shallow-repository)"
+      }
+    ]
+  },
+  {
+    "name": "is_branch_merged_under_rebase_merge",
+    "prompt": "On a GitLab project with merge_method rebase_merge, `git merge-base --is-ancestor my-branch origin/main` says no, but the branch's changes are clearly in main. How do I decide whether the branch can be deleted?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "git cherry"
+      },
+      {
+        "type": "content",
+        "pattern": "(patch.?id|patch ID)"
+      },
+      {
+        "type": "content",
+        "pattern": "(rebase|new (objects|SHAs|commits)|rewritten)"
+      }
+    ]
+  },
+  {
+    "name": "read_commit_trailers_safely",
+    "prompt": "I want a CI check to honour an opt-in written as a git trailer in the commit message. How should the check read that trailer?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "git interpret-trailers"
+      },
+      {
+        "type": "content",
+        "pattern": "--no-divider"
+      },
+      {
+        "type": "content",
+        "pattern": "(code (block|fence)|regex|squash)"
+      }
+    ]
   }
 ]

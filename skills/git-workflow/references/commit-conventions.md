@@ -141,6 +141,44 @@ Markdown files**, follow the repo's existing convention: many hard-wrap prose
 docs for readable diffs, so match the surrounding files rather than mixing two
 styles in one tree.
 
+## Reading Trailers Back: `git interpret-trailers`, Never a Regex
+
+Anything that makes a decision from a commit trailer — a release note generator,
+an audit, a CI gate honouring an opt-in — must ask git what a trailer is. A
+`^Name:` regex over `%B` matches text that is not a trailer at all:
+
+```bash
+git log --format='%B' -1 | git interpret-trailers --parse --no-divider
+```
+
+Three ways the regex is wrong, all reproduced rather than imagined:
+
+- **Inside a fenced code block.** A commit documenting the trailer format, whose
+  prose says "this is only an example", hands out a real one.
+- **In the quoted body of a `Revert "..."`** that a person pasted in. (A real
+  `git revert` does not carry the reverted commit's trailers forward — that path
+  is safe. A hand-written message is not.)
+- **Case.** With `re.I`, `allow-policy-narrowing:` works where the documentation
+  says `Allow-Policy-Narrowing:`. git looks trailers up case-insensitively, but
+  an opt-in should be written the way it is documented — match the name as
+  written.
+
+`--no-divider` is not optional for this: without it `---` anywhere in the body
+ends the parse, so a markdown rule or a pasted diffstat silently drops a
+trailer that is really there. Failing closed is right; failing closed *silently*
+sends the author to debug the wrong thing.
+
+Two properties worth knowing before designing around trailers:
+
+- What counts as the trailer block is a **heuristic**. A prose line directly
+  above can put a trailer outside it; a `Signed-off-by` footer usually keeps it
+  in. Check with the command above rather than by eye.
+- A **squash merge does not carry them**. GitHub and GitLab both build the
+  squash message from the pull/merge request, not from the source commits, so
+  any mechanism that reads a trailer on the target branch breaks the moment
+  someone squashes. If the mechanism matters, turn squash off for the project
+  (`squash_option: never` on GitLab) rather than documenting the hazard.
+
 ## Signed Commits + DCO Sign-Off (Required)
 
 Run every commit with both flags explicit:
