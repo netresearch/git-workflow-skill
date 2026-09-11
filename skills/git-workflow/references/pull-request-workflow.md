@@ -1686,7 +1686,7 @@ tail -20 build.log            # inspection only — never part of the gate
 
 ### `--force-with-lease` Rejected with "stale info"
 
-Two different causes produce this message: the tracking ref moved (below), or there is no tracking ref at all (the subsection after it). Neither is a reason to escalate to plain `--force`.
+Three different causes produce this message: the tracking ref moved (below), there is no tracking ref at all (the subsection after it), or the remote branch is gone because the PR already merged (the subsection after that). None of them is a reason to escalate to plain `--force`.
 
 On PRs that bots touch (auto-approve, Renovate/Dependabot, a CI step that pushes), `git push --force-with-lease` can be rejected with `stale info` even when your local work is correct: a bot updated the remote branch since your last fetch, so the lease's expected ref (your `origin/<branch>` tracking ref) no longer matches and the push aborts. This is the safety check working — don't escalate to plain `--force`.
 
@@ -1725,6 +1725,21 @@ git push --force-with-lease fork HEAD:my-branch
 ```
 
 `git remote -v` before force-pushing is the cheap check: if the target is not listed there, the lease cannot work. Do not reach for plain `--force` — that discards the protection instead of supplying it.
+
+#### When the branch is gone because the PR already merged
+
+The same `stale info` appears when there is nothing left to push to: auto-merge took the PR while you were preparing the amend, and the merge deleted the branch. The lease has no remote ref to compare against, so it refuses — identically to the two cases above, and the documented remedy for the first one does not help.
+
+The tell is in the fetch, not the push, and it is easy to miss because the fetch is usually run with its output discarded:
+
+```bash
+git fetch origin "$BR:refs/remotes/origin/$BR"
+# fatal: couldn't find remote ref release/v1.8.2
+git push --force-with-lease="$BR:$(git rev-parse origin/"$BR")"
+# ! [rejected]  (stale info)     ← same message, different world
+```
+
+So when a lease refresh does not fix `stale info`, read the fetch's own output before pinning the lease harder, and check the PR rather than the ref: `gh pr view <n> --json state,mergedAt`. If it says `MERGED`, the amend is no longer available — the commit is on the default branch, and rewriting shared history to improve a commit message is worse than the message. Observed on a fleet release sweep where four bump PRs auto-merged between the commit and the amend; two rounds went into the lease before the `couldn't find remote ref` line was read.
 
 ### Complex Conflicts
 
