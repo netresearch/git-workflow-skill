@@ -238,10 +238,26 @@ gh run list --repo "$R" --commit "$SHA" --json name,status,conclusion \
 
 `--commit` (`-c`) is the supported way to scope runs to one SHA, and it is what
 the merge-triggered runs on the base branch need after a merge — `--branch main`
-alone also matches the runs of every earlier merge. The general rule behind it:
-**a polling loop must distinguish "the query failed" from "the condition is not
-met yet"**. Assert the query's exit status, or count a field you know is
-present, before comparing the value.
+alone also matches the runs of every earlier merge.
+
+The general rule behind it: **a polling loop must distinguish "the query failed"
+from "the condition is not met yet"**, and it has to *act* on the difference.
+Counting instead of testing emptiness is not enough on its own — a failed query
+still yields the empty string, and `[ "$pending" = "0" ]` reads that as "not met"
+and keeps polling. Gate on the exit status, or refuse a value that is not a
+number:
+
+```bash
+if ! out=$(gh run list --repo "$R" --commit "$SHA" --json status 2>&1); then
+  echo "query failed: $out" >&2; exit 1
+fi
+pending=$(printf '%s' "$out" | jq '[.[] | select(.status != "completed")] | length')
+case $pending in ''|*[!0-9]*) echo "unusable count: ${pending@Q}" >&2; exit 1 ;; esac
+[ "$pending" -eq 0 ] && break
+```
+
+A loop that cannot fail loudly waits out its whole timeout and then reports on a
+condition it never evaluated.
 
 ## Before you add or edit a workflow file: read the repo's Actions policy
 
