@@ -1,5 +1,46 @@
 # Advanced Git Operations
 
+## Shallow Fetches
+
+### `--depth=1` truncates the WHOLE repository, not the refs you asked for
+
+`git fetch --depth=1 origin '+refs/heads/*:refs/remotes/origin/*'` looks like it
+scopes to the refs in its refspec. It does not. It writes `.git/shallow` and
+every ancestry query in that checkout answers from a one-commit graft
+afterwards.
+
+```bash
+git clone --no-local file://$REPO probe && cd probe
+git rev-list --count HEAD          # 366
+git fetch --quiet --depth=1 origin '+refs/heads/*:refs/remotes/origin/*'
+git rev-parse --is-shallow-repository   # true
+git rev-list --count HEAD          # 1
+```
+
+Why it matters more than it looks: a shallow repository does not merely lack
+objects, it **truncates ancestry**, so `git merge-base --is-ancestor X main`
+answers "no" for a commit that genuinely is on `main`. Anything built on that
+answer — a guard, a changelog generator, a release check — goes quietly wrong
+rather than failing.
+
+The usual shape is a CI job that fetches other branch heads cheaply, two lines
+above the command that needs history. Both look innocent; only the pair is
+wrong. If a job needs ancestry, it needs the history:
+
+- GitLab: `GIT_DEPTH: 0` on that job, **and no `--depth` in any fetch the script
+  runs**. The second half is the one that gets missed: a job can start with full
+  history and lose it to a `--depth=1` line of its own three commands later.
+- GitHub Actions: `actions/checkout` with `fetch-depth: 0`, same caveat.
+
+`git fetch --unshallow` does recover a shallow checkout — with or without a ref
+argument, and even where the remote's configured refspec is a single ref
+(measured both ways). It is not a defence against the above, because a later
+`--depth` fetch simply makes the repository shallow again; order decides.
+
+A tool that depends on ancestry should say which state it is in rather than
+answer from a truncated graph — `git rev-parse --is-shallow-repository` is one
+call, and "I could not check" is a different answer from "this is fine".
+
 ## Rewriting History
 
 ### After ANY reset-based rebuild: the commit takes the INDEX, not the worktree
@@ -58,6 +99,21 @@ git show <tip>                        # the real change this branch introduces
 git cherry -v <base> <branch>         # '+' = unique to branch, '-' = already in base
                                       #   (patch-id match; plain `log <base>..<branch>`
                                       #   still lists absorbed commits under new SHAs)
+
+# Same command answers a second question, and it is the one that bites at
+# cleanup time: "is this branch merged?" On a project that merges by REBASE
+# (GitLab `rebase_merge`, GitHub "Rebase and merge"), the commits that land are
+# new objects, so `merge-base --is-ancestor <branch> main` says NO for a branch
+# whose content is entirely in main. Deleting on that answer feels unsafe;
+# keeping on it leaves dead branches forever. `git cherry` compares patch-ids
+# and gives the content answer:
+git cherry origin/main <branch> | grep -c '^+'   # 0 = no commit carries a patch main lacks
+
+# `git cherry` compares patch-ids, and patch-id NORMALISES WHITESPACE. Two
+# commits that differ only in indentation have the same patch-id, so a branch
+# whose sole change is a reformat reports 0 outstanding while its tree really
+# does differ. Confirm with a tree comparison before deleting anything:
+git diff --quiet origin/main...<branch> || echo "trees differ — do NOT delete on cherry alone"
 git merge-base <base> <branch>        # confirm how far back it forks
 
 # Replay ONLY the commits after <keep-base> onto the current base, dropping the
