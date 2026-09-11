@@ -266,6 +266,7 @@ Escape hatch, shared with the destructive-git gate: `DESTRUCTIVE_GIT_GATE_OFF=1`
 | An exception the gate reads from the environment | The hook is its own process; a `VAR=1 cmd` prefix never reaches it, so the documented way out is inert | Read it off the command text, anchored as a leading assignment, and copy the mechanism from the gate already shipping in that hook |
 | A deny text whose promises nothing tests | The message is the contract; an untested promise is usually the case the gate gets wrong | One test per clause of the message — see below |
 | A gate that scans a heredoc body | A body is data unless it expands; scanning it denies writing any document that mentions the command | Blank the body, length-preserving, keeping `$( … )` spans in an unquoted one |
+| Blanking from a `<<` on sight | `<<` is also an arithmetic left shift and `<<<` a here-string, so `$(( FLAG << SHIFT ))` and `cat <<< word` look like openers that never terminate — blanking from there swallows every invocation after them, and the gate goes quiet exactly where it should fire | Blank only between an opener and a terminator that is actually present; exclude `<<<` by lookaround, and leave the lines as script when no terminator follows |
 | A gate built from an incident that covers one command shape | An incident is plural; the shape you remember is rarely the only one it used | Extract every command shape from the transcript and assert the predicate on each |
 
 ### The deny message is a specification
