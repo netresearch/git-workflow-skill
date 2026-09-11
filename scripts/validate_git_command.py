@@ -970,65 +970,98 @@ def _substitution_spans(body: str) -> list[tuple[int, int]]:
     return spans
 
 
+def _skip_quoted(cmd: str, i: int) -> int:
+    """Index just past the quoted run starting at `i`, or `i` if none starts here.
+
+    The three quotings differ in exactly the way that matters here. Inside
+    `'…'` a backslash is LITERAL, so the next quote closes the string; inside
+    `$'…'` and `"…"` it escapes. Treating `'…'` like the others swallows the
+    closing quote and leaves the scan inside the string, so a real opener after
+    it is missed — and treating `$'…'` like `'…'` ends the string early, with
+    the same effect one character later.
+    """
+    if cmd.startswith("$'", i):
+        opener, j, escapes = "'", i + 2, True
+    elif cmd[i] in "'\"":
+        opener, j, escapes = cmd[i], i + 1, cmd[i] == '"'
+    else:
+        return i
+    n = len(cmd)
+    while j < n:
+        if escapes and cmd[j] == "\\":
+            j += 2
+            continue
+        if cmd[j] == opener:
+            return j + 1
+        j += 1
+    return n
+
+
+def _skip_arithmetic(cmd: str, i: int) -> int:
+    """Index just past the `$(( … ))` starting at `i`, or `i` if none does.
+
+    `<<` in there is a left shift, not a redirection. Taking it for an opener
+    and finding a later line equal to the right operand blanks everything
+    between, so a destructive write in that span disappears.
+    """
+    if not cmd.startswith("$((", i):
+        return i
+    depth, j, n = 0, i + 1, len(cmd)
+    while j < n:
+        if cmd[j] == "(":
+            depth += 1
+        elif cmd[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return n
+
+
+def _skip_comment(cmd: str, i: int) -> int:
+    """Index of the newline ending the comment at `i`, or `i` if none starts here.
+
+    Everything after an unquoted `#` is text bash never runs, so a `<<EOF` there
+    is not an opener either.
+    """
+    if cmd[i] != "#" or (i and cmd[i - 1] not in " \t\n;&|("):
+        return i
+    nl = cmd.find("\n", i)
+    return len(cmd) if nl == -1 else nl
+
+
 def _unquoted_heredoc_offsets(cmd: str) -> set[int]:
     """Offsets of `<<` that a shell would read as a redirection, not as text.
 
-    `<<EOF` inside a quoted argument is prose — `echo "the doc mentions <<EOF"`.
-    Taking it for an opener finds the next `EOF` line and blanks everything
-    between, so a real write in that span disappears and the gate goes quiet
-    exactly where it should fire.
+    Four things look like an opener and are not: a `<<` inside a quoted
+    argument, inside `$(( … ))`, inside a comment, and a `<<<` here-string.
+    Each is skipped by one of the helpers above, so this loop only decides
+    which skip applies.
 
     Masking every quoted run first cannot do this job: a heredoc delimiter may
     carry its OWN quotes (`<<'EOF'`, `<<-'END-MARK'`), and blanking those stops
-    the opener matching at all — four existing cases regressed that way. So walk
-    the command instead, and once an opener is recognised skip past its delimiter
-    so the delimiter's quotes never flip the state.
+    the opener matching at all — four existing cases regressed that way.
     """
     offsets: set[int] = set()
-    i, n, quote = 0, len(cmd), ""
+    i, n = 0, len(cmd)
     while i < n:
-        char = cmd[i]
-        # A backslash escapes only where the active quote mode lets it. Inside
-        # '…' bash takes it literally, so consuming the next character there
-        # swallows the CLOSING quote, leaves the scan inside the string, and the
-        # real opener after it is missed — then a heredoc body is read as
-        # commands and text the call only writes gets denied.
-        if char == "\\" and quote != "'":
-            i += 2
-            continue
-        if quote:
-            if char == quote:
-                quote = ""
-            i += 1
-            continue
-        if char in "'\"":
-            quote = char
-            i += 1
-            continue
-        # "<<" inside $(( … )) is a left shift, not a redirection. Taking it for
-        # an opener and finding a later line equal to the right operand blanks
-        # everything between, so a destructive write in that span disappears.
-        if char == "$" and cmd.startswith("$((", i):
-            depth, j = 0, i + 1
-            while j < n:
-                if cmd[j] == "(":
-                    depth += 1
-                elif cmd[j] == ")":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                j += 1
-            i = j + 1 if j < n else n
-            continue
-        if char == "<" and cmd.startswith("<<", i):
-            match = _HEREDOC_START.match(cmd, i)
-            if match:
-                offsets.add(i)
-                i = match.end()
-                continue
-            i += 2
-            continue
-        i += 1
+        for skip in (_skip_quoted, _skip_arithmetic, _skip_comment):
+            j = skip(cmd, i)
+            if j != i:
+                i = j
+                break
+        else:
+            if cmd[i] == "\\":
+                i += 2
+            elif cmd.startswith("<<", i):
+                match = _HEREDOC_START.match(cmd, i)
+                if match:
+                    offsets.add(i)
+                    i = match.end()
+                else:
+                    i += 2
+            else:
+                i += 1
     return offsets
 
 
