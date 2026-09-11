@@ -767,6 +767,18 @@ class NamedDirectoryWriteGate(unittest.TestCase):
             "deny", decision(run_hook("cat > d.md <<EOF\nnow: $(git commit -m x)\nEOF"))
         )
 
+    def test_a_quoted_double_angle_does_not_open_a_heredoc(self) -> None:
+        # `<<EOF` inside a quoted argument is text, not an opener. Treating it as
+        # one and finding a later `EOF` line blanks everything between them, so a
+        # real write in that span becomes invisible and the gate goes quiet where
+        # it should fire. The control differs in exactly the two characters.
+        hidden = 'echo "the doc mentions <<EOF here"\ngit push --force origin main\nEOF'
+        control = (
+            'echo "the doc mentions nothing here"\ngit push --force origin main\nEOF'
+        )
+        self.assertEqual("deny", decision(run_hook(control)))
+        self.assertEqual("deny", decision(run_hook(hidden)))
+
     def test_the_message_names_the_subcommand_and_both_fixes(self) -> None:
         out = run_hook("git push origin main")
         self.assertIn("`git push`", out)

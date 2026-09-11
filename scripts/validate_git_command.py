@@ -970,15 +970,61 @@ def _substitution_spans(body: str) -> list[tuple[int, int]]:
     return spans
 
 
+def _unquoted_heredoc_offsets(cmd: str) -> set[int]:
+    """Offsets of `<<` that a shell would read as a redirection, not as text.
+
+    `<<EOF` inside a quoted argument is prose — `echo "the doc mentions <<EOF"`.
+    Taking it for an opener finds the next `EOF` line and blanks everything
+    between, so a real write in that span disappears and the gate goes quiet
+    exactly where it should fire.
+
+    Masking every quoted run first cannot do this job: a heredoc delimiter may
+    carry its OWN quotes (`<<'EOF'`, `<<-'END-MARK'`), and blanking those stops
+    the opener matching at all — four existing cases regressed that way. So walk
+    the command instead, and once an opener is recognised skip past its delimiter
+    so the delimiter's quotes never flip the state.
+    """
+    offsets: set[int] = set()
+    i, n, quote = 0, len(cmd), ""
+    while i < n:
+        char = cmd[i]
+        if char == "\\":
+            i += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+            i += 1
+            continue
+        if char in "'\"":
+            quote = char
+            i += 1
+            continue
+        if char == "<" and cmd.startswith("<<", i):
+            match = _HEREDOC_START.match(cmd, i)
+            if match:
+                offsets.add(i)
+                i = match.end()
+                continue
+            i += 2
+            continue
+        i += 1
+    return offsets
+
+
 def _mask_heredoc_bodies(cmd: str) -> str:
     """Blank heredoc bodies, keeping what an unquoted one would still execute."""
     cmd = cmd or ""
+    openers = _unquoted_heredoc_offsets(cmd)
     out = list(cmd)
     pos = 0
     while True:
         start = _HEREDOC_START.search(cmd, pos)
         if start is None:
             break
+        if start.start() not in openers:
+            pos = start.end()
+            continue
         dash, quote, delimiter = start.group(1), start.group(2), start.group(3)
         indent = "[ \t]*" if dash else ""
         terminator = re.compile(rf"^{indent}{re.escape(delimiter)}$", re.MULTILINE)
