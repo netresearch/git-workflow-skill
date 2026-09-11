@@ -222,6 +222,27 @@ branch. On a repo with the `copilot_code_review` ruleset, `NEXT:` says
 state now rides along in that answer's `why`, but a script should read the
 field.
 
+**`gh run list --jq` is not `jq`: it takes no `--arg`.** The filter is evaluated
+by `gh`'s embedded jq, which accepts the expression and nothing else, so
+`--jq --arg s "$SHA" '… select(.headSha==$s) …'` exits with
+`unknown command "s" for "gh run list"`. Inside a poll loop that failure is
+silent in the worst way: `pending=$(gh run list … )` captures the empty output,
+the `[ "$pending" = "0" ]` test is false forever, and the loop reports "still
+running" until its timeout — describing a condition it never actually
+evaluated. Filter with the flag instead of a jq variable:
+
+```bash
+gh run list --repo "$R" --commit "$SHA" --json name,status,conclusion \
+  --jq '.[] | "\(.status) \(.conclusion // "-") \(.name)"'
+```
+
+`--commit` (`-c`) is the supported way to scope runs to one SHA, and it is what
+the merge-triggered runs on the base branch need after a merge — `--branch main`
+alone also matches the runs of every earlier merge. The general rule behind it:
+**a polling loop must distinguish "the query failed" from "the condition is not
+met yet"**. Assert the query's exit status, or count a field you know is
+present, before comparing the value.
+
 ## Before you add or edit a workflow file: read the repo's Actions policy
 
 A workflow that violates the repository's Actions policy fails at **`Set up job`**
