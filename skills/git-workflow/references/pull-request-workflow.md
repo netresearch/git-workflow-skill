@@ -992,20 +992,24 @@ enforces — apply it here too, before ever declaring the review done.
 
 ## A Review Bot Can Be Older Than Your Toolchain
 
-A bot reviews with the language it was trained on. When a PR raises a toolchain
-or language version, the constructs that raise enables are exactly the ones the
-bot has never seen — and it reports them as **compile errors**, usually as
-`Critical`, with a suggested fix that undoes the upgrade. Two of those landed on
-one 10-line diff; the suggestion would have removed the feature the PR existed
-to adopt.
+When a PR raises a toolchain or language version, some of what it enables is
+newer than what the reviewing bot knows, and the bot can report those constructs
+as **compile errors** with a suggested fix that undoes the upgrade. Observed
+once, on a Go 1.27 promoted-field literal: two `Critical` findings on one
+10-line diff, whose suggestion would have removed the feature the PR existed to
+adopt. Which component produced such a finding is not observable from outside —
+treat the pattern as the thing to recognise, not the mechanism.
 
-The tell is a finding that contradicts an artefact you already have: CI compiled
-that exact head minutes ago. So do not reach for the editor. Answer with evidence
-and resolve:
+The tell is a finding that contradicts an artefact you already have. So do not
+reach for the editor. Answer with evidence and resolve:
 
-1. **Name the run that disproves it.** The required check on this head built and
-   tested those lines. A bot's claim that they do not compile is refuted by the
-   pipeline, not by argument.
+1. **Name the run that disproves it — after checking it says what you need.**
+   Two preconditions, both cheap and both easy to skip. The thread is a snapshot
+   of the commit it was posted against, so confirm that commit is the head the
+   run built; a stale thread is refuted by nothing. And confirm the run actually
+   compiled the affected target with the toolchain the repository declares — a
+   required check can be green without building the package in question, which
+   is the same trap as treating a suite's existence as proof it runs.
 2. **Add the version probe.** Build the same construct under the old and the new
    language version and paste both outputs — a compiler that says
    `requires go1.27 or later` (or the equivalent) settles it in one line, and
@@ -1014,10 +1018,12 @@ and resolve:
    often bundle a correct observation with a wrong diagnosis, and acknowledging
    the correct part is what stops the next round re-raising it.
 
-Then resolve the thread. This is one of the few cases where "not applying this"
-is the right outcome on a `Critical` finding, so the reply has to carry the
-evidence — a bare "false positive" leaves the next reader with two claims and no
-way to choose.
+Then resolve the thread, where the thread is one a reply can resolve — some
+classes are not (see the note on `github-advanced-security` above), and resolving
+does not clear a `CHANGES_REQUESTED` review, which still needs a re-review on the
+new head. This is one of the few cases where "not applying this" is the right
+outcome on a `Critical` finding, so the reply has to carry the evidence — a bare
+"false positive" leaves the next reader with two claims and no way to choose.
 
 The same shape appears without a version bump whenever a repository is ahead of
 the bot: a new stdlib package, a new builtin, a lint rule the project adopted
