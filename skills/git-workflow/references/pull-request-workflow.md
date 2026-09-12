@@ -990,6 +990,39 @@ Only once `SEEN >= 1` is the unresolved-threads query above meaningful. This is
 the same "review the latest head SHA" gate the [Merge-Gate Watcher](merge-gate-watcher.md)
 enforces — apply it here too, before ever declaring the review done.
 
+## A Review Bot Can Be Older Than Your Toolchain
+
+A bot reviews with the language it was trained on. When a PR raises a toolchain
+or language version, the constructs that raise enables are exactly the ones the
+bot has never seen — and it reports them as **compile errors**, usually as
+`Critical`, with a suggested fix that undoes the upgrade. Two of those landed on
+one 10-line diff; the suggestion would have removed the feature the PR existed
+to adopt.
+
+The tell is a finding that contradicts an artefact you already have: CI compiled
+that exact head minutes ago. So do not reach for the editor. Answer with evidence
+and resolve:
+
+1. **Name the run that disproves it.** The required check on this head built and
+   tested those lines. A bot's claim that they do not compile is refuted by the
+   pipeline, not by argument.
+2. **Add the version probe.** Build the same construct under the old and the new
+   language version and paste both outputs — a compiler that says
+   `requires go1.27 or later` (or the equivalent) settles it in one line, and
+   makes the thread useful to a human reader later.
+3. **Say which half of the suggestion is already true**, where one is. Bots
+   often bundle a correct observation with a wrong diagnosis, and acknowledging
+   the correct part is what stops the next round re-raising it.
+
+Then resolve the thread. This is one of the few cases where "not applying this"
+is the right outcome on a `Critical` finding, so the reply has to carry the
+evidence — a bare "false positive" leaves the next reader with two claims and no
+way to choose.
+
+The same shape appears without a version bump whenever a repository is ahead of
+the bot: a new stdlib package, a new builtin, a lint rule the project adopted
+deliberately. Check the artefact before the argument.
+
 ## Merge Strategies
 
 ### Merge Commit
