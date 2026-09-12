@@ -767,6 +767,57 @@ class NamedDirectoryWriteGate(unittest.TestCase):
             "deny", decision(run_hook("cat > d.md <<EOF\nnow: $(git commit -m x)\nEOF"))
         )
 
+    def test_a_quoted_double_angle_does_not_open_a_heredoc(self) -> None:
+        # `<<EOF` inside a quoted argument is text, not an opener. Treating it as
+        # one and finding a later `EOF` line blanks everything between them, so a
+        # real write in that span becomes invisible and the gate goes quiet where
+        # it should fire. The control differs in exactly the two characters.
+        hidden = 'echo "the doc mentions <<EOF here"\ngit push --force origin main\nEOF'
+        control = (
+            'echo "the doc mentions nothing here"\ngit push --force origin main\nEOF'
+        )
+        self.assertEqual("deny", decision(run_hook(control)))
+        self.assertEqual("deny", decision(run_hook(hidden)))
+
+    def test_an_arithmetic_shift_is_not_a_heredoc_opener(self) -> None:
+        # `<<` inside $(( … )) is a left shift. Taking it for an opener and
+        # finding a later line equal to the right operand blanks everything
+        # between, so a destructive write in that span disappears. The control
+        # differs only in the operator.
+        hidden = ": $(( FLAG << SHIFT ))\ngit tag -d release\nSHIFT"
+        control = ": $(( FLAG + SHIFT ))\ngit tag -d release\nSHIFT"
+        self.assertEqual("deny", decision(run_hook(control)))
+        self.assertEqual("deny", decision(run_hook(hidden)))
+
+    def test_a_backslash_is_literal_inside_single_quotes(self) -> None:
+        # Bash does not honour escapes inside '…', so the quote after `a\`
+        # closes it. Treating the backslash as an escape swallows that quote,
+        # leaves the scanner inside the string, and the real `<<EOF` opener is
+        # missed — then a heredoc BODY is read as commands and text is denied.
+        body_only = "printf '%s\\n' 'a\\' <<EOF\ngit commit -m x\nEOF"
+        control = "printf '%s\\n' 'a' <<EOF\ngit commit -m x\nEOF"
+        self.assertNotEqual("deny", decision(run_hook(control)))
+        self.assertNotEqual("deny", decision(run_hook(body_only)))
+
+    def test_a_double_angle_in_a_comment_is_not_an_opener(self) -> None:
+        # Everything after an unquoted `#` is a comment. Reading a `<<EOF` there
+        # as an opener and finding a later `EOF` line blanks what lies between,
+        # so the write disappears. Control differs only in the comment text.
+        hidden = "echo hi # mentions <<EOF\ngit tag -d release\nEOF"
+        control = "echo hi # mentions nothing\ngit tag -d release\nEOF"
+        self.assertEqual("deny", decision(run_hook(control)))
+        self.assertEqual("deny", decision(run_hook(hidden)))
+
+    def test_ansi_c_quoting_does_honour_its_escapes(self) -> None:
+        # `$'…'` is NOT `'…'`: a backslash IS an escape there, so `$'a\''`
+        # continues past that quote. Treating it like a plain single quote ends
+        # the string early, the scan leaves quote state at the wrong place and
+        # the real opener is missed — then a heredoc body is read as commands.
+        body_only = "printf $'a\\'' <<EOF\ngit commit -m x\nEOF"
+        control = "printf 'a' <<EOF\ngit commit -m x\nEOF"
+        self.assertNotEqual("deny", decision(run_hook(control)))
+        self.assertNotEqual("deny", decision(run_hook(body_only)))
+
     def test_the_message_names_the_subcommand_and_both_fixes(self) -> None:
         out = run_hook("git push origin main")
         self.assertIn("`git push`", out)
