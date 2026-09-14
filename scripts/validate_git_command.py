@@ -903,7 +903,69 @@ def _git_invocations(cmd: str):
                 names_directory = True
             index += 2 if takes_value else 1
         subcommand = tokens[index] if index < len(tokens) else ""
-        yield subcommand, match.start(), names_directory
+        yield subcommand, tokens[index + 1 :], match.start(), names_directory
+
+
+# Listing forms of subcommands that otherwise write (2026-09-14). They change
+# nothing, so running them in the wrong repository cannot do harm there, and
+# denying them sent `git stash list` in a cleanup sweep back as a write. A
+# listing that also carries a writing flag stays a write.
+_BRANCH_WRITE_FLAGS = frozenset(
+    {
+        "-d",
+        "-D",
+        "--delete",
+        "-m",
+        "-M",
+        "--move",
+        "-c",
+        "-C",
+        "--copy",
+        "-f",
+        "--force",
+        "-u",
+        "--set-upstream-to",
+        "--unset-upstream",
+        "--edit-description",
+        "-t",
+        "--track",
+    }
+)
+_TAG_WRITE_FLAGS = frozenset(
+    {
+        "-d",
+        "--delete",
+        "-a",
+        "--annotate",
+        "-s",
+        "--sign",
+        "-u",
+        "-f",
+        "--force",
+        "-m",
+        "-F",
+    }
+)
+
+
+def _only_lists(subcommand: str, args: list[str]) -> bool:
+    """True when `git <subcommand> <args>` only lists and changes nothing."""
+    options = {a.split("=", 1)[0] for a in args if a.startswith("-")}
+    operands = [a for a in args if not a.startswith("-")]
+    if subcommand == "stash":
+        return bool(args) and args[0] in ("list", "show")
+    if subcommand == "worktree":
+        return bool(args) and args[0] == "list"
+    if subcommand == "branch":
+        if options & _BRANCH_WRITE_FLAGS:
+            return False
+        # `git branch <name>` creates; with --list the operand is a pattern.
+        return not operands or bool(options & {"-l", "--list"})
+    if subcommand == "tag":
+        if options & _TAG_WRITE_FLAGS:
+            return False
+        return not operands or bool(options & {"-l", "--list"})
+    return False
 
 
 # A heredoc body is data, not a command: `cat > doc.md <<'EOF' … git commit …
@@ -1100,8 +1162,9 @@ def git_write_without_named_dir(cmd: str) -> str | None:
     cmd = _mask_heredoc_bodies(cmd or "")
     unnamed = [
         subcommand
-        for subcommand, start, names_directory in _git_invocations(cmd)
+        for subcommand, args, start, names_directory in _git_invocations(cmd)
         if subcommand in GIT_WRITE_SUBCOMMANDS
+        and not _only_lists(subcommand, args)
         and not names_directory
         and not _named_directory_before(cmd, start)
         and not _gate_disabled(cmd, start)
