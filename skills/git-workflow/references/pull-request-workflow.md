@@ -1509,6 +1509,15 @@ Two things follow when you plan a stack:
 
 Observed 2026-08-13 on netresearch/t3x-nr-llm#759, stacked on #758 for a documentation anchor that existed only on that branch.
 
+**The same cost without a stack: sibling PRs that all edit `CHANGELOG.md`.** Splitting one plan into N independent PRs against `main` avoids retargeting, but if each PR adds its own entry under `[Unreleased]` and the base branch requires branches to be up to date before merging (`strict_required_status_checks_policy: true`, visible in `gh api repos/OWNER/REPO/rules/branches/main`), the merges serialize: every merge moves `main`, every remaining PR is now `DIRTY` on the changelog, and each needs a rebase, a conflict resolution and a **full CI run** before it can merge. N PRs cost N−1 extra pipelines, one after another — five PRs in one repository took four such rounds at roughly an hour each while runners were scarce. Decide this when you split the work, not when the second merge lands:
+
+- **Keep the changelog out of the siblings.** Add all entries in one final PR (or in the release PR, where the repository allows it), so the feature PRs touch disjoint files and stay mergeable in any order.
+- **Or accept the serial cost deliberately** and fix the merge order up front, so each rebase happens once, against the PR merged just before it — rebasing all of them after every merge only multiplies the pipelines.
+- **Resolve by keeping every entry,** in Keep a Changelog order (Added, Changed, Deprecated, Removed, Fixed, Security), and check the result by listing the section's headings and entry titles: each entry exactly once.
+- **Re-run the local checks after each rebase.** The branch now contains every earlier merge; a conflict elsewhere (a shared `Services.yaml` exclude list, for example) is a semantic merge, not a formality.
+
+Observed 2026-09-14 on netresearch/t3x-nr-vault#345–#349.
+
 ### Handling Stale PRs
 
 ```yaml

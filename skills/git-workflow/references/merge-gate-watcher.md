@@ -154,6 +154,31 @@ Watching several PRs in one loop needs one latch **per PR** (`declare -A seen`),
 not one shared variable — otherwise two PRs reaching the same state alternate and
 each re-emits.
 
+### Running `pr-status.sh --watch` under a Monitor
+
+`pr-status.sh --watch` already exits on the first actionable event, so it is the
+better producer for a streaming watcher than a hand-rolled loop — but it prints a
+`waiting:` line on every poll, and those lines carry advisory prose. A filter that
+matches on a bare `error` fires on text such as "delete that file if it was
+recorded in error" and turns every poll into a notification. Drop the heartbeat
+first, then keep only the lines you act on:
+
+```bash
+pr-status.sh -R OWNER/REPO "$PR" --watch 2>&1 \
+  | grep --line-buffered -vE '^waiting' \
+  | grep --line-buffered -E '^(ACTIONABLE|TIMEOUT|NEXT)|^\s*(failing|checks)|pr-status:'
+```
+
+`ACTIONABLE`, `TIMEOUT` and `pr-status:` (the tool's own failures) cover every
+terminal state, so silence still means "waiting", never "crashed unseen".
+
+Prefer the Monitor tool over a backgrounded shell for these long waits. Two
+backgrounded `pr-status.sh --watch` processes in one session were stopped by the
+harness with "the system is running low on memory" while CI queued for hours; the
+same watch under Monitor ran to its event. A watch that was killed reports
+nothing, so after such a stop, read the gate once directly
+(`pr-status.sh -R OWNER/REPO "$PR"`) before arming the next one.
+
 ## Check the producer is switched on before arming the watcher
 
 A watch whose event can never be produced is indistinguishable from one whose
