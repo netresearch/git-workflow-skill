@@ -487,6 +487,20 @@ Two practices keep this from biting:
   rate_limit` is exempt and tells you both pools' reset times. Prefer one
   `--watch` over repeated status reads, and stop any watcher whose answer
   you already have.
+- **`rate_limit` can read full while GraphQL refuses you.** A mutation
+  answering `{"type":"RATE_LIMIT","code":"graphql_rate_limit","message":"API
+  rate limit already exceeded for user ID <n>"}` is a per-user wall, not the
+  points pool `rate_limit` reports — that endpoint showed `graphql.remaining:
+  5000` in the same minute. So do not read `rate_limit` as clearance, and do
+  not conclude the token lost a scope: the shape of the error body is what
+  tells them apart. It lifts on its own; here in under 20 minutes.
+- **Answering a review thread has a REST twin; resolving it does not.** Reply
+  with `gh api repos/$R/pulls/$PR/comments/<comment_id>/replies -X POST -f
+  body=…` (the id is the *first* comment of the thread, from
+  `pulls/$PR/comments`), which lands in the same thread as the GraphQL
+  `addPullRequestReviewThreadReply`. `resolveReviewThread` has no REST
+  equivalent, so when GraphQL is walled the only move is to retry it — put the
+  retry in the background and carry on rather than holding the session on it.
 
 ## Describing the Change (PR Body, Commit Message, Issue)
 

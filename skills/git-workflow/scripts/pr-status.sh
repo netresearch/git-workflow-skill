@@ -249,7 +249,22 @@ remember_quota_hit() {
 }
 
 # ---------------------------------------------------------------- data ------
+# Swallows gh's chatter on success -- a deprecation notice is not this tool's
+# news -- but re-emits it verbatim when the call FAILS, because that body is the
+# only thing separating an expired token from a rate limit from a network drop.
+# Callers point the operator at stderr for the cause; before this, stderr held
+# nothing but `pr-status: GraphQL query failed`.
 collect() {
+  local out err rc
+  err=$(mktemp)
+  out=$(collect_raw 2>"$err"); rc=$?
+  [ "$rc" -eq 0 ] || cat "$err" >&2
+  rm -f "$err"
+  printf '%s' "$out"
+  return "$rc"
+}
+
+collect_raw() {
   # shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
   gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
   query($owner:String!,$name:String!,$pr:Int!){
@@ -283,7 +298,7 @@ collect() {
           } } } } } }
       }
     }
-  }' 2>/dev/null
+  }'
 }
 
 # A branch legitimately has no rules and answers `[]`, so an empty result is NOT
@@ -1129,7 +1144,27 @@ fi
 # Watch: stop at the first thing that can be acted on, not at full settle.
 start=$(date +%s); seen_fail=""
 while :; do
-  s=$(snapshot)
+  # A snapshot that could not be read is its own branch, not "still waiting".
+  # `die` inside $( ) kills only the subshell, so a failed collect left $s
+  # empty, printed its reason to stderr -- where a watcher harness never turns
+  # it into an event -- and then emitted a bare `waiting:` on stdout every
+  # interval. The operator could not tell a quiet gate from a broken query and
+  # killed a watch that was reporting nothing (observed during a GraphQL user
+  # rate limit, netresearch/typo3-ci-workflows#250).
+  if ! s=$(snapshot) || [ -z "$s" ] || ! jq -e '.next.action' <<<"$s" >/dev/null 2>&1; then
+    if [ $(($(date +%s) - start)) -ge "$MAXWAIT" ]; then
+      echo "TIMEOUT after ${MAXWAIT}s — the gate stayed unreadable"
+      exit 1
+    fi
+    # `pr-status:` prefix deliberately: the documented watcher filter in
+    # references/merge-gate-watcher.md keeps ACTIONABLE/TIMEOUT/SETTLED/NEXT and
+    # this tool's own `pr-status:` diagnostics, and drops everything else. An
+    # unprefixed line would be filtered out and leave the consumer in exactly
+    # the silent state this branch exists to end.
+    echo "pr-status: UNREADABLE — cannot read the gate for ${REPO}#${PR}; cause on stderr above. Retrying in ${INTERVAL}s."
+    sleep "$INTERVAL"
+    continue
+  fi
   act=$(jq -r '.next.action' <<<"$s")
   fails=$(jq -r '.checks.failing|join(",")' <<<"$s")
   # A red REQUIRED check is actionable the moment it appears. A red
