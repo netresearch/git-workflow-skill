@@ -166,11 +166,12 @@ first, then keep only the lines you act on:
 ```bash
 pr-status.sh -R OWNER/REPO "$PR" --watch 2>&1 \
   | grep --line-buffered -vE '^waiting' \
-  | grep --line-buffered -E '^(ACTIONABLE|TIMEOUT|NEXT)|^\s*(failing|checks)|pr-status:'
+  | grep --line-buffered -E '^(ACTIONABLE|TIMEOUT|SETTLED|NEXT)|^\s*(failing|checks)|pr-status:'
 ```
 
-`ACTIONABLE`, `TIMEOUT` and `pr-status:` (the tool's own failures) cover every
-terminal state, so silence still means "waiting", never "crashed unseen".
+`ACTIONABLE`, `TIMEOUT`, `SETTLED` (the return of `--ignore-action` once checks
+settle) and `pr-status:` (the tool's own failures) cover every terminal state, so
+silence still means "waiting", never "crashed unseen".
 
 Prefer the Monitor tool over a backgrounded shell for these long waits. Two
 backgrounded `pr-status.sh --watch` processes in one session were stopped by the
