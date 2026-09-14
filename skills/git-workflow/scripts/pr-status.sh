@@ -1129,7 +1129,22 @@ fi
 # Watch: stop at the first thing that can be acted on, not at full settle.
 start=$(date +%s); seen_fail=""
 while :; do
-  s=$(snapshot)
+  # A snapshot that could not be read is its own branch, not "still waiting".
+  # `die` inside $( ) kills only the subshell, so a failed collect left $s
+  # empty, printed its reason to stderr -- where a watcher harness never turns
+  # it into an event -- and then emitted a bare `waiting:` on stdout every
+  # interval. The operator could not tell a quiet gate from a broken query and
+  # killed a watch that was reporting nothing (observed during a GraphQL user
+  # rate limit, netresearch/typo3-ci-workflows#250).
+  if ! s=$(snapshot) || [ -z "$s" ] || ! jq -e '.next.action' <<<"$s" >/dev/null 2>&1; then
+    if [ $(($(date +%s) - start)) -ge "$MAXWAIT" ]; then
+      echo "TIMEOUT after ${MAXWAIT}s — the gate stayed unreadable"
+      exit 1
+    fi
+    echo "UNREADABLE: cannot read the gate for ${REPO}#${PR} -- reason on stderr (auth, rate limit, or network). Retrying in ${INTERVAL}s."
+    sleep "$INTERVAL"
+    continue
+  fi
   act=$(jq -r '.next.action' <<<"$s")
   fails=$(jq -r '.checks.failing|join(",")' <<<"$s")
   # A red REQUIRED check is actionable the moment it appears. A red
