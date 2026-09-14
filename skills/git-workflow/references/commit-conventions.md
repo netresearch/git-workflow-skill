@@ -198,6 +198,12 @@ git commit -S --signoff -m "feat: add login endpoint"
 
 **Why `--signoff`.** Adds the `Signed-off-by:` trailer. Required for DCO compliance on any repo that has the DCO check enabled (most netresearch repos do).
 
+**`--signoff` on an amend doubles the sign-off when other trailers follow it.** Git leaves the line out only when the *last* trailer already is that exact `Signed-off-by:`. A message whose trailer block reads `Signed-off-by:`, `Assisted-by:`, `Agent-Session:` gets a second `Signed-off-by:` below the rest — so rewording a commit with `git commit --amend -s -F msg.txt`, where `msg.txt` came from `git log -1 --format=%B`, ships the sign-off twice. Measured with git 2.55.0: sign-off as the last trailer → one line, sign-off followed by another trailer → two. When the message file already carries its trailers, amend without `-s`, and count before pushing:
+
+```bash
+git log -1 --format=%B | git interpret-trailers --parse --no-divider | grep -c '^Signed-off-by:'
+```
+
 **Sign-off identity must match `git config user.{name,email}`.** Mismatched identities fail the DCO check with an unhelpful "signoff required" error. Validate before the first commit in a new worktree — and specifically check that the values are not swapped (an email address in `user.name` is a silent misconfiguration that produces a malformed `Signed-off-by:` trailer):
 
 ```bash

@@ -665,8 +665,32 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         "git worktree remove ../x",
         "git -c commit.gpgsign=true commit -m x",
         "git add -A; git commit -m x",
+        # The listing forms below pass; every other form of the same
+        # subcommands still changes state.
+        "git stash",
+        "git stash push -m wip",
+        "git stash pop",
+        "git stash drop stash@{0}",
+        "git worktree add ../x -b x origin/main",
+        "git branch feat/x",
+        "git branch -D feat/x",
+        "git branch --list -D feat/x",
+        "git tag v1.0.0",
+        "git tag -l -d v1.0.0",
     ]
     ALLOWED: ClassVar[list[str]] = [
+        # Listing forms of subcommands that otherwise write: nothing changes,
+        # so there is nothing to run in the wrong repository (2026-09-14: a
+        # `git stash list` in a cleanup sweep was denied as a write).
+        "git stash list",
+        "git stash show -p stash@{0}",
+        "git worktree list",
+        "git branch",
+        "git branch -vv",
+        "git branch --show-current",
+        "git branch -a --list 'feat/*'",
+        "git tag",
+        "git tag -l 'v1.*'",
         "git -C /home/u/repo commit -m x",
         "git -C .bare worktree add ../x -b x origin/main",
         "cd /home/u/repo && git push origin feat/x",
