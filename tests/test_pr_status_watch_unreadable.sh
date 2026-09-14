@@ -58,6 +58,20 @@ check_contains "names the state"        "UNREADABLE" "$out"
 check_contains "names the PR"           "o/r#1" "$out"
 check_absent   "no bare waiting: line"  "waiting:" "$out"
 
+echo "case: the line survives the documented watcher filter"
+# references/merge-gate-watcher.md drops the heartbeat and keeps only the lines
+# worth acting on. A state that does not match it is a state nobody sees.
+filtered=$(printf '%s\n' "$out" \
+    | grep -vE '^waiting' \
+    | grep -E '^(ACTIONABLE|TIMEOUT|SETTLED|NEXT)|^\s*(failing|checks)|pr-status:' || true)
+check_contains "kept by the filter"     "UNREADABLE" "$filtered"
+
+echo "case: the cause reaches stderr, not just the generic failure line"
+# collect() swallows gh's chatter on success but must re-emit it on failure —
+# the message points the operator at stderr, so stderr has to carry the reason.
+err=$(watch --interval 1 --max-wait 2 2>&1 >/dev/null || true)
+check_contains "gh diagnostic present"  "API rate limit already exceeded" "$err"
+
 echo "case: it keeps retrying rather than returning a verdict"
 # The watch must not exit 0 on an unreadable gate: exit 0 reads as "actionable
 # state reached" to every caller, including pr-merge.sh.

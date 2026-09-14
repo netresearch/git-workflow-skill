@@ -170,8 +170,12 @@ pr-status.sh -R OWNER/REPO "$PR" --watch 2>&1 \
 ```
 
 `ACTIONABLE`, `TIMEOUT`, `SETTLED` (the return of `--ignore-action` once checks
-settle) and `pr-status:` (the tool's own failures) cover every terminal state, so
-silence still means "waiting", never "crashed unseen".
+settle) and `pr-status:` (the tool's own failures, including the
+`pr-status: UNREADABLE —` line for a gate that cannot be queried at all, with
+the cause on stderr) cover every terminal state, so silence still means
+"waiting", never "crashed unseen". Anything added to the producer has to carry
+one of these prefixes or be added here — a state the filter drops is a state
+nobody sees.
 
 Prefer the Monitor tool over a backgrounded shell for these long waits. Two
 backgrounded `pr-status.sh --watch` processes in one session were stopped by the
