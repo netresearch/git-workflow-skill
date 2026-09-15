@@ -531,6 +531,57 @@ refuses a worktree with uncommitted changes, which is the check that catches a
 removal you did not intend. If a later command already failed this way, `cd` to a real directory
 and re-run it — do not start diagnosing the repository.
 
+#### A background process keeps the cwd it started with
+
+Moving the shell out first does not save a process that is already running
+there. A watcher started earlier — a pipeline waiter, a `tail -f`, a poll loop —
+holds the removed directory as its cwd, and the failure surfaces at the wrong
+moment and in the wrong place: it exits non-zero with the same `getcwd` message
+*after* it has already printed its result, so the harness reports the task as
+failed while the thing being watched succeeded.
+
+```
+tick 5: 265071 success
+TERMINAL: 265071 success
+pwd: error retrieving current directory: getcwd: cannot access parent directories
+[exited with code 1]
+```
+
+Two habits. Start anything that outlives one command from a directory the work
+will not remove — put the `cd` inside the script rather than relying on the
+caller's cwd. And when a background task reports failure, read the last lines of
+its output before the exit code becomes a statement about what it was watching.
+
+#### A worktree containing submodules needs `--force`
+
+The plain form refuses a worktree that has submodules checked out:
+
+```
+$ git worktree remove ../feature-x
+fatal: working trees containing submodules cannot be moved or removed
+```
+
+The message reads like a prohibition, and the branch cannot be deleted while the
+worktree stands (`error: cannot delete branch 'x' used by worktree at …`), so it
+is easy to conclude the worktree has to be torn down by hand. It does not:
+`--force` removes it (measured on git 2.55.0; the refusal is the submodule
+check, and `--force` lifts it).
+
+```bash
+git -C <worktree> status --porcelain                 # must be empty
+git -C <worktree> log --oneline origin/main..HEAD    # must be empty
+git -C <worktree> stash list                         # must be empty
+
+git worktree remove --force /path/to/project/feature-x
+git branch -d feature-x
+git fetch origin --prune                             # drops the remote-tracking ref
+```
+
+The three reads are not optional here. Everywhere else `--force` is the flag you
+leave off so the uncommitted-changes check can catch a removal you did not
+intend; with submodules you need it for an unrelated reason, and that check goes
+with it. Run the reads yourself before the flag, not instead of them.
+
 ### "Merged and clean" is not the whole test — check the worktree's role
 
 A cleanup sweep classifies worktrees by branch state: HEAD contained in
