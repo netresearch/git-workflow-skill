@@ -233,8 +233,16 @@ evaluated. Filter with the flag instead of a jq variable:
 
 ```bash
 gh run list --repo "$R" --commit "$SHA" --json name,status,conclusion \
-  --jq '.[] | "\(.status) \(.conclusion // "-") \(.name)"'
+  --jq '.[] | "\(.status) \(if (.conclusion // "") == "" then "-" else .conclusion end) \(.name)"'
 ```
+
+**`//` does not catch the empty string, and a running run's `conclusion` is `""`.**
+jq's alternative operator only replaces `null` and `false`, so `\(.conclusion // "-")`
+renders a running run as an empty field, and a loop that treats "conclusion is
+non-empty" — or `.conclusion // .status` — as "finished" reports a run that is
+still going as done. Test the emptiness explicitly, as above, or filter on
+`.status != "completed"`. This cost a false "all green" on three workflows that
+were still queued.
 
 `--commit` (`-c`) is the supported way to scope runs to one SHA, and it is what
 the merge-triggered runs on the base branch need after a merge — `--branch main`
