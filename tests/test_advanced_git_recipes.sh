@@ -311,6 +311,7 @@ check "the branch cannot be deleted while the worktree stands" "1" "$rc"
 # The three guards the recipe puts before --force, on a tree that passes them.
 check "nothing uncommitted" "" "$(git -C "$proj4/feat" status --porcelain)"
 check "nothing unpushed"    "" "$(git -C "$proj4/feat" log --oneline origin/main..HEAD)"
+check "nothing stashed"     "" "$(git -C "$proj4/feat" stash list)"
 
 # --force is the answer, not a hand removal: if this ever starts failing, the
 # document's recipe is wrong and the rm -rf fallback has to come back.
@@ -321,7 +322,7 @@ check "worktree gone from the list" "0" "$listed"
 
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "33" "$ran"
+check "every assertion ran" "34" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]

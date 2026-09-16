@@ -574,8 +574,15 @@ git -C <worktree> stash list                         # must be empty
 
 git worktree remove --force /path/to/project/feature-x
 git branch -d feature-x
-git fetch origin --prune                             # drops the remote-tracking ref
+git fetch origin --prune       # only where the remote branch is already gone
 ```
+
+`--prune` drops `origin/feature-x` only if that branch no longer exists on the
+remote — it removes refs whose upstream is gone, and nothing above deletes
+anything on `origin`. After a merge on a forge that removes the source branch
+(GitLab's `remove_source_branch_after_merge`, GitHub's auto-delete) the ref is
+already stale and the prune tidies it; otherwise the remote branch is still
+live and the ref belongs there.
 
 The three reads are not optional here. Everywhere else `--force` is the flag you
 leave off so the uncommitted-changes check can catch a removal you did not
