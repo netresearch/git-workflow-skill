@@ -269,9 +269,78 @@ out=$(run_split split1 typo-branch 2>&1); rc=$?
 check "an unresolvable branch name aborts instead of masking a miss" "1" "$rc"
 check "and says which name" "no such branch: typo-branch" "$out"
 
+# --------------------------------------------------------------------------
+printf '\n== worktree removal with submodules (the --force recipe)\n'
+# --------------------------------------------------------------------------
+# `git worktree remove` refuses a worktree that has submodules checked out;
+# --force lifts that refusal. The first draft of this recipe claimed the
+# opposite and prescribed rm -rf — this block is what caught it, so keep both
+# halves: the refusal AND the flag that answers it.
+sub="$TMP/sub"; mkdir -p "$sub"; cd "$sub" || exit 1
+git init -q . && printf 'lib\n' > lib.txt && git add -A && git commit -qm sub
+
+proj4="$TMP/p4"; mkdir -p "$proj4"; cd "$proj4" || exit 1
+git init -q --bare .bare
+git clone -q .bare seed
+(
+  cd seed || exit 1
+  printf 'main\n' > f.txt && git add -A && git commit -qm base
+  git -c protocol.file.allow=always submodule add -q "$sub" vendor/lib
+  git commit -qm 'add submodule' && git push -q origin main
+)
+git -C .bare worktree add -q ../feat -b feat main
+git -C "$proj4/feat" -c protocol.file.allow=always submodule update -q --init --recursive
+if [ -f "$proj4/feat/vendor/lib/lib.txt" ]; then
+  pass "submodule populated in the worktree"
+else
+  fail "submodule not populated — the rest of this block proves nothing"
+fi
+
+out=$(git -C .bare worktree remove ../feat 2>&1); rc=$?
+if [ "$rc" -ne 0 ]; then pass "the plain form refuses a worktree with submodules (rc=$rc)"
+else fail "worktree remove succeeded without --force — the refusal is gone, update the document"; fi
+case "$out" in
+  *"cannot be moved or removed"*) pass "and says why" ;;
+  *) fail "refusal message changed: $out" ;;
+esac
+
+# The branch is held while the worktree stands — the second half of the trap.
+git -C .bare branch -d feat >/dev/null 2>&1; rc=$?
+check "the branch cannot be deleted while the worktree stands" "1" "$rc"
+
+# The guard that loses work if it is left out: a stash made INSIDE an
+# initialized submodule is in that submodule's refs/stash, not the
+# superproject's, and stashing reverted the change so the superproject is clean
+# too. All three superproject reads pass while the work is there, and --force
+# takes the submodule gitdir with it.
+printf 'work\n' >> "$proj4/feat/vendor/lib/lib.txt"
+git -C "$proj4/feat/vendor/lib" stash push -q -m "work in the submodule"
+check "superproject stash list does not see it" "" "$(git -C "$proj4/feat" stash list)"
+check "superproject status does not see it"     "" "$(git -C "$proj4/feat" status --porcelain)"
+recursive=$(git -C "$proj4/feat" submodule foreach --quiet --recursive 'git stash list')
+case "$recursive" in
+  *"work in the submodule"*) pass "submodule foreach --recursive does see it" ;;
+  *) fail "recursive stash guard missed a submodule stash: '$recursive'" ;;
+esac
+git -C "$proj4/feat/vendor/lib" stash drop -q
+
+# The four guards the recipe puts before --force, on a tree that passes them.
+check "nothing uncommitted" "" "$(git -C "$proj4/feat" status --porcelain)"
+check "nothing unpushed"    "" "$(git -C "$proj4/feat" log --oneline origin/main..HEAD)"
+check "nothing stashed"     "" "$(git -C "$proj4/feat" stash list)"
+check "nothing stashed in a submodule" "" \
+      "$(git -C "$proj4/feat" submodule foreach --quiet --recursive 'git stash list')"
+
+# --force is the answer, not a hand removal: if this ever starts failing, the
+# document's recipe is wrong and the rm -rf fallback has to come back.
+try "--force removes it" git -C .bare worktree remove --force "$proj4/feat"
+try "branch deletable afterwards" git -C .bare branch -d feat
+listed=$(git -C .bare worktree list | grep -c 'feat' || true)
+check "worktree gone from the list" "0" "$listed"
+
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "24" "$ran"
+check "every assertion ran" "38" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]

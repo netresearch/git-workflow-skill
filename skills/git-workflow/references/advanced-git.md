@@ -531,6 +531,87 @@ refuses a worktree with uncommitted changes, which is the check that catches a
 removal you did not intend. If a later command already failed this way, `cd` to a real directory
 and re-run it — do not start diagnosing the repository.
 
+#### A background process keeps the cwd it started with
+
+Moving the shell out first does not save a process that is already running
+there. A watcher started earlier — a pipeline waiter, a `tail -f`, a poll loop —
+holds the removed directory as its cwd, and the failure surfaces at the wrong
+moment and in the wrong place: it exits non-zero with the same `getcwd` message
+*after* it has already printed its result, so the harness reports the task as
+failed while the thing being watched succeeded.
+
+```
+tick 5: 265071 success
+TERMINAL: 265071 success
+pwd: error retrieving current directory: getcwd: cannot access parent directories
+[exited with code 1]
+```
+
+Two habits. Start anything that outlives one command from a directory the work
+will not remove — put the `cd` inside the script rather than relying on the
+caller's cwd. And when a background task reports failure, read the last lines of
+its output before the exit code becomes a statement about what it was watching.
+
+#### A worktree containing submodules needs `--force`
+
+The plain form refuses a worktree that has submodules checked out:
+
+```
+$ git worktree remove ../feature-x
+fatal: working trees containing submodules cannot be moved or removed
+```
+
+The message reads like a prohibition, and the branch cannot be deleted while the
+worktree stands (`error: cannot delete branch 'x' used by worktree at …`), so it
+is easy to conclude the worktree has to be torn down by hand. It does not:
+`--force` removes it (measured on git 2.55.0; the refusal is the submodule
+check, and `--force` lifts it).
+
+```bash
+git -C <worktree> status --porcelain                 # must be empty
+git -C <worktree> log --oneline origin/main..HEAD    # must be empty
+git -C <worktree> stash list                         # must be empty
+git -C <worktree> submodule foreach --quiet --recursive \
+    'git stash list'                                 # must be empty — see below
+
+git worktree remove --force /path/to/project/feature-x
+git branch -d feature-x
+git fetch origin --prune       # only where the remote branch is already gone
+```
+
+`--prune` drops `origin/feature-x` only if that branch no longer exists on the
+remote — it removes refs whose upstream is gone, and nothing above deletes
+anything on `origin`. After a merge on a forge that removes the source branch
+(GitLab's `remove_source_branch_after_merge`, GitHub's auto-delete) the ref is
+already stale and the prune tidies it; otherwise the remote branch is still
+live and the ref belongs there.
+
+The reads are not optional here. Everywhere else `--force` is the flag you
+leave off so the uncommitted-changes check can catch a removal you did not
+intend; with submodules you need it for an unrelated reason, and that check goes
+with it. Run the reads yourself before the flag, not instead of them.
+
+The fourth read is the one that is easy to leave out, and it is the one that
+loses work. A stash belongs to the repository it was created in, so a stash made
+*inside* an initialized submodule is not in the superproject's `refs/stash` — and
+because stashing reverted the change, the submodule is clean from the
+superproject's side too. Measured on git 2.55.0, with a stash sitting in
+`vendor/lib`:
+
+```
+git -C <worktree> stash list        (empty)
+git -C <worktree> status --porcelain (empty)
+git -C <worktree>/vendor/lib stash list
+  stash@{0}: On (no branch): work in the submodule
+```
+
+All three superproject reads say "clean", and `git worktree remove --force`
+then returns 0 and takes the linked worktree's submodule gitdir
+(`$GIT_COMMON_DIR/worktrees/<id>/modules/<name>/`) with it, so the stash is gone
+with no ref left to recover it from. `submodule foreach --recursive` is what
+sees it; `--quiet` suppresses the `Entering '<path>'` lines so that empty output
+means an empty stash rather than a header.
+
 ### "Merged and clean" is not the whole test — check the worktree's role
 
 A cleanup sweep classifies worktrees by branch state: HEAD contained in
