@@ -308,10 +308,28 @@ esac
 git -C .bare branch -d feat >/dev/null 2>&1; rc=$?
 check "the branch cannot be deleted while the worktree stands" "1" "$rc"
 
-# The three guards the recipe puts before --force, on a tree that passes them.
+# The guard that loses work if it is left out: a stash made INSIDE an
+# initialized submodule is in that submodule's refs/stash, not the
+# superproject's, and stashing reverted the change so the superproject is clean
+# too. All three superproject reads pass while the work is there, and --force
+# takes the submodule gitdir with it.
+printf 'work\n' >> "$proj4/feat/vendor/lib/lib.txt"
+git -C "$proj4/feat/vendor/lib" stash push -q -m "work in the submodule"
+check "superproject stash list does not see it" "" "$(git -C "$proj4/feat" stash list)"
+check "superproject status does not see it"     "" "$(git -C "$proj4/feat" status --porcelain)"
+recursive=$(git -C "$proj4/feat" submodule foreach --quiet --recursive 'git stash list')
+case "$recursive" in
+  *"work in the submodule"*) pass "submodule foreach --recursive does see it" ;;
+  *) fail "recursive stash guard missed a submodule stash: '$recursive'" ;;
+esac
+git -C "$proj4/feat/vendor/lib" stash drop -q
+
+# The four guards the recipe puts before --force, on a tree that passes them.
 check "nothing uncommitted" "" "$(git -C "$proj4/feat" status --porcelain)"
 check "nothing unpushed"    "" "$(git -C "$proj4/feat" log --oneline origin/main..HEAD)"
 check "nothing stashed"     "" "$(git -C "$proj4/feat" stash list)"
+check "nothing stashed in a submodule" "" \
+      "$(git -C "$proj4/feat" submodule foreach --quiet --recursive 'git stash list')"
 
 # --force is the answer, not a hand removal: if this ever starts failing, the
 # document's recipe is wrong and the rm -rf fallback has to come back.
@@ -322,7 +340,7 @@ check "worktree gone from the list" "0" "$listed"
 
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "34" "$ran"
+check "every assertion ran" "38" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]
