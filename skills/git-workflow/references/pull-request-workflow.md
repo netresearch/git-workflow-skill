@@ -375,17 +375,31 @@ the PR author — the flag refuses any other authenticated user; hand-written
 markers need at least the first 12 sha chars, since an 8-char prefix is
 grindable by vanity-sha tools), then re-reads the gate and merges.
 `pr-status.sh` reads the attestation back from the last 100 comments and
-honours it **only** where the refusing branch stamped
-`next.reason: bot-review-unsatisfiable` — the quota wall, or two failed bot
-reviews on the head; the flag keys on that reason, never on the account-global
-quota state, so a satisfiable refusal (say, classic `require_last_push_approval`)
-can never receive a false "unsatisfiable" attestation. That keying is necessary
+honours it where the refusing branch stamped a reason the author may satisfy in
+person: `next.reason: review-required`, the ordinary case where the policy wants
+a review and does not care whose, or `next.reason: bot-review-unsatisfiable`,
+where the demanded bot review cannot arrive at all. **A review is mandatory; a
+bot review is not.** Until 17 September 2026 the attestation counted only in the
+second case, which tied the whole self-review path to Copilot — a bot most
+repositories neither require nor have the quota for — and left a repository
+without the `copilot_code_review` ruleset unable to merge a reviewed pull
+request at all. What the policy demands is that somebody read the diff, and the
+author reading it is somebody.
+
+The one thing still worth waiting for is a bot review actually in flight: a
+pending Copilot request keeps the attestation inert and the ladder answers
+`await-review`, because requesting a reviewer commits you to waiting for its
+answer. The flag keys on the stamped reason, never on the account-global quota
+state, so a satisfiable refusal (say, classic `require_last_push_approval`)
+can never receive a false attestation, and the comment body states which of the
+two demands it satisfies rather than claiming an unsatisfiable bot where none
+was demanded. That keying is necessary
 and was not sufficient: until #214 the refusing branch itself stamped the reason
 while an `APPROVED` review sat on the very same head, and seven approved PRs in
 one sweep got the attestation anyway. The bot branches now also require that no
 approval is on the current head — checked against the approval list rather than
 `has_review_on_head`, which a failed Copilot review satisfies by being an
-ordinary `COMMENTED` row. With a live review path
+ordinary `COMMENTED` row. With a bot review in flight
 the attestation changes nothing, a non-author comment never counts, a human
 `CHANGES_REQUESTED` or a host-required approval keeps it inert, `--dry-run`
 previews the comment without posting it, and the next push invalidates the

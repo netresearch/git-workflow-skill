@@ -65,7 +65,7 @@ Install commands per framework: `references/git-hooks-setup.md`.
 
 ## PR Merge Requirements
 
-Before merging: threads resolved, CI green (incl. annotations), rebased, signed, **and reviewed** (human or bot, on the current head). Rebase-only + signed: `git merge --ff-only`.
+Before merging: threads resolved, CI green (incl. annotations), rebased, signed, **and reviewed** on the current head — by a human, a bot, or the author through `pr-merge.sh --self-reviewed`. A review is mandatory; a *bot* review is not, and one is waited for only while it is actually in flight. Rebase-only + signed: `git merge --ff-only`.
 
 ## Verification
 

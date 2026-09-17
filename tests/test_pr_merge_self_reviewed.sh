@@ -152,6 +152,36 @@ else
     echo "  ok   no comment was posted"
 fi
 
+echo "case 2b: request-review with reason=review-required — accepted, and the body says why"
+# A review is mandatory, a bot review is not: where the demand is simply that
+# somebody read the diff, the author reading it satisfies it. The attestation
+# must not claim an unsatisfiable bot in that case.
+make_status_stub; make_gh; set_viewer_raw "the-author"
+make_status_json status.1.json request-review review-required false
+out=$(run --self-reviewed); rc=$?
+check "exit code" "0" "$rc"
+if grep -q '^pr comment$' "$STUB_DIR/calls.log"; then
+    echo "  ok   the attestation was posted"
+else
+    echo "  FAIL no attestation was posted"; fail=1
+fi
+body=$(cat "$STUB_DIR/comment.body" 2>/dev/null || echo "")
+case "$body" in
+    *"requires a review and no bot review is in flight"*)
+        echo "  ok   the body states the demand it satisfies" ;;
+    *"unsatisfiable"*)
+        echo "  FAIL the body claims an unsatisfiable bot review"; fail=1 ;;
+    *)  echo "  FAIL the body does not say which demand it satisfies"; fail=1 ;;
+esac
+
+echo "case 2c: a refusal that is neither — still refused"
+make_status_stub; make_gh; set_viewer_raw "the-author"
+make_status_json status.1.json request-review resolve-threads false
+out=$(run --self-reviewed); rc=$?
+err=$(cat "$STUB_DIR/err")
+check "exit code" "2" "$rc"
+says  "names the refusal" "a live review path exists" "$err"
+
 echo "case 3: --self-reviewed refused for a non-author caller"
 make_status_stub; make_gh; set_viewer_raw "somebody-else"
 make_status_json status.1.json request-review bot-review-unsatisfiable false
