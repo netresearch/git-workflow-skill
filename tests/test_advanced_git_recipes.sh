@@ -348,8 +348,11 @@ printf '\n== consolidating a plain clone into the bare layout\n'
 # every ref in the doomed one has to be accounted for in the survivor first.
 
 # Names the refs in <bare> that preserve <sha>; "no" when nothing does.
+# for-each-ref, not `branch --contains`: a commit can be held by a tag, a note
+# or a stash and by no branch at all, and branch-only enumeration reports those
+# as absent while the object is right there.
 preserved() { # preserved <bare-gitdir> <sha> -> yes|no
-  if [ -n "$(git --git-dir="$1" branch -a --contains "$2" 2>/dev/null)" ]
+  if [ -n "$(git --git-dir="$1" for-each-ref --contains "$2" --format='%(refname)' 2>/dev/null)" ]
   then echo yes; else echo no; fi
 }
 
@@ -373,6 +376,14 @@ git clone -q "$TMP/origin5" "$proj5"     # the plain clone: proj5/.git + files
   echo wip >> f.txt && git stash push -q -m "wip worth keeping"
   # (c) an artefact that only --ignored reveals
   echo noise > build.log
+  # (e) a commit held by a local tag and by NO branch — invisible to any
+  # enumeration of refs/heads, and gone with the repository.
+  git commit -q --allow-empty -m "only reachable from a tag"
+  # -c tag.gpgsign=false: the global above turns a lightweight tag into a
+  # signing failure on purpose (that is the reference-merge recipe's problem,
+  # not this one's) and here the tag just has to exist.
+  git -c tag.gpgsign=false tag local-only-tag HEAD
+  git reset -q --hard HEAD~1
   # (d) a worktree registered here whose directory is gone -> "prunable"
   git worktree add -q "$TMP/ghost5" -b ghost main
   rm -rf "$TMP/ghost5"
@@ -395,6 +406,16 @@ main5=$(git -C "$proj5" rev-parse main)
 unpushed5=$(git -C "$proj5" rev-parse unpushed-work)
 check "main is preserved in .bare"            "yes" "$(preserved "$proj5/.bare" "$main5")"
 check "the unpushed branch is NOT preserved"  "no"  "$(preserved "$proj5/.bare" "$unpushed5")"
+
+# refs/heads is not the whole inventory. A commit held only by a tag is absent
+# from any branch enumeration in BOTH repositories, so a refs/heads sweep never
+# even asks about it and the loss is silent.
+tagged5=$(git -C "$proj5" rev-parse 'local-only-tag^{commit}')
+check "the tagged commit is on no branch at all" "" \
+      "$(git -C "$proj5" for-each-ref --contains "$tagged5" --format='%(refname)' refs/heads)"
+check "but an all-refs sweep finds it" "refs/tags/local-only-tag" \
+      "$(git -C "$proj5" for-each-ref --contains "$tagged5" --format='%(refname)' refs/tags)"
+check "and it is NOT preserved in .bare" "no" "$(preserved "$proj5/.bare" "$tagged5")"
 
 # Step 2 — the two things `git status` cannot show you. Its only complaint is
 # the .bare someone nested here, which is exactly how the mixed state reads.
@@ -421,12 +442,20 @@ check "rescued branch is now preserved" "yes" "$(preserved "$proj5/.bare" "$unpu
 
 try "turn the stash into a branch" \
     git -C "$proj5" stash branch rescued-stash 'stash@{0}'
-git -C "$proj5" commit -qam "rescued stash"
+# Through try: a failed commit would leave rescued-stash at its pre-stash tip,
+# which is already in .bare, so the preservation check below would pass without
+# ever testing the rescued work.
+try "commit the rescued stash" \
+    git -C "$proj5" commit -qam "rescued stash"
 rescued5=$(git -C "$proj5" rev-parse rescued-stash)
 try "rescue the stash as a branch" \
     git -C "$proj5/.bare" fetch -q "$proj5/.git" \
         '+refs/heads/rescued-stash:refs/heads/rescued-stash'
 check "rescued stash is now preserved" "yes" "$(preserved "$proj5/.bare" "$rescued5")"
+
+try "rescue the tag" \
+    git -C "$proj5/.bare" fetch -q "$proj5/.git" '+refs/tags/*:refs/tags/*'
+check "rescued tag is now preserved" "yes" "$(preserved "$proj5/.bare" "$tagged5")"
 
 # Step 5 — park, don't delete: the reflog is the one thing not in .bare. The
 # find form moves dotfiles too and leaves the directory itself, so a shell
@@ -457,7 +486,7 @@ check "no prunable entries in the new layout" "0" \
 
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "60" "$ran"
+check "every assertion ran" "66" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]

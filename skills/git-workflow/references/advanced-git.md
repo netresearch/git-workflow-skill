@@ -733,22 +733,38 @@ When a directory holds both — a plain clone *and* a `.bare` added later —
 consolidating means deleting one repository's object store. The checks that make
 that safe are not the ones `git status` offers.
 
+**Resolve the project path to an absolute one first.** `git -C "$bare"` makes
+`.bare` git's working directory, so every relative path in these commands gains a
+second `<project>` component — the same trap as `worktree add` below, and here it
+would fetch from nowhere and put the worktree inside `.bare`.
+
 **A ref is preserved when some ref in the survivor contains it**, which is not
 the same as being an ancestor of `origin/main`. An unmerged side branch preserves
 a sha perfectly well, and the ancestry test would condemn it — the mirror of the
-squash-merge case in "Is This Branch Safe to Delete?" below. `branch -a
---contains` answers the real question and names the ref that answers it; empty
-output is the finding.
+squash-merge case in "Is This Branch Safe to Delete?" below.
+
+**Enumerate every ref, not just `refs/heads`.** A commit can be held by a tag, a
+note or the stash and by no branch at all: `branch --contains` reports it as
+absent in both repositories, so a branch-only sweep never asks about it and the
+loss is silent. `for-each-ref --contains` searches all refs and names the one
+that answers; empty output is the finding.
 
 ```bash
-old=<project>/.git; bare=<project>/.bare
-git --git-dir="$old" for-each-ref --format='%(refname) %(objectname)' refs/heads |
-  while read -r ref sha; do
+project=$(cd <project> && pwd)          # absolute — see above
+old="$project/.git"; bare="$project/.bare"
+
+git --git-dir="$old" for-each-ref --format='%(refname)' \
+    refs/heads refs/tags refs/notes refs/stash |
+  while read -r ref; do
+    sha=$(git --git-dir="$old" rev-parse --quiet --verify "$ref^{commit}") || continue
     printf '%-45s %s\n' "$ref" \
-      "$(git --git-dir="$bare" branch -a --contains "$sha" | head -1)"
+      "$(git --git-dir="$bare" for-each-ref --contains "$sha" --format='%(refname)' | head -1)"
   done
 # a blank second column is a ref that dies with the old repository
 ```
+
+`refs/stash` covers only `stash@{0}`; the deeper entries are reflog, which is why
+`git stash list` stays a separate step below.
 
 **Three things `git status` will not tell you.** A stash is not in the working
 tree and dies with the repository — `git stash list`, then `git stash show
@@ -765,8 +781,9 @@ marker.
 nothing has to reach the remote first:
 
 ```bash
-git -C "$bare" fetch <project>/.git '+refs/heads/<branch>:refs/heads/<branch>'
-git -C <project> stash branch <rescue> 'stash@{0}'   # then commit it, then fetch it
+git -C "$bare" fetch "$old" '+refs/heads/<branch>:refs/heads/<branch>'
+git -C "$bare" fetch "$old" '+refs/tags/*:refs/tags/*'   # tags are not fetched by a refs/heads refspec
+git -C "$project" stash branch <rescue> 'stash@{0}'      # then commit it, then fetch that branch
 ```
 
 **Park, don't delete.** The reflog is the one thing that is not in the other
@@ -774,7 +791,7 @@ repository. `find` moves dotfiles too and leaves the directory itself in place,
 so a shell sitting in it survives:
 
 ```bash
-find <project> -mindepth 1 -maxdepth 1 ! -name .bare -exec mv {} <parked>/ \;
+find "$project" -mindepth 1 -maxdepth 1 ! -name .bare -exec mv {} <parked>/ \;
 # GNU mv batches the same thing: -exec mv -t <parked>/ {} +
 ```
 
@@ -783,9 +800,9 @@ no `[branch]` section, so `git pull` there has nothing to pull from, and the
 local branch sits wherever the bare clone found it:
 
 ```bash
-git -C "$bare" worktree add <project>/main main
-git -C <project>/main merge --ff-only origin/main
-git -C <project>/main branch --set-upstream-to=origin/main main
+git -C "$bare" worktree add "$project/main" main
+git -C "$project/main" merge --ff-only origin/main
+git -C "$project/main" branch --set-upstream-to=origin/main main
 ```
 
 `tests/test_advanced_git_recipes.sh` runs this sequence end to end.
