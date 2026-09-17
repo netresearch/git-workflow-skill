@@ -77,7 +77,7 @@
 #   base head headOid
 #   checks checks_settled threads unresolved_threads
 #   unanswered_comments unanswered_human unanswered_by unanswered_urls
-#   reviewDecision reviews_on_head has_review_on_head
+#   reviewDecision reviews_on_head has_review_on_head coderabbit_on_head
 #   has_copilot_review_on_head copilot_latest_on_head_ok copilot_review_errored
 #   copilot_error_count copilot_quota_hit copilot_quota_exhausted
 #   self_review_on_head self_review_url
@@ -454,6 +454,36 @@ evaluate() {
     | ([$unanswered_comments[]
         | select(((.author.__typename // "") == "Bot") | not)
         | select((.author.login | test("\\[bot\\]$|^(dependabot|renovate|copilot)"; "i")) | not)]) as $unanswered_human
+    # The CodeRabbit verdict is an ISSUE COMMENT, never a review, so every
+    # review-shaped field above is blank on a pull request it cleared minutes
+    # ago and the report reads "NONE on current head". It keeps ONE comment and
+    # edits it in place, accumulating a block per push, each naming the range it
+    # covers — so the marker ABOVE the line naming a head is the verdict for
+    # that head, and a head named by no line was never reviewed. Same algorithm as
+    # references/pull-request-workflow.md, which until now only a human could
+    # run. REPORTED, NOT MERGED ON: has_review_on_head and the merge gate are
+    # untouched, because a comment is not a review and widening that test here
+    # would let every bot comment clear the gate.
+    | (([$p.comments.nodes[]? | select(.author.login | test("^coderabbitai"; "i"))]
+        | last | .body // "") | split("\n")) as $cr_lines
+    | ([$cr_lines | to_entries[] | select(.value | test($p.headRefOid)) | .key] | first) as $cr_idx
+    # The summary also comes in a shape that names the head it assessed as a
+    # SHORT sha and carries no range at all ("Merge Risk: … up to `2cf7a`").
+    # Resolving it needs `git rev-parse` against a checkout that has fetched the
+    # branch, which this script cannot assume, and a prefix compare is exactly
+    # the wrong shortcut — five hex digits collide, and a collision reports an
+    # older assessment as covering the current head. So the presence of that
+    # marker downgrades "none" to "unknown" and the reader is sent to the
+    # reference to resolve it. Never to "clean": unknown authorises nothing.
+    | (([$cr_lines[] | select(test("up to `[0-9a-f]+`"))] | length) > 0) as $cr_short_shape
+    | (if ($cr_lines | length) == 0 then "none"
+       elif $cr_idx == null then (if $cr_short_shape then "unknown" else "none" end)
+       else ([$cr_lines[0:$cr_idx][]
+              | if test("rate limited by coderabbit") then "rate-limited"
+                elif test("No actionable comments") then "clean"
+                elif test("Actionable comments posted") then "findings"
+                else empty end] | last // "unknown")
+       end) as $cr_verdict
     # A cancelled context that reported again under the same name is STALE:
     # the later row is the answer and the cancelled one is a leftover. One that
     # never reported again is genuinely unmet and still shuts the gate — but it
@@ -568,6 +598,10 @@ evaluate() {
                                   | join("+"))})
                           | add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
+        # clean | findings | rate-limited | unknown | none. Display and advice
+        # only — nothing downstream gates on it. "unknown" is the short-sha
+        # shape, which only a checkout can resolve.
+        coderabbit_on_head: $cr_verdict,
         has_copilot_review_on_head: (($copilot_on_head|length) > 0),
         # Which of the two came last, not merely which exists. reviews(last:50)
         # is chronological, so the final Copilot row on this head decides: a
@@ -672,7 +706,24 @@ evaluate() {
     # One source for the phrase; the branches differ only in what follows it.
     # The copilot branch is not gated on has_review_on_head, so it must not
     # assert this when a review does exist on the head.
-    | "no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed" as $no_review
+    # The CodeRabbit clause is appended to the phrase rather than replacing it:
+    # a comment does not lift the gate, but omitting it sends the operator to
+    # re-derive by hand what this run already read, or to write a self-review
+    # note claiming no bot review existed when one did.
+    | (if $s.coderabbit_on_head == "clean"
+         then " — note CodeRabbit reviewed THIS head and generated no actionable comments;"
+              + " that is a comment, not a review, so the gate stands, but say so rather than"
+              + " claiming no bot review was obtainable"
+       elif $s.coderabbit_on_head == "findings"
+         then " — note CodeRabbit posted actionable comments on THIS head; read them before anything else"
+       elif $s.coderabbit_on_head == "rate-limited"
+         then " — CodeRabbit refused THIS head as rate limited; it will not catch up on its own"
+       elif $s.coderabbit_on_head == "unknown"
+         then " — a CodeRabbit summary names the head it assessed as a short sha; resolve it with"
+              + " git rev-parse per references/pull-request-workflow.md before treating this head"
+              + " as reviewed or as unreviewed"
+       else "" end) as $cr_note
+    | "no review on the current head (\($s.headOid[0:8])) — do not merge unreviewed\($cr_note)" as $no_review
     | (if ($s.has_review_on_head | not) then "\($no_review). " else "" end) as $unreviewed
     # One quota sentence for every branch that would otherwise hand back a
     # re-request command. Where the evidence came from is stated rather than
@@ -1061,7 +1112,7 @@ render() {
     (if .classic_protection then
        "  classic     : approvals>=\(.classic_protection.approvals_required)\(if .classic_protection.last_push_approval then ", last-push-approval" else "" end)\(if .classic_protection.code_owner_reviews then ", code-owner-reviews" else "" end) (classic branch protection — invisible to the rulesets endpoint)"
      else empty end),
-    "  reviews     : \(if .has_review_on_head then (.reviews_on_head|to_entries|map("\(.key)=\(.value)")|join(", ")) else "NONE on current head" end)  decision=\(if .reviewDecision=="" then "-" else .reviewDecision end)",
+    "  reviews     : \(if .has_review_on_head then (.reviews_on_head|to_entries|map("\(.key)=\(.value)")|join(", ")) else "NONE on current head" end)\(if .coderabbit_on_head == "none" then "" else "  coderabbit=\(.coderabbit_on_head)" end)  decision=\(if .reviewDecision=="" then "-" else .reviewDecision end)",
     "  threads     : \(.unresolved_threads) unresolved",
     (if .unanswered_comments > 0 then
        "  comments    : \(.unanswered_comments) unanswered (\(.unanswered_by|join(", ")))\(if .unanswered_human == 0 then " — bots only, not gating" else "" end)"

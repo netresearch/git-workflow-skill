@@ -237,6 +237,15 @@ ask, and it may answer with the rate limit above. Observed 2026-09-17 on
 `netresearch/skill-repo-skill#322`: `up to 2cf7a` while the head was `889fc34`,
 two commits later.
 
+`pr-status.sh` runs the **range-shaped** half of this for you and reports it as
+`coderabbit_on_head` (`clean` · `findings` · `rate-limited` · `unknown` · `none`),
+also on the prose `reviews` line as `coderabbit=…`. It does not resolve the
+short-sha shape — that needs a checkout — so it answers `unknown` when a
+`up to \`…\`` marker is the only thing naming a head, and the resolution above is
+still yours to run. Nothing gates on the field: a comment is not a review, so
+`has_review_on_head` and the merge gate are unchanged, and the value exists so a
+self-review note can say what the bots did rather than claiming they said nothing.
+
 When *both* reviewers are walled — Copilot out of monthly quota, CodeRabbit rate
 limited — no bot review is obtainable and the documented path is to read the diff
 yourself and merge on the attestation (`pr-merge.sh --self-reviewed`), noting in
