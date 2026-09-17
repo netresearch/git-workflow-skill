@@ -190,11 +190,13 @@ gh api "repos/$R/issues/$PR/comments" \
   | jq -r '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .body' \
   | grep -nE "rate limited by coderabbit|No actionable comments|Merge Risk|and ${H}\."
 # the marker ABOVE the line naming $H is the verdict for $H;
-# no line naming $H at all -> this head was never reviewed
+# no line naming $H at all -> read the `Merge Risk` line below before concluding
+# "never reviewed": it names its commit as a SHORT sha, not as a range
 ```
 
-Three markers, three terminal states: refused, reviewed-clean, never triggered.
-None of them will change by waiting.
+Three of those markers are terminal states of a range-shaped block: refused,
+reviewed-clean, never triggered. None of them will change by waiting. The fourth,
+`Merge Risk`, is the shape that carries no range at all and is read differently.
 
 **A fourth shape says which head was assessed without naming a range at all.**
 The summary can carry a verdict block instead of the `between X and Y` line:
@@ -214,12 +216,19 @@ a merge it should not. Resolve it instead, and require it to name **exactly one*
 commit:
 
 ```bash
-SHORT=2cf7a
+SHORT=$(gh api "repos/$R/issues/$PR/comments" \
+  | jq -r '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .body' \
+  | grep -oE 'up to `[0-9a-f]+`' | tail -1 | tr -d '`' | awk '{print $3}')
 git rev-parse --verify --quiet "$SHORT^{commit}" >/dev/null \
   && [ "$(git rev-parse "$SHORT")" = "$H" ] \
   && echo "the block covers the current head"
 # ambiguous, unknown, or a different commit -> treat this head as unreviewed
 ```
+
+Run it where the commit is fetched — from a checkout of the pull request, not
+from a clone that has never seen the branch, or an unfetched sha resolves to
+nothing and reads as the ambiguous case. That fallback is the safe one, but it
+is the wrong reason.
 
 The marker is advisory, so every outcome other than "one commit, and it is `$H`"
 falls back to unreviewed. When it names an earlier commit the automatic pass will
