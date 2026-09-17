@@ -376,8 +376,10 @@ git clone -q "$TMP/origin5" "$proj5"     # the plain clone: proj5/.git + files
   git checkout -q -b unpushed-work
   echo local > only-here.txt && git add -A && git commit -qm "exists nowhere else"
   git checkout -q main
-  # (b) a stash holding real work
-  echo wip >> f.txt && git stash push -q -m "wip worth keeping"
+  # (b) TWO stashes. Only stash@{0} is a ref; the deeper entries are the stash
+  # reflog, which no refspec carries.
+  echo wip >> f.txt  && git stash push -q -m "older wip"
+  echo wip2 >> f.txt && git stash push -q -m "newest wip"
   # (c) an artefact that only --ignored reveals
   echo noise > build.log
   # (d) a commit held by a local tag and by NO branch — invisible to any
@@ -428,7 +430,7 @@ check "and it is NOT preserved in .bare" "no" "$(preserved "$proj5/.bare" "$tagg
 # the .bare someone nested here, which is exactly how the mixed state reads.
 check "status reports nothing but the nested .bare" "?? .bare/" \
       "$(git -C "$proj5" status --porcelain)"
-check "while a stash holds work"       "1" \
+check "while two stashes hold work"    "2" \
       "$(git -C "$proj5" stash list | wc -l | tr -d ' ')"
 check "and an artefact needs --ignored" "1" \
       "$(git -C "$proj5" status --porcelain --ignored | grep -c '^!!' || true)"
@@ -447,18 +449,27 @@ try "rescue the unpushed branch" \
         '+refs/heads/unpushed-work:refs/heads/unpushed-work'
 check "rescued branch is now preserved" "yes" "$(preserved "$proj5/.bare" "$unpushed5")"
 
-try "turn the stash into a branch" \
-    git -C "$proj5" stash branch rescued-stash 'stash@{0}'
-# Through try: a failed commit would leave rescued-stash at its pre-stash tip,
-# which is already in .bare, so the preservation check below would pass without
-# ever testing the rescued work.
-try "commit the rescued stash" \
-    git -C "$proj5" commit -qam "rescued stash"
-rescued5=$(git -C "$proj5" rev-parse rescued-stash)
-try "rescue the stash as a branch" \
+# Every stash entry, not just the top one. `+refs/stash:refs/stash` carries
+# stash@{0} alone, and `stash branch` consumes entries one at a time while
+# shifting the rest — so capture each commit as its own ref first, before
+# anything disturbs the reflog.
+stash_new=$(git -C "$proj5" rev-parse 'stash@{0}')
+stash_old=$(git -C "$proj5" rev-parse 'stash@{1}')
+check "the two entries are different commits" "different" \
+      "$([ "$stash_new" != "$stash_old" ] && echo different || echo same)"
+check "only stash@{0} is reachable as a ref" "$stash_new" \
+      "$(git -C "$proj5" rev-parse refs/stash)"
+check "neither is in .bare before the rescue" "no no" \
+      "$(preserved "$proj5/.bare" "$stash_new") $(preserved "$proj5/.bare" "$stash_old")"
+
+git -C "$proj5" stash list --format='%H' | nl -ba | while read -r n sha; do
+  git -C "$proj5" branch "rescue-stash-$n" "$sha"
+done
+try "rescue every stash entry" \
     git -C "$proj5/.bare" fetch -q "$proj5/.git" \
-        '+refs/heads/rescued-stash:refs/heads/rescued-stash'
-check "rescued stash is now preserved" "yes" "$(preserved "$proj5/.bare" "$rescued5")"
+        '+refs/heads/rescue-stash-*:refs/heads/rescue-stash-*'
+check "the newest stash entry is preserved" "yes" "$(preserved "$proj5/.bare" "$stash_new")"
+check "and so is the deeper one"            "yes" "$(preserved "$proj5/.bare" "$stash_old")"
 
 try "rescue the tag" \
     git -C "$proj5/.bare" fetch -q "$proj5/.git" '+refs/tags/*:refs/tags/*'
@@ -502,7 +513,7 @@ check "no prunable entries in the new layout" "0" \
 
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "69" "$ran"
+check "every assertion ran" "71" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]

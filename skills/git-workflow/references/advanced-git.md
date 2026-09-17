@@ -768,8 +768,9 @@ git --git-dir="$old" for-each-ref --format='%(refname)' \
 # a blank second column is a ref that dies with the old repository
 ```
 
-`refs/stash` covers only `stash@{0}`; the deeper entries are reflog, which is why
-`git stash list` stays a separate step below.
+`refs/stash` covers only `stash@{0}`; the deeper entries are reflog, so the loop
+above sees one of them however many there are. `git stash list` is what counts
+them, and the rescue below is what preserves them.
 
 **Three things `git status` will not tell you.** A stash is not in the working
 tree and dies with the repository — `git stash list`, then `git stash show
@@ -789,7 +790,14 @@ nothing has to reach the remote first:
 git -C "$bare" fetch "$old" '+refs/heads/<branch>:refs/heads/<branch>'
 git -C "$bare" fetch "$old" '+refs/tags/*:refs/tags/*'    # a refs/heads refspec carries no tags
 git -C "$bare" fetch "$old" '+refs/notes/*:refs/notes/*'  # nor notes
-git -C "$project" stash branch <rescue> 'stash@{0}'       # then commit it, then fetch that branch
+
+# Stashes: EVERY entry, not just the top one. `+refs/stash:refs/stash` carries
+# stash@{0} alone, and `stash branch` consumes entries one at a time while
+# shifting the rest — so turn each into its own ref before touching the reflog.
+git -C "$project" stash list --format='%H' | nl -ba | while read -r n sha; do
+  git -C "$project" branch "rescue-stash-$n" "$sha"
+done
+git -C "$bare" fetch "$old" '+refs/heads/rescue-stash-*:refs/heads/rescue-stash-*'
 ```
 
 **Park, don't delete.** The reflog is the one thing that is not in the other
