@@ -489,12 +489,28 @@ evaluate() {
     | (([$cr_bodies[] | select(test("up to `[0-9a-f]+`"))] | length) > 0) as $cr_short_shape
     | (if ($cr_bodies | length) == 0 then "none"
        elif $cr_idx == null then (if $cr_short_shape then "unknown" else "none" end)
-       else ([$cr_lines[0:$cr_idx][]
-              | if test("rate limited by coderabbit") then "rate-limited"
-                elif test("Currently processing new changes") then "in-progress"
-                elif test("No actionable comments") then "clean"
-                elif test("Actionable comments posted") then "findings"
-                else empty end] | last // "unknown")
+       else (([$cr_lines[0:$cr_idx][]
+               | if test("rate limited by coderabbit") then "rate-limited"
+                 elif test("Currently processing new changes") then "in-progress"
+                 elif test("No actionable comments") then "clean"
+                 elif test("Actionable comments posted") then "findings"
+                 else empty end] | last) as $positional
+              # The positional rule stays authoritative: one body carries a
+              # block per push, so "which marker is nearest above this head" is
+              # the only way to keep an older block from answering for a newer
+              # one. Walkthrough is a separate FALLBACK, reached only when no
+              # block marker precedes the head at all — the shape a finished
+              # review WITH findings has: a walkthrough, a risk table, and no
+              # "No actionable comments" line anywhere. Measured on
+              # netresearch/git-workflow-skill#312. A clean summary carries a
+              # walkthrough too, but BELOW the line naming its range, so the two
+              # shapes are distinguishable by position; keeping this out of the
+              # scan is about not mixing a section heading in with the block
+              # markers, not about a collision that exists today.
+              | if $positional != null then $positional
+                elif ([$cr_lines[0:$cr_idx][] | select(test("Walkthrough"))] | length) > 0
+                  then "findings"
+                else "unknown" end)
        end) as $cr_verdict
     # A cancelled context that reported again under the same name is STALE:
     # the later row is the answer and the cancelled one is a leftover. One that

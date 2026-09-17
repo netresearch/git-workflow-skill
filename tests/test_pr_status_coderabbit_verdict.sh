@@ -86,11 +86,19 @@ check() { # label expected actual
 
 # --- case 1: reviewed clean on THIS head -------------------------------------
 # The real shape: the marker sits ABOVE the line naming the range it covers.
+# A CLEAN summary carries a Walkthrough section too. It sits BELOW the line
+# naming the range — the opposite side from the findings shape in case 4e, where
+# it is above — so it falls outside the scanned slice by position. Reproduced
+# here so the difference is in the fixtures rather than only in a comment.
 echo "case 1: no actionable comments on the current head"
 build_payload "No actionable comments were generated in the recent review. 🎉
 <details>
 Reviewing files that changed from the base of the PR and between $PREV and $HEAD.
-</details>"
+</details>
+📝 Walkthrough
+## Walkthrough
+The change removes three symlinks.
+**Merge Risk:** _⚪ Minimal_ · up to \`${HEAD:0:5}\`"
 out="$(run_json)"
 check "coderabbit_on_head" "clean" "$(jq -r .coderabbit_on_head <<<"$out")"
 check "has_review_on_head stays false" "false" "$(jq -r .has_review_on_head <<<"$out")"
@@ -185,6 +193,22 @@ Already reviewed the last commit. Use \`@coderabbitai full review\` to rerun a r
 out="$(run_json)"
 check "coderabbit_on_head" "clean" "$(jq -r .coderabbit_on_head <<<"$out")"
 check "has_review_on_head stays false" "false" "$(jq -r .has_review_on_head <<<"$out")"
+
+# --- case 4e: a finished review WITH findings carries no block marker --------
+# Its summary leads with a walkthrough and a risk table and has no "No
+# actionable comments" line at all. Falling through to "unknown" would send the
+# operator to resolve a sha while a finding sits unread. The fallback must not
+# disturb case 1, where a clean summary ALSO contains the word Walkthrough,
+# below the clean marker — which is why the fallback is not part of the
+# positional scan. Shape taken from netresearch/git-workflow-skill#312.
+echo "case 4e: a review with findings, no block marker"
+build_payload "📝 Walkthrough
+## Walkthrough
+The change updates CodeRabbit detection.
+**Merge Risk:** _🔵 Low_ · up to \`${HEAD:0:5}\`
+<!-- change_assessment_commit:\"$HEAD\" -->"
+out="$(run_json)"
+check "coderabbit_on_head" "findings" "$(jq -r .coderabbit_on_head <<<"$out")"
 
 # --- case 5: the bot never posted --------------------------------------------
 echo "case 5: no CodeRabbit comment at all"

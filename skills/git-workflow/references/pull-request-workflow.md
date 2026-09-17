@@ -186,13 +186,19 @@ and see which marker encloses it:
 ```bash
 R=owner/repo; PR=123
 H=$(gh pr view "$PR" --repo "$R" --json headRefOid --jq .headRefOid)
-gh api "repos/$R/issues/$PR/comments" \
-  | jq -r --arg h "$H" '[.[] | select(.user.login=="coderabbitai[bot]")
-                             | select(.body | contains($h))] | last | .body' \
-  | grep -nE "rate limited by coderabbit|Currently processing new changes|No actionable comments|Merge Risk|and ${H}\."
-# the marker ABOVE the line naming $H is the verdict for $H;
-# no line naming $H at all -> read the `Merge Risk` line below before concluding
-# "never reviewed": it names its commit as a SHORT sha, not as a range
+gh api "repos/$R/issues/$PR/comments" > /tmp/cr.json
+
+# 1. the comment that NAMES $H, if there is one — not the newest (see below)
+jq -r --arg h "$H" '[.[] | select(.user.login=="coderabbitai[bot]")
+                         | select(.body | contains($h))] | last | .body' /tmp/cr.json \
+  | grep -nE "rate limited by coderabbit|Currently processing new changes|No actionable comments|and ${H}\."
+
+# 2. nothing named $H -> the short-sha shape may still cover it. Search EVERY
+#    CodeRabbit comment for it; never fall back to the newest comment, which can
+#    be an `Already reviewed the last commit` reply describing a different head.
+jq -r '.[] | select(.user.login=="coderabbitai[bot]") | .body' /tmp/cr.json \
+  | grep -oE 'up to `[0-9a-f]+`'
+# a hit here is NOT a verdict: resolve the sha below before believing it
 ```
 
 Three of those markers are terminal states of a range-shaped block: refused,
@@ -200,6 +206,14 @@ reviewed-clean, never triggered. None of them will change by waiting. The fourth
 `Merge Risk`, is the shape that carries no range at all and is read differently.
 `Currently processing new changes` is the one state that is **not** terminal — a
 review in flight, which the merge gate says never to merge over.
+
+**The gap is asymmetric, which is what makes it confusing.** When CodeRabbit has
+findings it posts inline comments, and those DO register as a review — `reviews:
+coderabbitai=COMMENTED`, plus an unresolved thread the gate already counts. It is
+the **clean** pass that leaves nothing but the comment, so the only case where
+`reviews: NONE on current head` is actively misleading is the case where there
+was nothing to say. A reviewed-clean head and a never-reviewed head look
+identical on that line; that is what `coderabbit_on_head` separates.
 
 **`last` alone reads the wrong comment.** "It keeps one comment" is true of the
 summary; a reply to `@coderabbitai review` is a second comment by the same author
