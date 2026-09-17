@@ -184,6 +184,42 @@ same watch under Monitor ran to its event. A watch that was killed reports
 nothing, so after such a stop, read the gate once directly
 (`pr-status.sh -R OWNER/REPO "$PR"`) before arming the next one.
 
+### Key the verdict on `--json .next.action`, never on the `NEXT:` prose
+
+The rule above is about noise; this one is about a wrong verdict, and it is the
+same mechanism one step worse. A hand-rolled loop that polls `pr-status.sh` and
+decides by matching the human `NEXT:` line matches the **explanation**, not the
+state: the `why` text for `request-review` reads *"no review on the current head
+… do not merge unreviewed"*, so a `case "$line" in *merge*)` arm fires on a gate
+that is shut and announces the opposite of the truth.
+
+```bash
+# ❌ matches the reason, not the state — "do not merge unreviewed" contains "merge"
+line=$(pr-status.sh -R "$R" "$PR" | grep '^NEXT:')
+case "$line" in *merge*) echo "GATE OPEN";; esac
+
+# ✅ the state is a field
+act=$(pr-status.sh -R "$R" "$PR" --json | jq -r '.next.action')
+[ "$act" = "merge" ] && echo "GATE OPEN"
+```
+
+The human line is for a human; `--json` is the machine contract, and
+`.next.action` is one token from a fixed vocabulary. Do not copy that vocabulary
+into your loop — it grows with the script (18 values at 1.32.4, from `merge` and
+`ready` through `await-capacity` and `rules-unavailable`). Match the handful you
+act on by exact string, and treat every other value as "keep waiting": an
+unrecognised action then delays you, where a substring match on prose reports
+success.
+
+### A watcher is armed on a head; stop it when the head moves
+
+A loop polling a pull request keeps polling after a force-push, and its next
+notification describes a state that no longer exists — while the watcher you
+armed on the *new* head reports beside it. Two watchers on one PR disagreeing is
+indistinguishable from a flapping gate. Stop the old one when you rewrite the
+branch (`TaskStop`, or whatever ends the producer), and name the head in the
+watcher's description so a stale event is recognisable as stale.
+
 ## Check the producer is switched on before arming the watcher
 
 A watch whose event can never be produced is indistinguishable from one whose

@@ -188,13 +188,30 @@ R=owner/repo; PR=123
 H=$(gh pr view "$PR" --repo "$R" --json headRefOid --jq .headRefOid)
 gh api "repos/$R/issues/$PR/comments" \
   | jq -r '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .body' \
-  | grep -nE "rate limited by coderabbit|No actionable comments|and ${H}\."
+  | grep -nE "rate limited by coderabbit|No actionable comments|Merge Risk|and ${H}\."
 # the marker ABOVE the line naming $H is the verdict for $H;
 # no line naming $H at all -> this head was never reviewed
 ```
 
 Three markers, three terminal states: refused, reviewed-clean, never triggered.
 None of them will change by waiting.
+
+**A fourth shape says which head was assessed without naming a range at all.**
+The summary can carry a verdict block instead of the `between X and Y` line:
+
+```text
+**Merge Risk:** _🔵 Low_ · up to `2cf7a`
+```
+
+That `up to` sha is the head the assessment covers, and it is a **short** sha, so
+a grep built from the full `$H` above misses it and reports "never reviewed" for
+a pull request that was in fact reviewed — at an older commit. Compare the first
+five characters, and read the block as terminal only when it names the current
+head; when it names an earlier one, the current head is unreviewed and the
+automatic pass will not come back for it (`@coderabbitai review` is the only way
+to ask, and it may answer with the rate limit above). Observed 2026-09-17 on
+`netresearch/skill-repo-skill#322`: `up to 2cf7a` while the head was `889fc34`,
+two commits later.
 
 When *both* reviewers are walled — Copilot out of monthly quota, CodeRabbit rate
 limited — no bot review is obtainable and the documented path is to read the diff
