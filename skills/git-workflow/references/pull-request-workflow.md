@@ -205,11 +205,26 @@ The summary can carry a verdict block instead of the `between X and Y` line:
 
 That `up to` sha is the head the assessment covers, and it is a **short** sha, so
 a grep built from the full `$H` above misses it and reports "never reviewed" for
-a pull request that was in fact reviewed — at an older commit. Compare the first
-five characters, and read the block as terminal only when it names the current
-head; when it names an earlier one, the current head is unreviewed and the
-automatic pass will not come back for it (`@coderabbitai review` is the only way
-to ask, and it may answer with the rate limit above). Observed 2026-09-17 on
+a pull request that was in fact reviewed — at an older commit.
+
+Do not compare a fixed number of characters: five hex digits is short enough that
+two commits in the repository can share them, and a prefix match then reports an
+older assessment as covering the current head — the one direction that authorises
+a merge it should not. Resolve it instead, and require it to name **exactly one**
+commit:
+
+```bash
+SHORT=2cf7a
+git rev-parse --verify --quiet "$SHORT^{commit}" >/dev/null \
+  && [ "$(git rev-parse "$SHORT")" = "$H" ] \
+  && echo "the block covers the current head"
+# ambiguous, unknown, or a different commit -> treat this head as unreviewed
+```
+
+The marker is advisory, so every outcome other than "one commit, and it is `$H`"
+falls back to unreviewed. When it names an earlier commit the automatic pass will
+not come back for the current head — `@coderabbitai review` is the only way to
+ask, and it may answer with the rate limit above. Observed 2026-09-17 on
 `netresearch/skill-repo-skill#322`: `up to 2cf7a` while the head was `889fc34`,
 two commits later.
 
