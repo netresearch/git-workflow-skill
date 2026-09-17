@@ -380,7 +380,7 @@ git clone -q "$TMP/origin5" "$proj5"     # the plain clone: proj5/.git + files
   echo wip >> f.txt && git stash push -q -m "wip worth keeping"
   # (c) an artefact that only --ignored reveals
   echo noise > build.log
-  # (e) a commit held by a local tag and by NO branch — invisible to any
+  # (d) a commit held by a local tag and by NO branch — invisible to any
   # enumeration of refs/heads, and gone with the repository.
   git commit -q --allow-empty -m "only reachable from a tag"
   # -c tag.gpgsign=false: the global above turns a lightweight tag into a
@@ -388,10 +388,10 @@ git clone -q "$TMP/origin5" "$proj5"     # the plain clone: proj5/.git + files
   # not this one's) and here the tag just has to exist.
   git -c tag.gpgsign=false tag local-only-tag HEAD
   git reset -q --hard HEAD~1
-  # (f) a note. Notes live in their own history, so no refspec over heads or
+  # (e) a note. Notes live in their own history, so no refspec over heads or
   # tags carries them and no ancestry check sees them.
   git notes add -m "a note that only exists here" main
-  # (d) a worktree registered here whose directory is gone -> "prunable"
+  # (f) a worktree registered here whose directory is gone -> "prunable"
   git worktree add -q "$TMP/ghost5" -b ghost main
   rm -rf "$TMP/ghost5"
 )
@@ -489,7 +489,7 @@ try "add the main worktree" \
     git -C "$proj5/.bare" worktree add -q "$proj5/main" main
 check "a fresh bare worktree has no upstream" "## main" \
       "$(git -C "$proj5/main" status -sb | head -1)"
-check "and is behind origin" "no" \
+check "and is NOT yet at origin's tip" "no" \
       "$([ "$(git -C "$proj5/main" rev-parse HEAD)" = "$origin5_tip" ] && echo yes || echo no)"
 
 try "fast-forward it"   git -C "$proj5/main" merge --ff-only -q origin/main
