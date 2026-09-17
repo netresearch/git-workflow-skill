@@ -770,17 +770,47 @@ plant_marker
 check "self_review_on_head" "false"          "$(run_flag self_review_on_head)"
 check "next.action"         "request-review" "$(run_next)"
 
-echo "case SR4: attestation present but NO quota wall — a live review path wins"
+echo "case SR4: attestation present, no quota wall, no bot review in flight — it counts"
+# A review is mandatory; a BOT review is not. This case asserted the opposite
+# until 17 September 2026: it required a Copilot quota wall before the author
+# reading the diff could satisfy the policy, which left every repository
+# without the copilot_code_review ruleset unable to merge a reviewed pull
+# request at all.
 COMMENTS_JSON="$SR_MARKER" make_stub
-check "self_review_on_head" "true"           "$(run_flag self_review_on_head)"
-check "next.action"         "request-review" "$(run_next)"
-case "$(run_flag 'next.cmd')" in
-    *"repos/o/r/pulls/1/requested_reviewers"*)
-        echo "  ok   the re-request command is still offered — the attestation changed nothing" ;;
-    *)  echo "  FAIL the attestation suppressed a live review path"
+check "self_review_on_head" "true"  "$(run_flag self_review_on_head)"
+check "next.action"         "merge" "$(run_next)"
+case "$(run_flag 'next.why')" in
+    *"no bot review was in flight"*)
+        echo "  ok   the merge names which honouring it rests on" ;;
+    *"unsatisfiable"*)
+        echo "  FAIL claims an unsatisfiable bot where none was demanded"
+        fail=1 ;;
+    *)  echo "  FAIL the why does not name the attestation it rests on"
         fail=1 ;;
 esac
-check "next.reason absent on the live path" "null" "$(run_flag 'next.reason')"
+
+echo "case SR4b: same, but a Copilot review is in flight — the attestation waits"
+# Requesting a reviewer commits you to waiting for its answer, so the ladder
+# reports await-review rather than letting the attestation merge over it.
+COMMENTS_JSON="$SR_MARKER" REVIEW_REQUESTS_JSON='["copilot-pull-request-reviewer"]' make_stub
+check "self_review_on_head" "true"          "$(run_flag self_review_on_head)"
+check "next.action"         "await-review"  "$(run_next)"
+
+echo "case SR4c: same, but the host demands an approval — the attestation cannot supply one"
+COMMENTS_JSON="$SR_MARKER" REVIEW_DECISION=REVIEW_REQUIRED make_stub
+check "self_review_on_head" "true"           "$(run_flag self_review_on_head)"
+check "next.action"         "request-review" "$(run_next)"
+
+echo "case SR4d: no attestation and no wall — the demand is named as one the author may satisfy"
+make_stub
+check "next.action" "request-review" "$(run_next)"
+check "next.reason" "review-required" "$(run_flag 'next.reason')"
+case "$(run_flag 'next.cmd')" in
+    *"repos/o/r/pulls/1/requested_reviewers"*)
+        echo "  ok   requesting Copilot is still offered as the other way to satisfy it" ;;
+    *)  echo "  FAIL the re-request command disappeared"
+        fail=1 ;;
+esac
 
 echo "case SR5: two failed bot reviews + attestation — the two-strikes leg opens too"
 COMMENTS_JSON="$SR_MARKER" make_stub "$ERR_GENERIC" "$ERR_GENERIC"

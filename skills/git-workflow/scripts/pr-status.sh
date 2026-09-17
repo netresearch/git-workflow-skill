@@ -698,12 +698,19 @@ evaluate() {
     # re-request loop in the other — the same trap `is_errored_copilot_review`
     # is factored out to avoid.
     | ($s.copilot_error_count >= 2) as $copilot_exhausted
-    # The attestation counts EXACTLY where the demanded review is one the
-    # tool itself calls unsatisfiable: the monthly quota wall, or a bot that
-    # has failed twice on this head — the two situations whose advice already
-    # reads "review the diff yourself and decide on that". Anywhere else a
-    # live review path exists and the attestation is ignored, so it can never
-    # shortcut a review that could still happen.
+    # A review is mandatory; a BOT review is not. The attestation used to count
+    # only where a Copilot review was unsatisfiable — a quota wall or two
+    # failures on this head — which tied the whole self-review path to a bot
+    # that most repositories neither require nor have the quota for, and left
+    # a repository without the copilot_code_review ruleset with no way to
+    # merge a reviewed pull request at all. What the policy demands is that
+    # somebody read the diff, and the author reading it is somebody.
+    #
+    # The one thing still worth waiting for is a bot review actually in
+    # flight: requesting a reviewer commits you to waiting for its answer, so
+    # a pending Copilot request keeps the attestation inert. Nothing else
+    # does, because nothing else is coming.
+    #
     # reviewDecision guards: a human CHANGES_REQUESTED is a live review saying
     # no, and REVIEW_REQUIRED means the HOST demands an approval the
     # attestation could never satisfy — in both states the attestation stays
@@ -711,7 +718,7 @@ evaluate() {
     # falling through to a merge attempt (CHANGES_REQUESTED with no open
     # thread leaves mergeState CLEAN) or to "investigate".
     | ($s.self_review_on_head
-       and ($s.copilot_quota_exhausted or $copilot_exhausted)
+       and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)
        and ($s.reviewDecision != "CHANGES_REQUESTED")
        and ($s.reviewDecision != "REVIEW_REQUIRED")) as $self_attested
     # Hoisted so BOTH exhausted variants can append it. The two branches below
@@ -1007,8 +1014,14 @@ evaluate() {
                why:($unreviewed + $quota_why + $stale_approval),
               reason:"bot-review-unsatisfiable"}
             else
-              {action:"request-review", why:("copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate"
+              # The ruleset asks for a Copilot review and the merge does not
+              # hang on it: a Copilot review counts toward no required
+              # approval. What is being enforced is the never-merge-unreviewed
+              # policy, and a review the author writes satisfies that policy
+              # too — so this stamps the same reason the generic branch does.
+              {action:"request-review", why:("copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate, and a review you write yourself satisfies it: pr-merge.sh --self-reviewed"
                     + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported — do not enqueue on this reading)" end)),
+               reason:"review-required",
                cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
             end)
          elif (($s.has_review_on_head|not) and ($self_attested|not)) then
@@ -1039,8 +1052,17 @@ evaluate() {
                      + " decide on that\($stale_approval)"),
                 reason:"bot-review-unsatisfiable"}
               else
+               # No bot review is in flight and none is required here, so what
+               # is missing is A review rather than one from THAT bot. The reason is
+               # stamped so `pr-merge.sh --self-reviewed` can post the
+               # attestation and merge on it; requesting Copilot stays offered
+               # as the other way to satisfy the same demand.
                {action:"request-review",
-                why:($no_review + $stale_approval),
+                why:($no_review + " — a review is required and the one you write yourself counts:"
+                     + " read the diff, say in the pull request what you checked, and merge on that"
+                     + " with pr-merge.sh --self-reviewed. Requesting Copilot below is the other way"
+                     + " to satisfy the same demand, and commits you to waiting for its answer\($stale_approval)"),
+                reason:"review-required",
                 cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
               end)
          # A required check that is QUEUED with nothing running is not "CI is
@@ -1071,12 +1093,19 @@ evaluate() {
              # The attestation is named on the way OUT, not silently consumed:
              # the operator reading NEXT=merge must see which review gate it
              # rests on, and where the record sits.
+             # Two different honourings, named apart: a bot review that cannot
+             # arrive, and a review that simply was the authors own. Saying the
+             # first where the second is true writes a false claim of an
+             # unsatisfiable bot into permanent pull-request history.
              why:(if $self_attested
                   then ("clean; the review gate rests on the Self-review attestation"
                         + " for \($s.headOid[0:8]) posted by the PR author"
                         + (if $s.self_review_url != null then " (\($s.self_review_url))" else "" end)
-                        + " — honoured because the demanded bot review is unsatisfiable"
-                        + " (quota wall or repeated failures on this head)")
+                        + (if ($s.copilot_quota_exhausted or $copilot_exhausted)
+                           then " — honoured because the demanded bot review is unsatisfiable"
+                                + " (quota wall or repeated failures on this head)"
+                           else " — honoured because a review is required and no bot review was in flight"
+                           end))
                   else "clean" end),
              method:(if ($s.merge_methods|index("merge")) then "--merge" else "--rebase" end)}
             + (if $s.queue_active

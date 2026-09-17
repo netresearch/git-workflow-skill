@@ -114,13 +114,19 @@ EOF
 
 read_status
 
-# --self-reviewed: the one refusal this flag may clear is a review demand the
-# gate itself calls unsatisfiable (quota wall, or two failed bot reviews on
-# this head). The flag does not open the gate directly — it posts the
-# on-the-record `Self-review: <head-sha>` attestation comment pr-status.sh
-# reads back, then asks again. Everything else about the gate stays exactly
-# as strict: any other refusal, a non-author caller, or a live review path
-# leaves the flag without effect.
+# --self-reviewed clears a review demand that the author may satisfy in person.
+# Two refusals qualify: `review-required`, where the policy wants a review and
+# does not care whose, and `bot-review-unsatisfiable`, where the demanded bot
+# review cannot arrive at all. Both are demands for A review; neither is a
+# host gate. A pending bot request is not on the list, because requesting a
+# reviewer commits you to waiting for its answer, and pr-status.sh keeps the
+# attestation inert while one is in flight.
+#
+# The flag does not open the gate directly — it posts the on-the-record
+# `Self-review: <head-sha>` attestation comment pr-status.sh reads back, then
+# asks again. Everything else about the gate stays exactly as strict: any
+# other refusal, a non-author caller, or a live review path leaves the flag
+# without effect.
 if [ "$SELF_REVIEWED" = "1" ] && [ "$ACTION" = "request-review" ]; then
   SR_FIELDS=$(printf '%s' "$STATUS" | jq -er '
     [ (.next.reason // "-"),
@@ -137,9 +143,11 @@ EOF
   # and with the monthly quota marker set on this machine a global test would
   # post a factually false "unsatisfiable" attestation into permanent PR
   # history there.
-  if [ "$SR_REASON" != "bot-review-unsatisfiable" ]; then
-    die "--self-reviewed refused: this request-review is not the unsatisfiable-bot-review case (reason: $SR_REASON) — a live review path exists, use it"
-  fi
+  case "$SR_REASON" in
+    review-required|bot-review-unsatisfiable) ;;
+    *)
+      die "--self-reviewed refused: this request-review is not one the author may satisfy in person (reason: $SR_REASON) — a live review path exists, use it" ;;
+  esac
   # A bot-authored pull request can never satisfy the author check below, so
   # the generic refusal would send the operator looking for a way to become
   # renovate. Named separately, with the path that does exist: approving the
@@ -154,7 +162,15 @@ EOF
     die "--self-reviewed refused: the attestation must come from the PR author ($SR_AUTHOR); gh is authenticated as $VIEWER"
   fi
   if [ "$SR_HAVE" != "true" ]; then
-    BODY=$(printf 'Self-review: %s\n\nThe review this pull request demands is unsatisfiable (Copilot quota wall or repeated bot failures on this head). Per the documented fallback, the diff on this head was reviewed by the PR author; this comment is the on-the-record attestation the merge gate reads back. It stops matching on the next push.' "$SR_HEAD")
+    # The body states which of the two demands is being satisfied. Writing
+    # "unsatisfiable" where the truth is "a review was required and I wrote it"
+    # puts a false claim about a bot into permanent pull-request history.
+    if [ "$SR_REASON" = "bot-review-unsatisfiable" ]; then
+      WHY_TEXT='The bot review this pull request demands is unsatisfiable (Copilot quota wall or repeated bot failures on this head).'
+    else
+      WHY_TEXT='This pull request requires a review and no bot review is in flight; a review by the author satisfies that requirement.'
+    fi
+    BODY=$(printf 'Self-review: %s\n\n%s The diff on this head was reviewed by the PR author; this comment is the on-the-record attestation the merge gate reads back. It stops matching on the next push.' "$SR_HEAD" "$WHY_TEXT")
     if [ "$DRY" = "1" ]; then
       # A dry run must not flip persistent gate state: the attestation comment
       # IS the gate-opening write, so it is previewed, never posted.
