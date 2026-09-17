@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Executable form of the three recipes in references/advanced-git.md:
+# Executable form of the recipes in references/advanced-git.md:
 #   - "A long rebase needs a reference merge to resolve against"
 #   - "A merge resolved in favour of the branch silently reverts upstream work"
 #   - "Verify a branch split by blob identity, not by reading the diffs"
+#   - "A worktree containing submodules needs --force"
+#   - "Consolidating a plain clone into the bare layout"
 #
 # Three review rounds found the same defect class each time: a recipe that was
 # reasoned about at the edited line and never run end to end, from the cwd and
@@ -338,9 +340,180 @@ try "branch deletable afterwards" git -C .bare branch -d feat
 listed=$(git -C .bare worktree list | grep -c 'feat' || true)
 check "worktree gone from the list" "0" "$listed"
 
+# --------------------------------------------------------------------------
+printf '\n== consolidating a plain clone into the bare layout\n'
+# --------------------------------------------------------------------------
+# The mixed state the document warns about: one directory holding BOTH a plain
+# clone and a .bare. Consolidating discards one repository's object store, so
+# every ref in the doomed one has to be accounted for in the survivor first.
+
+# Names the refs in <bare> that preserve <sha>; "no" when nothing does.
+# for-each-ref, not `branch --contains`: a commit can be held by a tag or the
+# stash and by no branch at all, and branch-only enumeration reports those as
+# absent while the object is right there. Notes are a different shape — a notes
+# ref is its own history, not an ancestor of the commit it annotates — so they
+# are checked as a ref of their own below, not through this helper.
+# `[[` here where the rest of the file uses `[`: SonarCloud fails new code on it.
+preserved() { # preserved <bare-gitdir> <sha> -> yes|no
+  local bare="$1" sha="$2" hits
+  hits=$(git --git-dir="$bare" for-each-ref --contains "$sha" --format='%(refname)' 2>/dev/null)
+  if [[ -n "$hits" ]]; then echo yes; else echo no; fi
+}
+
+git init -q --bare "$TMP/origin5"
+git clone -q "$TMP/origin5" "$TMP/seed5"
+(
+  cd "$TMP/seed5" || exit 1
+  echo base > f.txt && echo '/build.log' > .gitignore
+  git add -A && git commit -qm base && git push -q origin main
+)
+
+proj5="$TMP/p5"
+git clone -q "$TMP/origin5" "$proj5"     # the plain clone: proj5/.git + files
+(
+  cd "$proj5" || exit 1
+  # (a) a local branch that was never pushed anywhere
+  git checkout -q -b unpushed-work
+  echo local > only-here.txt && git add -A && git commit -qm "exists nowhere else"
+  git checkout -q main
+  # (b) TWO stashes. Only stash@{0} is a ref; the deeper entries are the stash
+  # reflog, which no refspec carries.
+  echo wip >> f.txt  && git stash push -q -m "older wip"
+  echo wip2 >> f.txt && git stash push -q -m "newest wip"
+  # (c) an artefact that only --ignored reveals
+  echo noise > build.log
+  # (d) a commit held by a local tag and by NO branch — invisible to any
+  # enumeration of refs/heads, and gone with the repository.
+  git commit -q --allow-empty -m "only reachable from a tag"
+  # -c tag.gpgsign=false: the global above turns a lightweight tag into a
+  # signing failure on purpose (that is the reference-merge recipe's problem,
+  # not this one's) and here the tag just has to exist.
+  git -c tag.gpgsign=false tag local-only-tag HEAD
+  git reset -q --hard HEAD~1
+  # (e) a note. Notes live in their own history, so no refspec over heads or
+  # tags carries them and no ancestry check sees them.
+  git notes add -m "a note that only exists here" main
+  # (f) a worktree registered here whose directory is gone -> "prunable"
+  git worktree add -q "$TMP/ghost5" -b ghost main
+  rm -rf "$TMP/ghost5"
+)
+
+# The newer bare clone someone dropped in beside it, taken BEFORE origin moves
+# on, so the worktree it produces is genuinely stale.
+git clone -q --bare "$TMP/origin5" "$proj5/.bare"
+git -C "$proj5/.bare" config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+(
+  cd "$TMP/seed5" || exit 1
+  echo upstream > u.txt && git add -A && git commit -qm upstream && git push -q origin main
+)
+git -C "$proj5/.bare" fetch -q origin
+origin5_tip=$(git --git-dir="$TMP/origin5" rev-parse main)
+
+# Step 1 — account for every ref. This is a reachability question, not an
+# ancestry one: a sha preserved only by an unmerged side branch is still safe.
+main5=$(git -C "$proj5" rev-parse main)
+unpushed5=$(git -C "$proj5" rev-parse unpushed-work)
+check "main is preserved in .bare"            "yes" "$(preserved "$proj5/.bare" "$main5")"
+check "the unpushed branch is NOT preserved"  "no"  "$(preserved "$proj5/.bare" "$unpushed5")"
+
+# refs/heads is not the whole inventory. A commit held only by a tag is absent
+# from any branch enumeration in BOTH repositories, so a refs/heads sweep never
+# even asks about it and the loss is silent.
+tagged5=$(git -C "$proj5" rev-parse 'local-only-tag^{commit}')
+check "the tagged commit is on no branch at all" "" \
+      "$(git -C "$proj5" for-each-ref --contains "$tagged5" --format='%(refname)' refs/heads)"
+check "but an all-refs sweep finds it" "refs/tags/local-only-tag" \
+      "$(git -C "$proj5" for-each-ref --contains "$tagged5" --format='%(refname)' refs/tags)"
+check "and it is NOT preserved in .bare" "no" "$(preserved "$proj5/.bare" "$tagged5")"
+
+# Step 2 — the two things `git status` cannot show you. Its only complaint is
+# the .bare someone nested here, which is exactly how the mixed state reads.
+check "status reports nothing but the nested .bare" "?? .bare/" \
+      "$(git -C "$proj5" status --porcelain)"
+check "while two stashes hold work"    "2" \
+      "$(git -C "$proj5" stash list | wc -l | tr -d ' ')"
+check "and an artefact needs --ignored" "1" \
+      "$(git -C "$proj5" status --porcelain --ignored | grep -c '^!!' || true)"
+
+# Step 3 — "prunable" is a broken registration, not an absent directory; the
+# only way to tell is to look on disk.
+check "the dead worktree registers as prunable" "1" \
+      "$(git -C "$proj5" worktree list | grep -c prunable || true)"
+check "its directory really is gone" "no" \
+      "$([ -d "$TMP/ghost5" ] && echo yes || echo no)"
+
+# Step 4 — rescue what the survivor lacks. The doomed .git is a valid fetch
+# source, so nothing has to reach the remote first.
+try "rescue the unpushed branch" \
+    git -C "$proj5/.bare" fetch -q "$proj5/.git" \
+        '+refs/heads/unpushed-work:refs/heads/unpushed-work'
+check "rescued branch is now preserved" "yes" "$(preserved "$proj5/.bare" "$unpushed5")"
+
+# Every stash entry, not just the top one. `+refs/stash:refs/stash` carries
+# stash@{0} alone, and `stash branch` consumes entries one at a time while
+# shifting the rest — so capture each commit as its own ref first, before
+# anything disturbs the reflog.
+stash_new=$(git -C "$proj5" rev-parse 'stash@{0}')
+stash_old=$(git -C "$proj5" rev-parse 'stash@{1}')
+check "the two entries are different commits" "different" \
+      "$([ "$stash_new" != "$stash_old" ] && echo different || echo same)"
+check "only stash@{0} is reachable as a ref" "$stash_new" \
+      "$(git -C "$proj5" rev-parse refs/stash)"
+check "neither is in .bare before the rescue" "no no" \
+      "$(preserved "$proj5/.bare" "$stash_new") $(preserved "$proj5/.bare" "$stash_old")"
+
+git -C "$proj5" stash list --format='%H' | nl -ba | while read -r n sha; do
+  git -C "$proj5" branch "rescue-stash-$n" "$sha"
+done
+try "rescue every stash entry" \
+    git -C "$proj5/.bare" fetch -q "$proj5/.git" \
+        '+refs/heads/rescue-stash-*:refs/heads/rescue-stash-*'
+check "the newest stash entry is preserved" "yes" "$(preserved "$proj5/.bare" "$stash_new")"
+check "and so is the deeper one"            "yes" "$(preserved "$proj5/.bare" "$stash_old")"
+
+try "rescue the tag" \
+    git -C "$proj5/.bare" fetch -q "$proj5/.git" '+refs/tags/*:refs/tags/*'
+check "rescued tag is now preserved" "yes" "$(preserved "$proj5/.bare" "$tagged5")"
+
+# Notes need their own refspec: neither the heads nor the tags fetch above
+# brought the notes ref across, and no --contains check would have noticed.
+check "heads+tags rescue did NOT carry the note" "" \
+      "$(git -C "$proj5/.bare" for-each-ref --format='%(refname)' refs/notes)"
+try "rescue the notes" \
+    git -C "$proj5/.bare" fetch -q "$proj5/.git" '+refs/notes/*:refs/notes/*'
+check "the note is readable in .bare" "a note that only exists here" \
+      "$(git -C "$proj5/.bare" notes show "$main5" 2>/dev/null)"
+
+# Step 5 — park, don't delete: the reflog is the one thing not in .bare. The
+# find form moves dotfiles too and leaves the directory itself, so a shell
+# sitting in it survives. (`-exec mv {} dest \;` is portable; GNU `mv -t dest
+# {} +` batches.)
+parked5="$TMP/parked5"; mkdir -p "$parked5"
+find "$proj5" -mindepth 1 -maxdepth 1 ! -name .bare -exec mv {} "$parked5/" \;
+check "only .bare is left behind"        ".bare" "$(ls -A "$proj5")"
+check "the old checkout still exists"    "yes" \
+      "$([ -d "$parked5/.git" ] && echo yes || echo no)"
+
+# Step 6 — the new worktree is stale and has no upstream. Both directions get
+# asserted: a suite that only checks the end state passes on a no-op.
+try "add the main worktree" \
+    git -C "$proj5/.bare" worktree add -q "$proj5/main" main
+check "a fresh bare worktree has no upstream" "## main" \
+      "$(git -C "$proj5/main" status -sb | head -1)"
+check "and is NOT yet at origin's tip" "no" \
+      "$([ "$(git -C "$proj5/main" rev-parse HEAD)" = "$origin5_tip" ] && echo yes || echo no)"
+
+try "fast-forward it"   git -C "$proj5/main" merge --ff-only -q origin/main
+try "set its upstream"  git -C "$proj5/main" branch -q --set-upstream-to=origin/main main
+check "now it tracks origin/main" "## main...origin/main" \
+      "$(git -C "$proj5/main" status -sb | head -1)"
+check "and sits at origin's tip" "$origin5_tip" "$(git -C "$proj5/main" rev-parse HEAD)"
+check "no prunable entries in the new layout" "0" \
+      "$(git -C "$proj5/.bare" worktree list | grep -c prunable || true)"
+
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "38" "$ran"
+check "every assertion ran" "71" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]
