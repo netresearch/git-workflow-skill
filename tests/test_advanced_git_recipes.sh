@@ -348,12 +348,16 @@ printf '\n== consolidating a plain clone into the bare layout\n'
 # every ref in the doomed one has to be accounted for in the survivor first.
 
 # Names the refs in <bare> that preserve <sha>; "no" when nothing does.
-# for-each-ref, not `branch --contains`: a commit can be held by a tag, a note
-# or a stash and by no branch at all, and branch-only enumeration reports those
-# as absent while the object is right there.
+# for-each-ref, not `branch --contains`: a commit can be held by a tag or the
+# stash and by no branch at all, and branch-only enumeration reports those as
+# absent while the object is right there. Notes are a different shape — a notes
+# ref is its own history, not an ancestor of the commit it annotates — so they
+# are checked as a ref of their own below, not through this helper.
+# `[[` here where the rest of the file uses `[`: SonarCloud fails new code on it.
 preserved() { # preserved <bare-gitdir> <sha> -> yes|no
-  if [ -n "$(git --git-dir="$1" for-each-ref --contains "$2" --format='%(refname)' 2>/dev/null)" ]
-  then echo yes; else echo no; fi
+  local bare="$1" sha="$2" hits
+  hits=$(git --git-dir="$bare" for-each-ref --contains "$sha" --format='%(refname)' 2>/dev/null)
+  if [[ -n "$hits" ]]; then echo yes; else echo no; fi
 }
 
 git init -q --bare "$TMP/origin5"
@@ -384,6 +388,9 @@ git clone -q "$TMP/origin5" "$proj5"     # the plain clone: proj5/.git + files
   # not this one's) and here the tag just has to exist.
   git -c tag.gpgsign=false tag local-only-tag HEAD
   git reset -q --hard HEAD~1
+  # (f) a note. Notes live in their own history, so no refspec over heads or
+  # tags carries them and no ancestry check sees them.
+  git notes add -m "a note that only exists here" main
   # (d) a worktree registered here whose directory is gone -> "prunable"
   git worktree add -q "$TMP/ghost5" -b ghost main
   rm -rf "$TMP/ghost5"
@@ -457,6 +464,15 @@ try "rescue the tag" \
     git -C "$proj5/.bare" fetch -q "$proj5/.git" '+refs/tags/*:refs/tags/*'
 check "rescued tag is now preserved" "yes" "$(preserved "$proj5/.bare" "$tagged5")"
 
+# Notes need their own refspec: neither the heads nor the tags fetch above
+# brought the notes ref across, and no --contains check would have noticed.
+check "heads+tags rescue did NOT carry the note" "" \
+      "$(git -C "$proj5/.bare" for-each-ref --format='%(refname)' refs/notes)"
+try "rescue the notes" \
+    git -C "$proj5/.bare" fetch -q "$proj5/.git" '+refs/notes/*:refs/notes/*'
+check "the note is readable in .bare" "a note that only exists here" \
+      "$(git -C "$proj5/.bare" notes show "$main5" 2>/dev/null)"
+
 # Step 5 — park, don't delete: the reflog is the one thing not in .bare. The
 # find form moves dotfiles too and leaves the directory itself, so a shell
 # sitting in it survives. (`-exec mv {} dest \;` is portable; GNU `mv -t dest
@@ -486,7 +502,7 @@ check "no prunable entries in the new layout" "0" \
 
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "66" "$ran"
+check "every assertion ran" "69" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]

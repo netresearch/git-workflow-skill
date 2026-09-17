@@ -743,11 +743,16 @@ the same as being an ancestor of `origin/main`. An unmerged side branch preserve
 a sha perfectly well, and the ancestry test would condemn it — the mirror of the
 squash-merge case in "Is This Branch Safe to Delete?" below.
 
-**Enumerate every ref, not just `refs/heads`.** A commit can be held by a tag, a
-note or the stash and by no branch at all: `branch --contains` reports it as
-absent in both repositories, so a branch-only sweep never asks about it and the
-loss is silent. `for-each-ref --contains` searches all refs and names the one
-that answers; empty output is the finding.
+**Enumerate every ref, not just `refs/heads`.** A commit can be held by a tag or
+the stash and by no branch at all: `branch --contains` reports it as absent in
+both repositories, so a branch-only sweep never asks about it and the loss is
+silent. `for-each-ref --contains` searches all refs and names the one that
+answers; empty output is the finding.
+
+**Notes are a different shape and no ancestry check sees them.** A notes ref is
+its own history, not an ancestor of the commit it annotates, so it is accounted
+for and rescued as a ref in its own right — the loop below lists it, and the
+rescue needs its own refspec.
 
 ```bash
 project=$(cd <project> && pwd)          # absolute — see above
@@ -782,8 +787,9 @@ nothing has to reach the remote first:
 
 ```bash
 git -C "$bare" fetch "$old" '+refs/heads/<branch>:refs/heads/<branch>'
-git -C "$bare" fetch "$old" '+refs/tags/*:refs/tags/*'   # tags are not fetched by a refs/heads refspec
-git -C "$project" stash branch <rescue> 'stash@{0}'      # then commit it, then fetch that branch
+git -C "$bare" fetch "$old" '+refs/tags/*:refs/tags/*'    # a refs/heads refspec carries no tags
+git -C "$bare" fetch "$old" '+refs/notes/*:refs/notes/*'  # nor notes
+git -C "$project" stash branch <rescue> 'stash@{0}'       # then commit it, then fetch that branch
 ```
 
 **Park, don't delete.** The reflog is the one thing that is not in the other
