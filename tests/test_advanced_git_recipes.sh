@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Executable form of the three recipes in references/advanced-git.md:
+# Executable form of the recipes in references/advanced-git.md:
 #   - "A long rebase needs a reference merge to resolve against"
 #   - "A merge resolved in favour of the branch silently reverts upstream work"
 #   - "Verify a branch split by blob identity, not by reading the diffs"
+#   - "A worktree containing submodules needs --force"
+#   - "Consolidating a plain clone into the bare layout"
 #
 # Three review rounds found the same defect class each time: a recipe that was
 # reasoned about at the edited line and never run end to end, from the cwd and
@@ -338,9 +340,124 @@ try "branch deletable afterwards" git -C .bare branch -d feat
 listed=$(git -C .bare worktree list | grep -c 'feat' || true)
 check "worktree gone from the list" "0" "$listed"
 
+# --------------------------------------------------------------------------
+printf '\n== consolidating a plain clone into the bare layout\n'
+# --------------------------------------------------------------------------
+# The mixed state the document warns about: one directory holding BOTH a plain
+# clone and a .bare. Consolidating discards one repository's object store, so
+# every ref in the doomed one has to be accounted for in the survivor first.
+
+# Names the refs in <bare> that preserve <sha>; "no" when nothing does.
+preserved() { # preserved <bare-gitdir> <sha> -> yes|no
+  if [ -n "$(git --git-dir="$1" branch -a --contains "$2" 2>/dev/null)" ]
+  then echo yes; else echo no; fi
+}
+
+git init -q --bare "$TMP/origin5"
+git clone -q "$TMP/origin5" "$TMP/seed5"
+(
+  cd "$TMP/seed5" || exit 1
+  echo base > f.txt && echo '/build.log' > .gitignore
+  git add -A && git commit -qm base && git push -q origin main
+)
+
+proj5="$TMP/p5"
+git clone -q "$TMP/origin5" "$proj5"     # the plain clone: proj5/.git + files
+(
+  cd "$proj5" || exit 1
+  # (a) a local branch that was never pushed anywhere
+  git checkout -q -b unpushed-work
+  echo local > only-here.txt && git add -A && git commit -qm "exists nowhere else"
+  git checkout -q main
+  # (b) a stash holding real work
+  echo wip >> f.txt && git stash push -q -m "wip worth keeping"
+  # (c) an artefact that only --ignored reveals
+  echo noise > build.log
+  # (d) a worktree registered here whose directory is gone -> "prunable"
+  git worktree add -q "$TMP/ghost5" -b ghost main
+  rm -rf "$TMP/ghost5"
+)
+
+# The newer bare clone someone dropped in beside it, taken BEFORE origin moves
+# on, so the worktree it produces is genuinely stale.
+git clone -q --bare "$TMP/origin5" "$proj5/.bare"
+git -C "$proj5/.bare" config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+(
+  cd "$TMP/seed5" || exit 1
+  echo upstream > u.txt && git add -A && git commit -qm upstream && git push -q origin main
+)
+git -C "$proj5/.bare" fetch -q origin
+origin5_tip=$(git --git-dir="$TMP/origin5" rev-parse main)
+
+# Step 1 — account for every ref. This is a reachability question, not an
+# ancestry one: a sha preserved only by an unmerged side branch is still safe.
+main5=$(git -C "$proj5" rev-parse main)
+unpushed5=$(git -C "$proj5" rev-parse unpushed-work)
+check "main is preserved in .bare"            "yes" "$(preserved "$proj5/.bare" "$main5")"
+check "the unpushed branch is NOT preserved"  "no"  "$(preserved "$proj5/.bare" "$unpushed5")"
+
+# Step 2 — the two things `git status` cannot show you. Its only complaint is
+# the .bare someone nested here, which is exactly how the mixed state reads.
+check "status reports nothing but the nested .bare" "?? .bare/" \
+      "$(git -C "$proj5" status --porcelain)"
+check "while a stash holds work"       "1" \
+      "$(git -C "$proj5" stash list | wc -l | tr -d ' ')"
+check "and an artefact needs --ignored" "1" \
+      "$(git -C "$proj5" status --porcelain --ignored | grep -c '^!!' || true)"
+
+# Step 3 — "prunable" is a broken registration, not an absent directory; the
+# only way to tell is to look on disk.
+check "the dead worktree registers as prunable" "1" \
+      "$(git -C "$proj5" worktree list | grep -c prunable || true)"
+check "its directory really is gone" "no" \
+      "$([ -d "$TMP/ghost5" ] && echo yes || echo no)"
+
+# Step 4 — rescue what the survivor lacks. The doomed .git is a valid fetch
+# source, so nothing has to reach the remote first.
+try "rescue the unpushed branch" \
+    git -C "$proj5/.bare" fetch -q "$proj5/.git" \
+        '+refs/heads/unpushed-work:refs/heads/unpushed-work'
+check "rescued branch is now preserved" "yes" "$(preserved "$proj5/.bare" "$unpushed5")"
+
+try "turn the stash into a branch" \
+    git -C "$proj5" stash branch rescued-stash 'stash@{0}'
+git -C "$proj5" commit -qam "rescued stash"
+rescued5=$(git -C "$proj5" rev-parse rescued-stash)
+try "rescue the stash as a branch" \
+    git -C "$proj5/.bare" fetch -q "$proj5/.git" \
+        '+refs/heads/rescued-stash:refs/heads/rescued-stash'
+check "rescued stash is now preserved" "yes" "$(preserved "$proj5/.bare" "$rescued5")"
+
+# Step 5 — park, don't delete: the reflog is the one thing not in .bare. The
+# find form moves dotfiles too and leaves the directory itself, so a shell
+# sitting in it survives. (`-exec mv {} dest \;` is portable; GNU `mv -t dest
+# {} +` batches.)
+parked5="$TMP/parked5"; mkdir -p "$parked5"
+find "$proj5" -mindepth 1 -maxdepth 1 ! -name .bare -exec mv {} "$parked5/" \;
+check "only .bare is left behind"        ".bare" "$(ls -A "$proj5")"
+check "the old checkout still exists"    "yes" \
+      "$([ -d "$parked5/.git" ] && echo yes || echo no)"
+
+# Step 6 — the new worktree is stale and has no upstream. Both directions get
+# asserted: a suite that only checks the end state passes on a no-op.
+try "add the main worktree" \
+    git -C "$proj5/.bare" worktree add -q "$proj5/main" main
+check "a fresh bare worktree has no upstream" "## main" \
+      "$(git -C "$proj5/main" status -sb | head -1)"
+check "and is behind origin" "no" \
+      "$([ "$(git -C "$proj5/main" rev-parse HEAD)" = "$origin5_tip" ] && echo yes || echo no)"
+
+try "fast-forward it"   git -C "$proj5/main" merge --ff-only -q origin/main
+try "set its upstream"  git -C "$proj5/main" branch -q --set-upstream-to=origin/main main
+check "now it tracks origin/main" "## main...origin/main" \
+      "$(git -C "$proj5/main" status -sb | head -1)"
+check "and sits at origin's tip" "$origin5_tip" "$(git -C "$proj5/main" rev-parse HEAD)"
+check "no prunable entries in the new layout" "0" \
+      "$(git -C "$proj5/.bare" worktree list | grep -c prunable || true)"
+
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "38" "$ran"
+check "every assertion ran" "60" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]

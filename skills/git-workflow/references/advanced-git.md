@@ -708,7 +708,9 @@ path-resolution rules and recovery steps in the bare-repo section below.
 
 Before nesting a `.bare` into an existing directory, check whether it already
 holds a **plain clone** — mixing the two layouts leaves a repo checkout *and* a
-worktree side by side in one directory.
+worktree side by side in one directory. If it already does, see "Consolidating a
+plain clone into the bare layout" below for how to resolve it without losing
+anything.
 
 A reuse guard like `[ -d .bare ] || git clone --bare <url> .bare` silently *keeps*
 whatever `.bare` is already there — which may point at a **different remote** than
@@ -724,6 +726,69 @@ git -C .bare remote get-url origin   # must match the intended remote
 
 Skipping this once meant building an ADR off a *different* repo's config until a
 version/branch mismatch exposed it.
+
+### Consolidating a plain clone into the bare layout
+
+When a directory holds both — a plain clone *and* a `.bare` added later —
+consolidating means deleting one repository's object store. The checks that make
+that safe are not the ones `git status` offers.
+
+**A ref is preserved when some ref in the survivor contains it**, which is not
+the same as being an ancestor of `origin/main`. An unmerged side branch preserves
+a sha perfectly well, and the ancestry test would condemn it — the mirror of the
+squash-merge case in "Is This Branch Safe to Delete?" below. `branch -a
+--contains` answers the real question and names the ref that answers it; empty
+output is the finding.
+
+```bash
+old=<project>/.git; bare=<project>/.bare
+git --git-dir="$old" for-each-ref --format='%(refname) %(objectname)' refs/heads |
+  while read -r ref sha; do
+    printf '%-45s %s\n' "$ref" \
+      "$(git --git-dir="$bare" branch -a --contains "$sha" | head -1)"
+  done
+# a blank second column is a ref that dies with the old repository
+```
+
+**Three things `git status` will not tell you.** A stash is not in the working
+tree and dies with the repository — `git stash list`, then `git stash show
+--stat` on each; tool-generated churn is the common case, but that is a finding,
+not an assumption. An ignored build artefact never shows without
+`--ignored`. And a worktree registered here may live anywhere on disk.
+
+**`prunable` is a broken registration, not an absent directory.** `git worktree
+list` marks an entry prunable when it cannot resolve it; the directory may still
+be sitting there with uncommitted work. `ls -d` each path before believing the
+marker.
+
+**Rescue before discarding.** The doomed `.git` is a valid fetch source, so
+nothing has to reach the remote first:
+
+```bash
+git -C "$bare" fetch <project>/.git '+refs/heads/<branch>:refs/heads/<branch>'
+git -C <project> stash branch <rescue> 'stash@{0}'   # then commit it, then fetch it
+```
+
+**Park, don't delete.** The reflog is the one thing that is not in the other
+repository. `find` moves dotfiles too and leaves the directory itself in place,
+so a shell sitting in it survives:
+
+```bash
+find <project> -mindepth 1 -maxdepth 1 ! -name .bare -exec mv {} <parked>/ \;
+# GNU mv batches the same thing: -exec mv -t <parked>/ {} +
+```
+
+**The worktree you then add is stale and has no upstream.** `clone --bare` writes
+no `[branch]` section, so `git pull` there has nothing to pull from, and the
+local branch sits wherever the bare clone found it:
+
+```bash
+git -C "$bare" worktree add <project>/main main
+git -C <project>/main merge --ff-only origin/main
+git -C <project>/main branch --set-upstream-to=origin/main main
+```
+
+`tests/test_advanced_git_recipes.sh` runs this sequence end to end.
 
 ### Bare-Worktree Project Layout (Recommended)
 
