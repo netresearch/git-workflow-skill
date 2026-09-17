@@ -188,13 +188,54 @@ R=owner/repo; PR=123
 H=$(gh pr view "$PR" --repo "$R" --json headRefOid --jq .headRefOid)
 gh api "repos/$R/issues/$PR/comments" \
   | jq -r '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .body' \
-  | grep -nE "rate limited by coderabbit|No actionable comments|and ${H}\."
+  | grep -nE "rate limited by coderabbit|No actionable comments|Merge Risk|and ${H}\."
 # the marker ABOVE the line naming $H is the verdict for $H;
-# no line naming $H at all -> this head was never reviewed
+# no line naming $H at all -> read the `Merge Risk` line below before concluding
+# "never reviewed": it names its commit as a SHORT sha, not as a range
 ```
 
-Three markers, three terminal states: refused, reviewed-clean, never triggered.
-None of them will change by waiting.
+Three of those markers are terminal states of a range-shaped block: refused,
+reviewed-clean, never triggered. None of them will change by waiting. The fourth,
+`Merge Risk`, is the shape that carries no range at all and is read differently.
+
+**A fourth shape says which head was assessed without naming a range at all.**
+The summary can carry a verdict block instead of the `between X and Y` line:
+
+```text
+**Merge Risk:** _🔵 Low_ · up to `2cf7a`
+```
+
+That `up to` sha is the head the assessment covers, and it is a **short** sha, so
+a grep built from the full `$H` above misses it and reports "never reviewed" for
+a pull request that was in fact reviewed — at an older commit.
+
+Do not compare a fixed number of characters: five hex digits is short enough that
+two commits in the repository can share them, and a prefix match then reports an
+older assessment as covering the current head — the one direction that authorises
+a merge it should not. Resolve it instead, and require it to name **exactly one**
+commit:
+
+```bash
+SHORT=$(gh api "repos/$R/issues/$PR/comments" \
+  | jq -r '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .body' \
+  | grep -oE 'up to `[0-9a-f]+`' | tail -1 | tr -d '`' | awk '{print $3}')
+git rev-parse --verify --quiet "$SHORT^{commit}" >/dev/null \
+  && [ "$(git rev-parse "$SHORT")" = "$H" ] \
+  && echo "the block covers the current head"
+# ambiguous, unknown, or a different commit -> treat this head as unreviewed
+```
+
+Run it where the commit is fetched — from a checkout of the pull request, not
+from a clone that has never seen the branch, or an unfetched sha resolves to
+nothing and reads as the ambiguous case. That fallback is the safe one, but it
+is the wrong reason.
+
+The marker is advisory, so every outcome other than "one commit, and it is `$H`"
+falls back to unreviewed. When it names an earlier commit the automatic pass will
+not come back for the current head — `@coderabbitai review` is the only way to
+ask, and it may answer with the rate limit above. Observed 2026-09-17 on
+`netresearch/skill-repo-skill#322`: `up to 2cf7a` while the head was `889fc34`,
+two commits later.
 
 When *both* reviewers are walled — Copilot out of monthly quota, CodeRabbit rate
 limited — no bot review is obtainable and the documented path is to read the diff
