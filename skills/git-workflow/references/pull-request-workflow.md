@@ -187,8 +187,9 @@ and see which marker encloses it:
 R=owner/repo; PR=123
 H=$(gh pr view "$PR" --repo "$R" --json headRefOid --jq .headRefOid)
 gh api "repos/$R/issues/$PR/comments" \
-  | jq -r '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .body' \
-  | grep -nE "rate limited by coderabbit|No actionable comments|Merge Risk|and ${H}\."
+  | jq -r --arg h "$H" '[.[] | select(.user.login=="coderabbitai[bot]")
+                             | select(.body | contains($h))] | last | .body' \
+  | grep -nE "rate limited by coderabbit|Currently processing new changes|No actionable comments|Merge Risk|and ${H}\."
 # the marker ABOVE the line naming $H is the verdict for $H;
 # no line naming $H at all -> read the `Merge Risk` line below before concluding
 # "never reviewed": it names its commit as a SHORT sha, not as a range
@@ -197,6 +198,16 @@ gh api "repos/$R/issues/$PR/comments" \
 Three of those markers are terminal states of a range-shaped block: refused,
 reviewed-clean, never triggered. None of them will change by waiting. The fourth,
 `Merge Risk`, is the shape that carries no range at all and is read differently.
+`Currently processing new changes` is the one state that is **not** terminal — a
+review in flight, which the merge gate says never to merge over.
+
+**`last` alone reads the wrong comment.** "It keeps one comment" is true of the
+summary; a reply to `@coderabbitai review` is a second comment by the same author
+and it is the *newer* one, so taking the last CodeRabbit comment lands on
+`Already reviewed the last commit` and reports a reviewed head as never reviewed.
+Select the comment that names `$H`, as the filter above now does — measured on
+`netresearch/matrix-skill#151`, a 512-character reply sitting after a
+7334-character summary.
 
 **A fourth shape says which head was assessed without naming a range at all.**
 The summary can carry a verdict block instead of the `between X and Y` line:
@@ -238,7 +249,8 @@ ask, and it may answer with the rate limit above. Observed 2026-09-17 on
 two commits later.
 
 `pr-status.sh` runs the **range-shaped** half of this for you and reports it as
-`coderabbit_on_head` (`clean` · `findings` · `rate-limited` · `unknown` · `none`),
+`coderabbit_on_head` (`clean` · `findings` · `in-progress` · `rate-limited` ·
+`unknown` · `none`),
 also on the prose `reviews` line as `coderabbit=…`. It does not resolve the
 short-sha shape — that needs a checkout — so it answers `unknown` when a
 `up to \`…\`` marker is the only thing naming a head, and the resolution above is

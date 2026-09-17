@@ -38,14 +38,20 @@ cat "$STUB_DIR/graphql.json"
 STUB
 chmod +x "$STUB_DIR/gh"
 
-# $1 = CodeRabbit comment body, or the literal NONE for "the bot never posted"
+# $1 = CodeRabbit summary body, or the literal NONE for "the bot never posted"
+# $2 = optional LATER CodeRabbit comment (a reply to @coderabbitai review)
 build_payload() {
-    python3 - "$STUB_DIR/graphql.json" "$HEAD" "$1" <<'PY'
+    python3 - "$STUB_DIR/graphql.json" "$HEAD" "$1" "${2-}" <<'PY'
 import sys, json
 out, head, body = sys.argv[1], sys.argv[2], sys.argv[3]
+later = sys.argv[4] if len(sys.argv) > 4 else ""
+# GraphQL returns the login WITHOUT the [bot] suffix REST appends.
 comments = [] if body == "NONE" else [{
-    "author": {"login": "coderabbitai[bot]", "__typename": "Bot"},
+    "author": {"login": "coderabbitai", "__typename": "Bot"},
     "body": body, "url": "u", "createdAt": "2026-01-02T00:00:00Z"}]
+if later:
+    comments.append({"author": {"login": "coderabbitai", "__typename": "Bot"},
+                     "body": later, "url": "u2", "createdAt": "2026-01-03T00:00:00Z"})
 json.dump({"data": {"repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
@@ -147,6 +153,38 @@ if grep -q 'resolve it with git rev-parse' <<<"$(jq -r .next.why <<<"$out")"; th
 else
     echo "  FAIL next.why does not explain the short-sha case"; fail=1
 fi
+
+# --- case 4c: still reviewing this head --------------------------------------
+# A review in flight is not an absent one. The gate's own rule is never to merge
+# over an announced review, so this must not collapse into "unknown" and send
+# the operator off to resolve a sha that is not there.
+echo "case 4c: CodeRabbit is still processing the current head"
+build_payload "> [!NOTE]
+> Currently processing new changes in this PR. This may take a few minutes, please wait...
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD."
+out="$(run_json)"
+check "coderabbit_on_head" "in-progress" "$(jq -r .coderabbit_on_head <<<"$out")"
+if grep -q 'still reviewing THIS head' <<<"$(jq -r .next.why <<<"$out")"; then
+    echo "  ok   next.why says to wait"
+else
+    echo "  FAIL next.why does not say a review is in flight"; fail=1
+fi
+
+# --- case 4d: a command reply is newer than the summary ----------------------
+# THE case this was first written wrong for. "CodeRabbit keeps one comment" is
+# true of the SUMMARY; a reply to @coderabbitai review is a second comment by
+# the same author and it is the later one. Taking the newest CodeRabbit comment
+# reads the reply and reports a reviewed head as never reviewed — measured on
+# netresearch/matrix-skill#151, a 512-character reply after a 7334-character
+# summary.
+echo "case 4d: a reply to @coderabbitai review sits after the summary"
+build_payload "No actionable comments were generated in the recent review. 🎉
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD." \
+"⚠️ Action not completed
+Already reviewed the last commit. Use \`@coderabbitai full review\` to rerun a review of the entire changeset."
+out="$(run_json)"
+check "coderabbit_on_head" "clean" "$(jq -r .coderabbit_on_head <<<"$out")"
+check "has_review_on_head stays false" "false" "$(jq -r .has_review_on_head <<<"$out")"
 
 # --- case 5: the bot never posted --------------------------------------------
 echo "case 5: no CodeRabbit comment at all"

@@ -464,8 +464,17 @@ evaluate() {
     # run. REPORTED, NOT MERGED ON: has_review_on_head and the merge gate are
     # untouched, because a comment is not a review and widening that test here
     # would let every bot comment clear the gate.
-    | (([$p.comments.nodes[]? | select(.author.login | test("^coderabbitai"; "i"))]
-        | last | .body // "") | split("\n")) as $cr_lines
+    # "It keeps ONE comment" holds for the SUMMARY only. A reply to
+    # `@coderabbitai review` is a second comment by the same author, and it is
+    # the later one — so taking the last CodeRabbit comment reads the reply
+    # ("Already reviewed the last commit") and reports a reviewed head as never
+    # reviewed. Measured against netresearch/matrix-skill#151, where the
+    # 512-character reply sat after the 7334-character summary. Pick the comment
+    # that names the head instead of the newest one. GraphQL returns the login
+    # without the [bot] suffix REST appends, hence the prefix match.
+    | ([$p.comments.nodes[]? | select(.author.login | test("^coderabbitai"; "i"))
+                            | .body // ""]) as $cr_bodies
+    | (([$cr_bodies[] | select(test($p.headRefOid))] | last // "") | split("\n")) as $cr_lines
     | ([$cr_lines | to_entries[] | select(.value | test($p.headRefOid)) | .key] | first) as $cr_idx
     # The summary also comes in a shape that names the head it assessed as a
     # SHORT sha and carries no range at all ("Merge Risk: … up to `2cf7a`").
@@ -475,11 +484,14 @@ evaluate() {
     # older assessment as covering the current head. So the presence of that
     # marker downgrades "none" to "unknown" and the reader is sent to the
     # reference to resolve it. Never to "clean": unknown authorises nothing.
-    | (([$cr_lines[] | select(test("up to `[0-9a-f]+`"))] | length) > 0) as $cr_short_shape
-    | (if ($cr_lines | length) == 0 then "none"
+    # Searched across every CodeRabbit comment, not only the one naming the
+    # head: when no comment names it, there are no $cr_lines to search.
+    | (([$cr_bodies[] | select(test("up to `[0-9a-f]+`"))] | length) > 0) as $cr_short_shape
+    | (if ($cr_bodies | length) == 0 then "none"
        elif $cr_idx == null then (if $cr_short_shape then "unknown" else "none" end)
        else ([$cr_lines[0:$cr_idx][]
               | if test("rate limited by coderabbit") then "rate-limited"
+                elif test("Currently processing new changes") then "in-progress"
                 elif test("No actionable comments") then "clean"
                 elif test("Actionable comments posted") then "findings"
                 else empty end] | last // "unknown")
@@ -598,9 +610,10 @@ evaluate() {
                                   | join("+"))})
                           | add // {}),
         has_review_on_head: (($head_reviews|length) > 0),
-        # clean | findings | rate-limited | unknown | none. Display and advice
-        # only — nothing downstream gates on it. "unknown" is the short-sha
-        # shape, which only a checkout can resolve.
+        # clean | findings | in-progress | rate-limited | unknown | none.
+        # Display and advice only — nothing downstream gates on it. "unknown"
+        # covers the short-sha shape, which only a checkout can resolve, and a
+        # block whose marker this script does not know.
         coderabbit_on_head: $cr_verdict,
         has_copilot_review_on_head: (($copilot_on_head|length) > 0),
         # Which of the two came last, not merely which exists. reviews(last:50)
@@ -718,6 +731,9 @@ evaluate() {
          then " — note CodeRabbit posted actionable comments on THIS head; read them before anything else"
        elif $s.coderabbit_on_head == "rate-limited"
          then " — CodeRabbit refused THIS head as rate limited; it will not catch up on its own"
+       elif $s.coderabbit_on_head == "in-progress"
+         then " — CodeRabbit is still reviewing THIS head; wait for it rather than re-triggering,"
+              + " and do not merge over a review in flight"
        elif $s.coderabbit_on_head == "unknown"
          then " — a CodeRabbit summary names the head it assessed as a short sha; resolve it with"
               + " git rev-parse per references/pull-request-workflow.md before treating this head"
