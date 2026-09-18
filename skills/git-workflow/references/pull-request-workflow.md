@@ -409,6 +409,40 @@ state it claims to observe — the same reason the old "review-yourself"
 it only when the diff was actually reviewed, and say what was looked at in
 the review-note comment beside it.
 
+### After a rebase, `range-diff` is what says the review still holds
+
+The attestation dies with the next push, and a rebase is a push. Under
+`strict_required_status_checks_policy: true` every merge into the base makes the
+remaining PRs stale, so a sweep of sibling PRs rebases each one in turn and
+arrives at a fresh head with no review on it — while the review that *was* done
+usually still describes the code exactly. Re-reading the whole diff to re-attest
+is the honest expensive answer. The cheap one is to prove the patches did not
+change:
+
+```bash
+git range-diff origin/main...<old-head> origin/main...<new-head>
+```
+
+Every commit printed with `=` is byte-identical in its patch; a `<`/`>` pair
+with a diff-of-diffs beneath it is a commit the rebase altered, and that one
+needs reading. A series that comes back all `=` means the rebase moved the base
+and nothing else, so the earlier review — yours, a bot's, a human's — still
+applies to the new head and can be cited as the basis for the attestation.
+Naming the old and new sha in the review note is what makes that checkable
+afterwards.
+
+This answers a different question from the reference-merge check under *"I need
+to rebase a long branch onto a base that moved"*: that one proves the resulting
+**tree** is the intended end state, this one proves the **patches** are still
+the ones somebody read. A rebase can land the right tree through changed
+commits, and reviewers read commits.
+
+It is also the check to run before reusing a bot review across a rebase.
+CodeRabbit and Copilot both refuse heads while rate-limited or out of quota, and
+a refusal is not a review — `range-diff` says whether the review you already
+have is still about this code, which is the only part you can establish
+yourself.
+
 ### A bot-authored pull request takes the other path (#280)
 
 The attestation is an assertion by the author, so it is unavailable on a

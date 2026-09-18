@@ -437,6 +437,28 @@
     ]
   },
   {
+    "name": "rebase_invalidated_the_review",
+    "prompt": "I rebased my PR because the base moved, and now there is no review on the new head. The rebase was clean and I changed nothing. Do I have to get it reviewed again?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "range-diff"
+      },
+      {
+        "type": "content",
+        "pattern": "origin/[a-z]+\\.\\.\\.|\\.\\.\\."
+      },
+      {
+        "type": "content",
+        "pattern": "(=|equal|identical|unchanged).{0,60}(patch|commit)|(patch|commit).{0,60}(identical|unchanged)"
+      },
+      {
+        "type": "content",
+        "pattern": "(<|>|differ|changed).{0,80}(read|review|inspect)"
+      }
+    ]
+  },
+  {
     "name": "pr_body_must_match_current_diff",
     "prompt": "This MR has been open for eight months and I just rebased it. Update the description.",
     "assertions": [
