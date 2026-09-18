@@ -468,24 +468,25 @@ and `deps-major` route to a human by design — `netresearch/.github`'s
 `auto-merge-deps.yml` excludes both labels, and its own documentation says
 majors are approved but left for a human to merge.
 
-**`pr-merge.sh` then refuses anyway, and it cannot clear on its own.** The
-`address-comments` rung counts comments posted after the *author's* last word.
-A bot author never posts again, so every bot status note — Codecov, SonarCloud,
-Dependency Review, a CodeRabbit "review skipped, bot user detected" — plus your
-own approval comment stays counted forever, and the gate stays shut on a pull
-request whose checks are green, whose threads are zero and which you have just
-approved. Read every one of those comments, say in the pull request that you
-did and that none is actionable, then merge with the command `pr-merge.sh
---dry-run` prints:
+**On a bot PR the `address-comments` rung measures against YOUR last word, not
+the author's (#319).** Everywhere else it measures against the author: you
+opened the pull request, somebody wrote under it, you answer. A bot author posts
+once at creation and never again, so measuring against that would count every
+later comment for the life of the pull request — the repository's own status
+notes from Codecov, SonarCloud and Dependency Review, a CodeRabbit "review
+skipped, bot user detected", and the approval note you just wrote — with no
+action left that clears it, because answering adds one more comment that is
+counted too. Observed before the fix on `netresearch/t3x-contexts_geolocation#56`:
+`CLEAN`, 62 checks green, zero unresolved threads, an `APPROVED` review on the
+head, and `pr-merge.sh` refusing.
 
-```bash
-pr-merge.sh -R owner/repo 123 --dry-run     # prints the exact merge command
-gh pr merge 123 --repo owner/repo --merge --delete-branch
-```
+The guarantee that does not change: a comment posted by somebody else *after*
+your last word still raises the rung, on a bot pull request as anywhere else.
+Read it and answer it.
 
-Taking the printed command rather than typing one keeps the repository's allowed
-method and the merge-queue rule about `--delete-branch` (see *Then Merge*
-above). Tracked as netresearch/git-workflow-skill#319.
+Where `viewer` is missing from the GraphQL response — an older `gh`, a stubbed
+one — the rung falls back to the author and behaves as it did before, which is
+the safe direction: it can hold a merge, never open one.
 
 **One bot account reaches you under three logins**, so any check written
 against a hardcoded name is wrong for two of them. Measured on
