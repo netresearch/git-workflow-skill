@@ -74,6 +74,7 @@
 # forever. Top-level keys:
 #
 #   state mergeable mergeState draft number title repo author author_is_bot
+#   viewer viewer_is_author attestation_available
 #   base head headOid
 #   checks checks_settled threads unresolved_threads
 #   unanswered_comments unanswered_human unanswered_by unanswered_urls
@@ -391,6 +392,17 @@ evaluate() {
     # person --self-reviewed on their own pull request.
     | ((($p.author.__typename // "") == "Bot")
        or ($author | test("\\[bot\\]$|^app/|^(dependabot|renovate)$"; "i"))) as $author_is_bot
+    # A bot author is one way the attestation becomes unavailable; finishing
+    # a pull request you did not author is the other, and it was the one this advice
+    # used to miss. pr-merge.sh --self-reviewed refuses EVERY authenticated user
+    # who is not the author, so recommending it to a non-author recommends an
+    # action that cannot succeed — measured on netresearch/concourse-ci-skill#57,
+    # author aseemann, viewer CybotTM, where the advice was printed on every read
+    # and then refused at merge time. An empty viewer (an older gh, a stubbed
+    # response) keeps the previous assumption that the operator is the author.
+    | (($g.data.viewer.login // "")) as $viewer
+    | ($viewer == "" or $viewer == $author) as $viewer_is_author
+    | ((($author_is_bot | not) and $viewer_is_author)) as $attestation_available
     # Self-review attestation (#203). An EXPLICIT operator assertion, not an
     # observation: a PR comment BY THE AUTHOR whose body carries a line
     # `Self-review: <sha>` prefix-matching the current head. This is the
@@ -683,6 +695,9 @@ evaluate() {
                           else null end),
         author: $author,
         author_is_bot: $author_is_bot,
+        viewer: $viewer,
+        viewer_is_author: $viewer_is_author,
+        attestation_available: $attestation_available,
         requested_reviewers: [$p.reviewRequests.nodes[]?.requestedReviewer|(.login // .slug)],
         unresolved_threads: ($unresolved|length),
         unanswered_comments: ($unanswered_comments|length),
@@ -800,18 +815,21 @@ evaluate() {
        + " same month and go again minutes later, so the record above expires on its own and"
        + " is dropped as soon as a Copilot review is observed. Review the diff yourself, note"
        + " in the PR that the bot review was unavailable, and decide on that."
-       # The attestation is an assertion BY THE AUTHOR, so on a bot-authored pull
-       # request nobody can make it and pr-merge.sh --self-reviewed refuses. What
-       # is left there is the ordinary review a human can give: an APPROVED review
-       # on this head satisfies the policy on its own, in this branch and in the
-       # generic one below (#280).
-       + (if $s.author_is_bot
-          then " The pull request is authored by \($author), so the self-review attestation is"
-               + " not available on it: that attestation is an assertion by the author, and a bot"
-               + " never authenticates and never reads a diff. Review the diff and approve it as"
-               + " yourself instead — an approval on this head satisfies the gate, and pr-merge.sh"
-               + " then merges without any flag:"
-               + " gh pr review \($s.number) --repo \($s.repo) --approve"
+       # The attestation is an assertion BY THE AUTHOR, so nobody else can make it
+       # and pr-merge.sh --self-reviewed refuses. That is true of a bot-authored
+       # pull request (#280) and equally of one you did not author, which this used to read
+       # as the attestation path. What is left in both cases is the ordinary review
+       # a human can give: an APPROVED review on this head satisfies the policy on
+       # its own, in this branch and in the generic one below.
+       + (if ($s.attestation_available | not)
+          then " The pull request is authored by \($author)"
+               + (if $s.author_is_bot then ", a bot that never authenticates and never reads a diff"
+                  else ", not by you (\($s.viewer))" end)
+               + ", so the self-review attestation is not available on it: that attestation is an"
+               + " assertion by the author, and pr-merge.sh --self-reviewed refuses every other"
+               + " authenticated user. Review the diff and approve it as yourself instead — an"
+               + " approval on this head satisfies the gate, and pr-merge.sh then merges without"
+               + " any flag: gh pr review \($s.number) --repo \($s.repo) --approve"
           else " To proceed on a documented self-review, post a PR comment (as the PR author)"
                + " containing the line `Self-review: <head-sha>` with at least the first 12"
                + " chars of \($s.headOid[0:12]) — pr-merge.sh --self-reviewed posts it and merges in"
@@ -1039,7 +1057,14 @@ evaluate() {
               # approval. What is being enforced is the never-merge-unreviewed
               # policy, and a review the author writes satisfies that policy
               # too — so this stamps the same reason the generic branch does.
-              {action:"request-review", why:("copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate, and a review you write yourself satisfies it: pr-merge.sh --self-reviewed"
+              # "a review you write yourself" is two different commands
+              # depending on who authored the pull request: the attestation is
+              # the author to post, and pr-merge.sh --self-reviewed refuses
+              # anyone else, so a non-author gets the ordinary approval instead.
+              {action:"request-review", why:("copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate, and a review you write yourself satisfies it: "
+                    + (if $s.attestation_available then "pr-merge.sh --self-reviewed"
+                       else "gh pr review \($s.number) --repo \($s.repo) --approve, because the attestation belongs to the author (\($author)) and pr-merge.sh --self-reviewed refuses every other authenticated user"
+                       end)
                     + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported — do not enqueue on this reading)" end)),
                reason:"review-required",
                cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}

@@ -1056,5 +1056,19 @@
         "pattern": "(divider line|line beginning with)"
       }
     ]
+  },
+  {
+    "name": "merge_pr_you_did_not_author",
+    "prompt": "I need to finish and merge PR #57 in netresearch/concourse-ci-skill. It is green, no threads, but no review on the head and both review bots are unavailable. The PR was opened by a colleague, not by me.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(gh pr review|--approve)"
+      },
+      {
+        "type": "content",
+        "pattern": "(not the author|did not author|author is|belongs to the author)"
+      }
+    ]
   }
 ]
