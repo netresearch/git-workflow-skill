@@ -1397,6 +1397,49 @@ git rerere forget path/to/file
 tests/ export-ignore
 ```
 
+`export-ignore` removes a path from `git archive` — and from the tarball the
+package registries build from it. It does not affect clones, checkouts or
+worktrees.
+
+**Never build a test workspace with `git archive`.** What a repository marks
+`export-ignore` is what a *consumer* does not need, which is very close to what
+a *test run* does need: `tests/`, the analyser and fixer configs, the CI config.
+A workspace unpacked from `git archive` is missing exactly those, and the tools
+do not agree on how loudly to say so.
+
+```bash
+# Wrong: silently drops every export-ignore'd path
+git archive HEAD | tar -x -C /tmp/ws
+
+# Right: the working tree, minus what the run should rebuild
+tar -c --exclude=vendor --exclude=node_modules --exclude=.git . | tar -x -C /tmp/ws
+```
+
+Measured on such a workspace (2026-09-18, `TYPO3-Documentation/guides-php-domain`
+at `5b4a38c`, PHP 8.2.30, vendor copied in from a full checkout so only the
+export-ignored files were absent):
+
+| Gate | Exit | What it did |
+|---|---|---|
+| `phpunit --testsuite=unit` | 2 | `Test directory "/app/tests/unit/" not found` |
+| `phpstan --configuration=phpstan.neon` | 1 | config file gone |
+| `php-cs-fixer check` | **0** | checked nothing, **wrote `.php-cs-fixer.dist.php` and `.gitignore` into the workspace**, printed `Config file created, re-run the command to put it in action.` |
+
+The first two are loud. The third is the one that matters: a green exit from a
+run that inspected zero files, which is indistinguishable from a clean run in
+any log, and which leaves a generated config behind so the *second* run reports
+33 of 49 files needing fixes against rules the project never chose. A tool that
+falls back to defaults when its config is missing turns a truncated workspace
+into a passing verification.
+
+**The check, before the workspace is used for anything:** read the export rules
+and diff the file list.
+
+```bash
+git check-attr export-ignore -- tests/ phpstan.neon      # "export-ignore: set" -> archive drops it
+diff <(git ls-files | sort) <(cd /tmp/ws && find . -type f | sed 's|^\./||' | sort)
+```
+
 ## Performance Optimization
 
 ### Large Repositories
