@@ -118,15 +118,19 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(--prune|prune).{0,80}(refspec|command line)"
+        "pattern": "(shorthand|unqualified|`?main`?[^\\n]{0,40}(not|does not)[^\\n]{0,30}match|refs/heads/main)"
       },
       {
         "type": "content",
-        "pattern": "(without|drop|omit|no).{0,30}--prune"
+        "pattern": "prune[^\\n]{0,80}(refspec|command line)|(refspec|command line)[^\\n]{0,80}prune"
       },
       {
         "type": "content",
-        "pattern": "(separate|own) call|prune .{0,20}(separately|on its own)"
+        "pattern": "(without|drop|omit|no|remove)[^\\n]{0,30}`?--prune`?"
+      },
+      {
+        "type": "content",
+        "pattern": "(prune[^\\n]{0,40}(separate|own) call)|((separate|own) call[^\\n]{0,40}prune)|(qualif\\w*[^\\n]{0,40}refs/heads/)"
       }
     ]
   },
