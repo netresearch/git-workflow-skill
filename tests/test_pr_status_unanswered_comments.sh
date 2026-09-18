@@ -62,13 +62,14 @@ comments = [{"author": {"login": c["author"],
              "body": c.get("body", "x"),
              "url": "https://example.test/c", "createdAt": c["createdAt"]}
             for c in json.loads(os.environ["COMMENTS_JSON"])]
-json.dump({"data": {"repository": {
+viewer = os.environ.get("VIEWER_LOGIN", "")
+json.dump({"data": {**({"viewer": {"login": viewer}} if viewer else {}), "repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
         "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
         "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "reviewDecision": None,
-        "author": {"login": "author"},
+        "author": json.loads(os.environ.get("AUTHOR_JSON", '{"login": "author"}')),
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
         "isCrossRepository": False,
         "comments": {"nodes": comments},
@@ -137,6 +138,41 @@ d["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"] = [
 json.dump(d, open(p, "w"))
 PY
 check "threads outrank loose comments" "resolve-threads" "$(action)"
+
+echo "Case 6: a bot-authored PR the viewer has already answered (#319)"
+# A bot author posts once and never again, so measuring against ITS last word
+# counts every later comment forever - the approval note from the reviewing
+# human included - and no action available to that human clears the rung.
+# Observed on netresearch/t3x-contexts_geolocation#56: CLEAN, 62 checks green,
+# 0 unresolved threads, an APPROVED review on the head, and pr-merge.sh
+# refusing on address-comments.
+AUTHOR_JSON='{"login":"renovate","__typename":"Bot"}' VIEWER_LOGIN=CybotTM \
+COMMENTS_JSON='[{"author":"renovate","type":"Bot","createdAt":"2026-09-18T10:00:00Z"},
+                {"author":"codecov","type":"Bot","createdAt":"2026-09-18T11:00:00Z"},
+                {"author":"CybotTM","createdAt":"2026-09-18T12:00:00Z"}]' make_stub
+out="$(run)"
+check "the viewer is the answering party on a bot PR" "merge" "$(action)"
+lacks "and the rung is not reported"                  "address-comments" "$out"
+
+echo "Case 6b: a third party speaks after the viewer on that same bot PR"
+# The guarantee the fix must NOT break: somebody else commenting after my last
+# word still raises the rung. Same PR shape as 6, one human comment later.
+AUTHOR_JSON='{"login":"renovate","__typename":"Bot"}' VIEWER_LOGIN=CybotTM \
+COMMENTS_JSON='[{"author":"renovate","type":"Bot","createdAt":"2026-09-18T10:00:00Z"},
+                {"author":"CybotTM","createdAt":"2026-09-18T12:00:00Z"},
+                {"author":"linawolf","createdAt":"2026-09-18T13:00:00Z"}]' make_stub
+out="$(run)"
+check    "a later human comment still gates" "address-comments" "$(action)"
+contains "and names who wrote it"            "linawolf" "$out"
+
+echo "Case 6c: bot author, viewer unknown - the old behaviour is kept"
+# viewer is absent from the response (an older gh, a stub). Falling back to the
+# author must keep the pre-fix reading rather than compare against "" and call
+# every comment unanswered - or, worse, open the gate because nothing matches.
+AUTHOR_JSON='{"login":"renovate","__typename":"Bot"}' \
+COMMENTS_JSON='[{"author":"renovate","type":"Bot","createdAt":"2026-09-18T10:00:00Z"},
+                {"author":"CybotTM","createdAt":"2026-09-18T12:00:00Z"}]' make_stub
+check "no viewer means the author is the responder again" "address-comments" "$(action)"
 
 [ "$fail" = "0" ] && echo "All cases passed." || echo "FAILURES"
 exit "$fail"

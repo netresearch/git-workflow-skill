@@ -268,6 +268,10 @@ collect_raw() {
   # shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
   gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
   query($owner:String!,$name:String!,$pr:Int!){
+    # Who is running this. Needed only for a bot-authored pull request, where
+    # the answering party is the reviewer rather than the author (#319). Costs
+    # no extra call: it rides along in the query that was going out anyway.
+    viewer{ login }
     repository(owner:$owner,name:$name){
       nameWithOwner
       mergeCommitAllowed rebaseMergeAllowed squashMergeAllowed autoMergeAllowed
@@ -440,9 +444,25 @@ evaluate() {
     # while findings from a maintainer sit unread. Anything posted after the
     # last word of the author is unanswered by construction; if the author
     # never commented, every comment by someone else is.
-    | (([$p.comments.nodes[]? | select(.author.login == $author) | .createdAt] | max) // "") as $author_last_comment
-    | ([$p.comments.nodes[]? | select(.author.login != $author)
-                            | select(.createdAt > $author_last_comment)]) as $unanswered_comments
+    #
+    # Whose last word, though. Normally the one from the author: you opened the
+    # pull request, someone wrote under it, you answer. On a BOT-authored pull
+    # request that breaks. The author posts once at creation and never again, so
+    # every later comment stays counted for the life of the PR, the approval
+    # note from the reviewing human included, and answering adds one more
+    # comment that is counted too. The rung then never clears and pr-merge.sh
+    # refuses a pull request that is CLEAN, green, thread-free and approved
+    # (#319, observed on netresearch/t3x-contexts_geolocation#56). The question
+    # the rung asks is "did I leave something unanswered", so on a bot PR the
+    # answering party is the viewer. $author_is_bot is the same predicate the
+    # attestation path above uses. Falling back to $author keeps the old
+    # behaviour when viewer is absent — an older gh, or a stubbed response —
+    # rather than making every comment unanswered by comparing against "".
+    | (($g.data.viewer.login // "") as $v
+       | if $author_is_bot and $v != "" then $v else $author end) as $responder
+    | (([$p.comments.nodes[]? | select(.author.login == $responder) | .createdAt] | max) // "") as $responder_last_comment
+    | ([$p.comments.nodes[]? | select(.author.login != $responder)
+                            | select(.createdAt > $responder_last_comment)]) as $unanswered_comments
     # Bots are reported but never drive the ladder: a Renovate or Dependabot
     # note must not push its own PR off the auto-merge rung it exists to reach.
     # __typename is the authority, not the login. GraphQL returns Bot for an
