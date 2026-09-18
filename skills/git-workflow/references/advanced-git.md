@@ -1442,13 +1442,24 @@ files needing fixes against rules the project never chose. A tool that falls
 back to defaults when its config is missing turns a truncated workspace into a
 passing verification.
 
-**The check, before the workspace is used for anything:** read the export rules
-and diff the file list.
+**The check, before the workspace is used for anything:** read the export rules,
+then list the tracked files that did not arrive.
 
 ```bash
-git check-attr export-ignore -- tests/ phpstan.neon      # "export-ignore: set" -> archive drops it
-diff <(git ls-files | sort) <(cd /tmp/ws && find . -type f | sed 's|^\./||' | sort)
+git check-attr export-ignore -- tests/ phpstan.neon   # "export-ignore: set" -> archive drops it
+
+git ls-files -z | while IFS= read -r -d '' f; do
+  [ -e "/tmp/ws/$f" ] || printf '%s\n' "$f"
+done
 ```
+
+Ask it in that direction — *which tracked files are missing* — rather than
+diffing two file listings. A plain
+`diff <(git ls-files) <(cd /tmp/ws && find . -type f)` drowns: run against the
+archive workspace above it produced **8256** lines, of which 8134 were `vendor/`
+and other untracked files present in the tree but not in git, and only 116 were
+the answer. The loop prints those 116 and nothing else, and prints nothing at
+all for a workspace copied with `tar`.
 
 ## Performance Optimization
 
