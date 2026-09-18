@@ -468,6 +468,25 @@ and `deps-major` route to a human by design — `netresearch/.github`'s
 `auto-merge-deps.yml` excludes both labels, and its own documentation says
 majors are approved but left for a human to merge.
 
+**`pr-merge.sh` then refuses anyway, and it cannot clear on its own.** The
+`address-comments` rung counts comments posted after the *author's* last word.
+A bot author never posts again, so every bot status note — Codecov, SonarCloud,
+Dependency Review, a CodeRabbit "review skipped, bot user detected" — plus your
+own approval comment stays counted forever, and the gate stays shut on a pull
+request whose checks are green, whose threads are zero and which you have just
+approved. Read every one of those comments, say in the pull request that you
+did and that none is actionable, then merge with the command `pr-merge.sh
+--dry-run` prints:
+
+```bash
+pr-merge.sh -R owner/repo 123 --dry-run     # prints the exact merge command
+gh pr merge 123 --repo owner/repo --merge --delete-branch
+```
+
+Taking the printed command rather than typing one keeps the repository's allowed
+method and the merge-queue rule about `--delete-branch` (see *Then Merge*
+above). Tracked as netresearch/git-workflow-skill#319.
+
 **One bot account reaches you under three logins**, so any check written
 against a hardcoded name is wrong for two of them. Measured on
 `netresearch/github-release-skill#110`, all three naming the same Renovate
@@ -917,6 +936,30 @@ AI reviewers (GitHub Copilot, Gemini Code Assist, SonarCloud) mix correct findin
 - **Declining blindly** dismisses real bugs — the same reviewer is often right about the next comment.
 
 Reply citing the evidence either way. When you applied a change, the reply must still carry the commit SHA and the what/why required above (e.g. `Verified against <source>: <fact> — applied in <SHA>, which …`); when you declined, state the source and fact (e.g. `Verified against <source>: <fact> — declining.`). When the suggestion is a code change, run the project's checks (lint, types, tests) on it before resolving, so the reply cites a green result rather than a guess.
+
+**A bot's risk banner is a claim about CI, and CI answers it in one call.** The
+section above is about review *comments*; the same reviewers also post a summary
+comment with a merge-risk line and a pre-merge-checks table. That channel opens
+no thread, so nothing forces a reply, and its assertions read as observations
+rather than as claims. They are claims. CodeRabbit on
+`netresearch/t3x-nr-passkeys-be#148` wrote *"Two CI matrix jobs fail during
+dependency installation before tests run; regenerate the lock file before
+merging"* against a head where all 24 matrix cells were green and the repository
+tracks no lock file at all:
+
+```bash
+# What actually concluded on this head — tally before believing a banner
+gh api "repos/$R/commits/$SHA/check-runs?per_page=100" --paginate \
+  --jq '[.check_runs[] | .conclusion] | group_by(.) | map({(.[0]//"pending"): length}) | add'
+gh api "repos/$R/commits/$SHA/check-runs?per_page=100" --paginate \
+  --jq '.check_runs[] | select(.conclusion=="failure") | "\(.name)\t\(.html_url)"'
+```
+
+The second call is the one that matters: a `failure` line naming
+`copilot-pull-request-reviewer` is the review quota, not a test job, and a
+banner that counts it as "CI failing" is describing something else. Answer the
+banner in the pull request with the tally either way — it is what a human reads
+first, and an unanswered false claim outlives the merge.
 
 **Intentional SAST findings on test code: dismiss the alert, don't contort the test.** A static-analysis finding (SonarCloud, CodeQL / GitHub Advanced Security) that fires on a *deliberate* test input — an SSRF test hitting `169.254.169.254`, a clear-text `http://…` URL a denial test asserts on, a synthetic secret fixture — is a false positive against the test's intent. Rewriting the test to satisfy the analyzer weakens the very case it exists to prove. Instead **dismiss the alert at its source**, which also clears the blocking `github-advanced-security` review thread that a plain reply cannot resolve:
 
