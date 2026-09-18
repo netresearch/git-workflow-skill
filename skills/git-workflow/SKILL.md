@@ -41,7 +41,7 @@ Releases: `github-release`. BLOCKED-PR diagnosis: `github-project`.
 | `references/git-hooks-setup.md` | Hook frameworks, hooks per stage |
 | `references/claude-code-hooks.md` | `settings.json` merge gate, cache-path rejection, auto-lint |
 | `references/code-quality-tools.md` | shellcheck, shfmt, git-absorb, difftastic |
-| `references/merge-gate-watcher.md` | Merge-driver loop, check taxonomy, stale-SHA rerun |
+| `references/merge-gate-watcher.md` | Waiting on a gate, a watcher the harness killed, merge-driver loop, check taxonomy, stale-SHA rerun |
 | `references/spec-cleanup.md` | Planning artifacts off the base branch |
 | `references/no-editorializing.md` | No self-praise, no narrating the expected |
 
