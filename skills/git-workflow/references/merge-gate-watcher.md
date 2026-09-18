@@ -252,6 +252,32 @@ re-enables CI". Give a wait a stop condition it can actually reach, and when a
 watch stays silent past the expected window, re-check the producer rather than
 extending the timeout.
 
+### Armed in the same breath as the push: "no checks reported", exit 0
+
+The producer can be switched on and the runs still not exist yet. `gh pr checks
+<n> --watch` started seconds after a push prints
+
+```
+no checks reported on the 'task/whatever' branch
+```
+
+and **exits 0** — GitHub had not registered the workflow runs for the new head
+when the first poll landed. Exit 0 plus no failures reads exactly like "all
+green", which is the dangerous part: nothing in that output says the watcher
+never watched anything.
+
+Two consequences for the loop:
+
+- Read the watcher's output, not only its exit code. A run that ends on the
+  "no checks reported" line watched nothing and has to be re-armed.
+- Give the runs a moment to appear, or arm the watcher on a read that has
+  already seen at least one check. A plain `gh pr checks <n>` right after the
+  push shows whether anything is `pending` yet; arm `--watch` once it does.
+
+Seen 2026-09-18 on a rebase-and-force-push: the watcher returned immediately,
+`gh pr checks` a moment later listed seven checks all `pending`, and the
+re-armed watcher then reported them green.
+
 ## Auto-merge armed + CLEAN but never enqueued: disable/re-enable to nudge
 
 On a merge-queue repo a PR can sit `CLEAN` with auto-merge **armed** and every required check green, yet never gets a `mergeQueueEntry` — it silently fails to enter the queue, so the watcher just times out. Confirm the symptom, then re-arm to force GitHub to re-evaluate enqueue-readiness:

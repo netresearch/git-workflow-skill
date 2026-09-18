@@ -1158,6 +1158,52 @@ git push fork HEAD:main            # Explicitly push to fork
 **Rule:** When pushing to a non-tracking remote, always use explicit refspec
 (`HEAD:<branch>` or `<local-branch>:<remote-branch>`) to avoid silent no-ops.
 
+### Rebasing a PR Whose Head Lives on a Fork
+
+The section above assumes you know which remote to push to. For an open pull
+request you do not: the head branch may live in the upstream repo, in your
+personal fork, or in an organisation fork, and `origin` is none of those by
+default. Pushing a rebased branch to `origin` does not fail — it **creates a new
+branch in the upstream repository** and leaves the pull request untouched, so
+the rebase looks done and nothing about the PR changed.
+
+Resolve the head repository before the push:
+
+```bash
+gh pr view <n> --repo OWNER/REPO \
+  --json number,headRepositoryOwner,headRepository,headRefName \
+  --jq '"\(.headRepositoryOwner.login)/\(.headRepository.name) \(.headRefName)"'
+# -> some-org/repo refactor/modernize-float-classes
+```
+
+Add that repository as its own remote and push there:
+
+```bash
+git -C .bare remote add nrfork git@github.com:some-org/repo.git
+git -C <worktree> push --force-with-lease=<branch>:<sha> nrfork HEAD:<branch>
+```
+
+**The lease needs the remote's real SHA, not a short one you expanded.** With
+`--force-with-lease=<branch>:<sha>` git compares that value against the remote
+ref; a SHA typed out from an abbreviated one is simply a different object name
+and the push is rejected with `stale info`, which reads like someone else
+pushed. Take the value from a fetch:
+
+```bash
+git -C .bare fetch nrfork <branch>
+git -C .bare rev-parse nrfork/<branch>      # use exactly this in the lease
+```
+
+**If you pushed to the wrong remote:** the branch is a stray in the upstream
+repo, delete it (`git push origin --delete <branch>`) and push again to the
+head repository. The pull request never saw the wrong push, so nothing else
+needs repairing — but check `gh pr view <n> --json headRefOid` afterwards to
+confirm the PR now points at the rebased commit.
+
+**Fetch every fork before a batch of rebases.** With three PRs on two forks,
+one `git fetch --all` up front turns three lease lookups into local reads and
+makes "which of these is behind main?" a single loop over `git merge-base`.
+
 ## Submodules
 
 ### Adding Submodules
