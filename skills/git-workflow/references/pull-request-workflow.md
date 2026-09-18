@@ -2252,6 +2252,42 @@ question is settled and the split is a promise you cannot keep. Reviewing your
 own diagnosis before proposing is faster than reversing a split after the branch,
 the PR and the description have been rebuilt around it.
 
+### A closed PR's branch: read the closing note before deleting it
+
+A branch left behind by a PR that was closed rather than merged looks like the
+cleanest possible cleanup target — no merge, no history on the base, nothing
+referencing it. Sometimes it is. Sometimes the closing comment is the record of
+a decision to keep it, and deleting it discards work nobody wrote down anywhere
+else.
+
+Two branches from closed PRs in one repository, both stale by every mechanical
+test, opposite answers:
+
+```
+ci/e2e-playwright                  PR #352 closed — "everything here is already
+                                   on main, in a later form" → dead
+security/fix-globals-and-makeinstance  PR #338 closed — "The branch is kept.
+                                   Nothing here is lost — the five commits
+                                   stand. Reopen this PR, or branch from that
+                                   ref, when the work is picked up again."
+```
+
+The second was closed for being red, not for being wrong, and the branch is the
+whole of the unfinished work. `git log`, `rev-list --count` and "no open PR" say
+the same thing about both.
+
+So before deleting a branch whose PR is closed:
+
+```bash
+gh pr list --repo OWNER/REPO --state all --head <branch> --json number,state
+gh pr view <n> --repo OWNER/REPO --json comments --jq '.comments[-1].body'
+```
+
+Read the last comment. If it does not say what should happen to the branch,
+that is a gap worth filling when you close a PR: say in the closing comment
+whether the branch is kept and why, because the next person doing a cleanup
+sweep has no other source.
+
 ### Stacked PRs: retarget before you merge, `--delete-branch` only at the end
 
 A stacked chain (PR2 based on PR1's branch, PR3 on PR2's, …) merges
