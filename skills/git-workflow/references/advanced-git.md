@@ -2009,6 +2009,38 @@ Read that diff rather than trusting it wholesale: it also contains conflict
 markers where both sides moved. What you are looking for is upstream hunks
 present in `/tmp/merged` and absent from the merge result.
 
+## Keep a revert commit pure when the same file also needs a follow-up edit
+
+A revert that arrives with an improvement — put the class back *and* document it,
+restore the default *and* add the test that pins it — is two commits, and the
+first one has to stay a revert a reviewer can check by reading `git revert`'s own
+output. Editing the file before committing merges the two and destroys that
+property: the diff of commit one is then a rename plus an unexplained hunk.
+
+`git checkout --` is the wrong way back, because it restores the last *committed*
+state and would discard the edit you are about to want. Keep a copy instead:
+
+```bash
+git revert -m 1 --no-commit "$MERGE_SHA"
+git status --porcelain                 # expect exactly the paths you meant
+# ... make the follow-up edit, then set it aside and restore the pristine file:
+cp path/to/File.php /tmp/File.documented
+git show "HEAD:$OLD_PATH" > path/to/File.php
+diff <(git show "HEAD:$OLD_PATH") path/to/File.php && echo IDENTICAL
+git add path/to/File.php "$OLD_PATH" && git commit -S --signoff -F revert-msg.txt
+cp /tmp/File.documented path/to/File.php    # commit two carries the edit
+```
+
+`$OLD_PATH` has to be staged alongside the new one or the rename is recorded as
+an add plus a stray deletion. `git show HEAD:<old path>` is what makes this work
+for a file that has moved: after `revert --no-commit` the old path still exists
+in `HEAD`, so its committed content is reachable even though the working tree no
+longer has it there.
+
+The scratch copy goes outside the worktree. A `.bak` beside the code is one
+`git add -A` away from being committed, which is the failure this section exists
+to avoid.
+
 ## Verify a branch split by blob identity, not by reading the diffs
 
 Splitting one branch into several — per topic, per reviewer, to unblock the

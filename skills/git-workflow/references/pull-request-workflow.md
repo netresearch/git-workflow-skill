@@ -867,6 +867,43 @@ State the fix in the summary, then keep the evidence below it:
 below; everything in between is the evidence for the diagnosis.
 ```
 
+### A revert PR's first fact is whether the break is in a release
+
+Before arguing that something must be reverted — a regression, a removed class,
+a changed default — establish whether the change ever shipped. The answer is one
+command, it changes the argument, and it decides whether a backport is part of
+the work:
+
+```bash
+SHA=<the merge commit being reverted>
+git fetch origin --tags
+git tag --contains "$SHA"            # empty  -> not in any tag
+gh release list --repo "$OWNER/$REPO" --limit 5
+jq -r '.targetBranchChoices[]' .backportrc.json 2>/dev/null   # if the repo backports
+git branch -r --list "origin/<that branch>"                   # does it exist?
+```
+
+Each answer writes a different paragraph:
+
+- **In no tag.** Say so, and say what follows from it: merging before the next
+  release means no published version ever carried the break, and no backport is
+  needed. This is usually the strongest sentence such a PR has, and it is also
+  perishable — it names a deadline (the next tag) that a maintainer weighing the
+  revert needs to know about.
+- **In a tag.** Name the version the consumer is on today, and say whether the
+  revert needs to reach a maintenance branch as well as the default branch. A
+  reviewer asks this within one comment of reading "BC break"; answering it
+  first saves the round-trip.
+- **A backport branch is configured but does not exist.** Say that too — it
+  stops the reviewer from looking for one.
+
+Observed 2026-09-18 on phpDocumentor/guides#1397, a revert of a merged
+`[TASK]` PR that had removed a class downstream test suites construct. The
+merge was three months newer than the latest tag, so nothing was released and
+the repo's `.backportrc.json` target branch did not exist upstream at all —
+two facts that only reached the PR body on the second pass, because nobody had
+asked the question in the first.
+
 Keep the template's sections — reviewers navigate by them — and add the pointer
 rather than reordering them.
 
@@ -1647,6 +1684,16 @@ The tell that this was skipped is a PR whose recent commits are labelled as revi
 ```bash
 gh pr view "$PR" --json isDraft,headRefName,state --jq '{isDraft,headRefName,state}'
 ```
+
+**That state can change from outside your session, and `isDraft` does not say who changed it.** The rule above tells you to convert a ready PR back to draft before your first push — apply it to work *you* resumed, not to a state somebody else just set deliberately. On a shared account the two are indistinguishable in `gh pr view`: the field reads `false` either way, and the account name on the event is yours in both cases. The timeline separates them, and it also dates the change against your own pushes:
+
+```bash
+gh api "repos/$OWNER/$REPO/issues/$PR/timeline" --jq \
+  '.[] | select(.event|test("ready_for_review|convert_to_draft|head_ref_force_pushed"))
+       | "\(.created_at)  \(.event)  \(.actor.login // "-")"'
+```
+
+A `ready_for_review` that is *newer* than your last push, or that sits beside a comment you did not write, was a person's decision. Report it and ask; converting it back silently undoes a deliberate act, and the PR author is the one who will be asked why their PR went back into draft. Observed 2026-09-18 on phpDocumentor/guides#1397: the human marked it ready and commented on it at 15:13–15:14Z, a rebase then force-pushed at 15:18Z and 15:20Z, and the agent noticed the state only when an unrelated `gh pr view` printed `isDraft: false`.
 
 **The Draft → Ready edge only exists if the workflow listens for it.** `ready_for_review` is not in the `pull_request` default type set (`opened`, `synchronize`, `reopened`). A workflow declaring a bare `pull_request:` therefore never runs on that transition. Where such a workflow carries the auto-approval — typically a `pr-quality` job gated on `github.event.pull_request.draft == false` — the job skips while the PR is a draft and **nothing re-runs it when the draft is lifted**. The PR then sits at `reviewDecision: REVIEW_REQUIRED` with nothing red and no pending job, which reads as "waiting for a human" and is really "waiting for an event that will never come".
 
