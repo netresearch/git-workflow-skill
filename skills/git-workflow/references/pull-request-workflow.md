@@ -443,25 +443,34 @@ a refusal is not a review — `range-diff` says whether the review you already
 have is still about this code, which is the only part you can establish
 yourself.
 
-### A bot-authored pull request takes the other path (#280)
+### A pull request you did not author takes the other path (#280)
 
-The attestation is an assertion by the author, so it is unavailable on a
-Renovate or Dependabot pull request: nobody can authenticate as the bot, and
-`--self-reviewed` refuses. That leaves the ordinary path, which was open the
-whole time and went unnamed — a human `APPROVED` review on the current head
-satisfies the never-merge-unreviewed policy on its own, in the
-`copilot_code_review` branch as well as the generic one:
+The attestation is an assertion by the author, so it is unavailable on any pull
+request that is not yours. A Renovate or Dependabot one is the obvious case —
+nobody can authenticate as the bot — but the common one is finishing a
+colleague's pull request: you are a perfectly good reviewer of it and you still
+cannot post its author's attestation, and `--self-reviewed` refuses. That
+leaves the ordinary path, which was open the whole time and went unnamed — a
+human `APPROVED` review on the current head satisfies the
+never-merge-unreviewed policy on its own, in the `copilot_code_review` branch
+as well as the generic one:
 
 ```bash
 gh pr review 123 --repo owner/repo --approve   # after reading the diff
 pr-merge.sh -R owner/repo 123                  # no flag
 ```
 
+Being someone other than the author is what makes that approval *count*: a
+review by the author is excluded from the gate, so on your own pull request the
+attestation is the only self-service route and on everyone else's the approval
+is. The two cases never overlap.
+
 A `COMMENTED` review is not enough — that is what a CodeRabbit note or a
 thread reply registers as, and the gate reads the approval list, not
-`has_review_on_head`. `pr-status.sh` reports `author_is_bot` and swaps the
-attestation advice for this command; `pr-merge.sh --self-reviewed` names it in
-its refusal. Nothing about the gate is relaxed: a third party still cannot mint
+`has_review_on_head`. `pr-status.sh` reports `viewer`, `viewer_is_author` and
+`attestation_available`, and swaps the attestation advice for this command
+whenever the attestation cannot be posted — bot author or simply not you;
+`pr-merge.sh --self-reviewed` names it in its refusal. Nothing about the gate is relaxed: a third party still cannot mint
 an attestation for someone else's pull request, and the approval is a real
 review on the record rather than a flag. This is the case `deps-no-automerge`
 and `deps-major` route to a human by design — `netresearch/.github`'s
