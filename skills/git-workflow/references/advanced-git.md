@@ -586,6 +586,51 @@ anything on `origin`. After a merge on a forge that removes the source branch
 already stale and the prune tidies it; otherwise the remote branch is still
 live and the ref belongs there.
 
+**Never put `--prune` on a fetch whose refspec names its source in shorthand.**
+The two are individually correct and destructive together: `--prune` prunes
+against the refspec of the *invocation*, so that one mapping becomes the entire
+set of refs git considers current — and an unqualified source (`main`) is not
+matched against the ref the remote advertises (`refs/heads/main`), so the
+destination looks stale. Git deletes the very ref the same command is about to
+update, and the update then fails because its destination no longer resolves:
+
+```console
+$ git -C .bare fetch origin main:refs/remotes/origin/main --prune
+ - [deleted]         (none)     -> origin/main
+   refs/remotes/origin/HEAD has become dangling after refs/remotes/origin/main was deleted
+error: cannot lock ref 'refs/remotes/origin/main': unable to resolve reference 'refs/remotes/origin/main'
+ ! 3098286..5872596  main       -> origin/main  (unable to update local ref)
+```
+
+Afterward `origin/main` is deleted and `refs/remotes/origin/HEAD` survives as a
+**dangling symbolic ref**: the file still points at `refs/remotes/origin/main`,
+which no longer resolves. `for-each-ref refs/remotes/origin` then prints
+nothing at all, because it skips refs it cannot resolve — do not read that as
+both refs having been removed.
+
+Reproduced on git 2.55.0 in a throwaway bare clone. Three neighbouring forms,
+each differing in one thing, all leave both refs intact — so it is the shorthand
+source specifically, not `--prune` and not a single-branch refspec:
+
+```bash
+git fetch origin --prune                                          # configured refspec — fine
+git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune    # glob refspec — fine
+git fetch origin refs/heads/main:refs/remotes/origin/main --prune # qualified source — fine
+```
+
+`git-fetch(1)` states the principle under PRUNING — pruning works "as a function
+of the refspec of the remote" — but spells out only the tag version of the trap
+(`refs/tags/*:refs/tags/*` deleting local tags), not this one.
+
+The combination is easy to reach by accident in a bare-repo layout, because the
+explicit-refspec fetch is the form that layout otherwise requires: `origin/*`
+does not update on its own there, so `fetch origin <branch>:refs/remotes/origin/<branch>`
+is the habit — written with the branch name, which is the shorthand form — and
+adding `--prune` to tidy up after a merge looks like two safe things at once.
+**Repair** is the same fetch without `--prune`; `origin/HEAD` starts resolving
+again by itself once its target exists, so it needs no separate `symbolic-ref`.
+Prune in its own call, or qualify the source as `refs/heads/<branch>`.
+
 The reads are not optional here. Everywhere else `--force` is the flag you
 leave off so the uncommitted-changes check can catch a removal you did not
 intend; with submodules you need it for an unrelated reason, and that check goes
@@ -692,8 +737,11 @@ Three recurring failure modes:
 
   Note `--ff-only`: a reference worktree that cannot fast-forward has local
   commits and is not a reference worktree any more, which is worth finding out
-  loudly. In a bare-repo layout `origin/*` does not update on its own, so the
-  fetch is not optional — and after a merge the *branch* worktree is usually gone,
+  loudly. Note also that the fetch above carries no refspec: adding the usual
+  `main:refs/remotes/origin/main` next to `--prune` deletes `origin/main`
+  outright (see *Never put `--prune` on a fetch whose refspec names its source
+  in shorthand* above). In a bare-repo layout `origin/*`
+  does not update on its own, so the fetch is not optional — and after a merge the *branch* worktree is usually gone,
   which is exactly when scripts start being invoked from `main/` instead.
 
 Confirm the constructor/signature at the **resolved** dependency version (the one

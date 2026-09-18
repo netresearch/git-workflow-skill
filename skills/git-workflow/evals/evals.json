@@ -113,6 +113,28 @@
     ]
   },
   {
+    "name": "fetch_prune_with_refspec",
+    "prompt": "In my bare-repo worktree layout I ran `git -C .bare fetch origin main:refs/remotes/origin/main --prune` and now origin/main is gone and origin/HEAD is dangling. What happened and how do I get it back?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(shorthand|unqualified|`?main`?[^\\n]{0,40}(not|does not)[^\\n]{0,30}match|refs/heads/main)"
+      },
+      {
+        "type": "content",
+        "pattern": "prune[^\\n]{0,80}(refspec|command line)|(refspec|command line)[^\\n]{0,80}prune"
+      },
+      {
+        "type": "content",
+        "pattern": "(without|drop|omit|no|remove)[^\\n]{0,30}`?--prune`?"
+      },
+      {
+        "type": "content",
+        "pattern": "(prune[^\\n]{0,40}(separate|own) call)|((separate|own) call[^\\n]{0,40}prune)|(qualif\\w*[^\\n]{0,40}refs/heads/)"
+      }
+    ]
+  },
+  {
     "name": "immutable_release_recovery",
     "prompt": "I created a GitHub release v1.2.3 but the TER publish failed. I deleted the release to recreate it and now I can't. What happened and how do I fix it?",
     "assertions": [
