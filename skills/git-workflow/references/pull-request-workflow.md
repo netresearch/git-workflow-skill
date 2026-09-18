@@ -75,7 +75,9 @@ unlike it, does name the reason.
 
 It reads `pr-status.sh --json` and refuses unless `NEXT` is `merge`, printing
 the gate that is shut instead. When it does merge it uses the method the
-repository allows and drops `--delete-branch` where a merge queue is active.
+repository allows and drops `--delete-branch` where a merge queue is active or
+the head branch lives in a fork (*Taking over a contributor's fork pull
+request* below).
 Afterwards it reads the PR back and reports only what it observed — `merged`
 when the state says so, `queued` when the PR really holds a queue entry, and a
 failure with exit 2 otherwise. `gh pr merge` exiting 0 proves nothing on a
@@ -491,6 +493,48 @@ head, and `pr-merge.sh` refusing.
 
 The guarantee that does not change: a comment posted by somebody else *after*
 your last word still raises the rung, on a bot pull request as anywhere else.
+
+### Taking over a contributor's fork pull request (#308)
+
+A contributor opens a pull request from their fork, CI cannot be satisfied from
+their side, and they hand it over. `maintainerCanModify` is what makes the
+takeover possible without a cherry-pick — check it first, because it decides
+whether their authorship survives:
+
+```bash
+gh pr view <n> --repo OWNER/REPO --json maintainerCanModify,headRepositoryOwner,headRefName
+git -C .bare remote add <their-login> https://github.com/<their-login>/<repo>.git
+git -C .bare fetch <their-login>
+git -C .bare worktree add ../pr-<n> -b <local-branch> <their-login>/<head-branch>
+# rebase, then your fixes as your OWN commits on top — never amended into theirs
+git -C ../pr-<n> push <their-login> HEAD:<head-branch> --force-with-lease
+```
+
+Their commits keep their author and their `Signed-off-by`; yours carry yours.
+The rebase re-signs every commit with your key, which is expected — the author
+field is what attribution rests on, not the signature.
+
+Three things about the merge differ from an ordinary pull request:
+
+1. **The head branch is not yours to delete.** `gh pr merge --delete-branch`
+   deletes it in the *fork* when your token has push rights there, and the
+   contributor loses the branch their work sits on. `pr-merge.sh` reads
+   `cross_repository` from `pr-status.sh` and drops the flag; a hand-written
+   `gh pr merge` must drop it too.
+2. **`--self-reviewed` is not available to you.** The attestation is an
+   assertion by the author, and on a takeover you are not the author. The path
+   is the one the bot-authored case above names: read the diff, `gh pr review
+   <n> --approve` as yourself, then `pr-merge.sh` with no flag. Say in the
+   approval which commits are your own and therefore had no second reader.
+3. **Your own comments used to keep `address-comments` shut.** The rung
+   measures against the *author*, the contributor has often stopped answering,
+   and every comment you write is newer than their last word — so the counter
+   rose with each one, including the comment answering the bot notices. The
+   viewer is now excluded from it the way bots are. A reply from the
+   contributor still raises the rung.
+
+Pin the head commit on the merge, since a takeover has usually pushed twice:
+`gh pr merge <n> --repo OWNER/REPO --merge --match-head-commit <full-sha>`.
 Read it and answer it.
 
 Where `viewer` is missing from the GraphQL response — an older `gh`, a stubbed

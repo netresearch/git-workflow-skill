@@ -174,5 +174,28 @@ COMMENTS_JSON='[{"author":"renovate","type":"Bot","createdAt":"2026-09-18T10:00:
                 {"author":"CybotTM","createdAt":"2026-09-18T12:00:00Z"}]' make_stub
 check "no viewer means the author is the responder again" "address-comments" "$(action)"
 
+echo "Case 7: a fork PR finished by the maintainer, whose author never commented (#308)"
+# The author is a person, so $responder stays the author - and that author has
+# said nothing, so every comment the maintainer writes is newer than an empty
+# last word and counts itself. Observed on netresearch/usercentrics-widgets#143
+# and netresearch/retro-skill#106.
+VIEWER_LOGIN=CybotTM \
+COMMENTS_JSON='[{"author":"CybotTM","createdAt":"2026-09-18T20:06:00Z"},
+                {"author":"sonarqubecloud","type":"Bot","createdAt":"2026-09-18T20:21:00Z"},
+                {"author":"CybotTM","createdAt":"2026-09-18T20:22:00Z"}]' make_stub
+out="$(run)"
+check "my own comments cannot be unanswered" "merge" "$(action)"
+lacks "and the rung is not reported"         "address-comments" "$out"
+
+echo "Case 7b: the contributor answers on that same fork PR"
+# The guarantee the fix must NOT break, in the other direction: a word from
+# somebody else after mine raises the rung again.
+VIEWER_LOGIN=CybotTM \
+COMMENTS_JSON='[{"author":"CybotTM","createdAt":"2026-09-18T20:06:00Z"},
+                {"author":"alonsoburon","createdAt":"2026-09-18T21:00:00Z"}]' make_stub
+out="$(run)"
+check    "a contributor reply still gates" "address-comments" "$(action)"
+contains "and names who wrote it"          "alonsoburon" "$out"
+
 [ "$fail" = "0" ] && echo "All cases passed." || echo "FAILURES"
 exit "$fail"

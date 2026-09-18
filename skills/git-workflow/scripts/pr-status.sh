@@ -75,7 +75,7 @@
 #
 #   state mergeable mergeState draft number title repo author author_is_bot
 #   viewer viewer_is_author attestation_available
-#   base head headOid
+#   base head headOid cross_repository
 #   checks checks_settled threads unresolved_threads
 #   unanswered_comments unanswered_human unanswered_by unanswered_urls
 #   reviewDecision reviews_on_head has_review_on_head coderabbit_on_head
@@ -470,8 +470,7 @@ evaluate() {
     # attestation path above uses. Falling back to $author keeps the old
     # behaviour when viewer is absent — an older gh, or a stubbed response —
     # rather than making every comment unanswered by comparing against "".
-    | (($g.data.viewer.login // "") as $v
-       | if $author_is_bot and $v != "" then $v else $author end) as $responder
+    | (if $author_is_bot and $viewer != "" then $viewer else $author end) as $responder
     | (([$p.comments.nodes[]? | select(.author.login == $responder) | .createdAt] | max) // "") as $responder_last_comment
     | ([$p.comments.nodes[]? | select(.author.login != $responder)
                             | select(.createdAt > $responder_last_comment)]) as $unanswered_comments
@@ -483,9 +482,21 @@ evaluate() {
     # pull request, whose CI comments took it off the merge rung on the first
     # attempt. The login patterns stay as a fallback for callers that supply a
     # REST-shaped author, and for App-backed User accounts.
+    # A comment written by the person this report is addressed to is answered by
+    # construction, so the viewer is dropped the way bots are (#308). The rung
+    # measures against the AUTHOR everywhere the author is a person, and on a
+    # fork pull request finished by a maintainer the author often never comments
+    # at all: every maintainer comment is then newer than an empty
+    # $responder_last_comment, the counter rises with each one written, and
+    # answering the bot notices raises it again. Observed on
+    # netresearch/usercentrics-widgets#143 and netresearch/retro-skill#106 —
+    # CLEAN, green, thread-free, APPROVED, and pr-merge.sh refusing. What this
+    # does NOT touch: a comment by somebody else after the last word still
+    # raises the rung, which is the case the rung exists for.
     | ([$unanswered_comments[]
         | select(((.author.__typename // "") == "Bot") | not)
-        | select((.author.login | test("\\[bot\\]$|^(dependabot|renovate|copilot)"; "i")) | not)]) as $unanswered_human
+        | select((.author.login | test("\\[bot\\]$|^(dependabot|renovate|copilot)"; "i")) | not)
+        | select($viewer == "" or .author.login != $viewer)]) as $unanswered_human
     # The CodeRabbit verdict is an ISSUE COMMENT, never a review, so every
     # review-shaped field above is blank on a pull request it cleared minutes
     # ago and the report reads "NONE on current head". It keeps ONE comment and
@@ -577,6 +588,10 @@ evaluate() {
         mergeable: $p.mergeable, mergeState: $p.mergeStateStatus,
         reviewDecision: ($p.reviewDecision // ""),
         base: $p.baseRefName, head: $p.headRefName, headOid: $head,
+        # The head branch of a fork pull request lives in another repository,
+        # which decides whether the merge may delete it. (No apostrophes in
+        # this block: the jq program is a single-quoted shell string.)
+        cross_repository: ($p.isCrossRepository // false),
         checks: {
           # Stale rows are excluded so pass+fail+pending+skip still adds up to
           # total; the stale count is reported on its own line.

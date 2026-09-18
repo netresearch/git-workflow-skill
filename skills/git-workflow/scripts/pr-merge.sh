@@ -103,10 +103,11 @@ read_status() {
       .repo,
       (.number|tostring),
       (.queue_active|tostring),
-      (.merge_methods|join(","))
+      (.merge_methods|join(",")),
+      (.cross_repository|tostring)
     ] | @tsv') || die "pr-status.sh returned unexpected JSON"
 
-  IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS <<EOF
+  IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS CROSS <<EOF
 $FIELDS
 EOF
   [ -n "$ACTION" ] && [ -n "$REPO" ] && [ -n "$PR" ] || die "pr-status.sh returned no action"
@@ -202,9 +203,15 @@ if [ -z "$METHOD" ]; then
 fi
 
 # A merge queue rejects --delete-branch outright, and deletes the branch itself
-# once the entry merges.
+# once the entry merges. On a pull request from a FORK the head branch is not
+# ours to delete: `gh` happily deletes it when the token carries push rights
+# through maintainerCanModify, and the contributor loses the branch their work
+# is on — the one case where the flag destroys somebody else's state rather
+# than tidying our own.
 CMD=(gh pr merge "$PR" --repo "$REPO" "$METHOD")
-[ "$QUEUE" = "true" ] || CMD+=(--delete-branch)
+if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ]; then
+  CMD+=(--delete-branch)
+fi
 
 if [ "$DRY" = "1" ]; then
   printf '%q ' "${CMD[@]}"; printf '\n'
