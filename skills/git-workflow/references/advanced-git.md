@@ -1408,12 +1408,20 @@ A workspace unpacked from `git archive` is missing exactly those, and the tools
 do not agree on how loudly to say so.
 
 ```bash
+mkdir -p /tmp/ws
+
 # Wrong: silently drops every export-ignore'd path
 git archive HEAD | tar -x -C /tmp/ws
 
-# Right: the working tree, minus what the run should rebuild
+# Right: the working tree, minus what the run reinstalls itself
 tar -c --exclude=vendor --exclude=node_modules --exclude=.git . | tar -x -C /tmp/ws
+(cd /tmp/ws && composer install --no-interaction)   # or npm ci, etc.
 ```
+
+The exclusions are what the run reinstalls, so the install is part of the
+recipe, not an afterthought: copy the tree without `vendor`, then put `vendor`
+back. Skipping that second step leaves a workspace where no gate can run at all,
+which is a different failure from the one this section is about.
 
 Measured on such a workspace (2026-09-18, `TYPO3-Documentation/guides-php-domain`
 at `5b4a38c`, PHP 8.2.30, vendor copied in from a full checkout so only the
@@ -1426,11 +1434,13 @@ export-ignored files were absent):
 | `php-cs-fixer check` | **0** | checked nothing, **wrote `.php-cs-fixer.dist.php` and `.gitignore` into the workspace**, printed `Config file created, re-run the command to put it in action.` |
 
 The first two are loud. The third is the one that matters: a green exit from a
-run that inspected zero files, which is indistinguishable from a clean run in
-any log, and which leaves a generated config behind so the *second* run reports
-33 of 49 files needing fixes against rules the project never chose. A tool that
-falls back to defaults when its config is missing turns a truncated workspace
-into a passing verification.
+run that inspected zero files. Its output does say `Config file created`, so it
+is not invisible to someone reading the log — but a gate that decides on the
+exit status alone, which is most of them, cannot tell it from a clean run. It
+also leaves the generated config behind, so the *second* run reports 33 of 49
+files needing fixes against rules the project never chose. A tool that falls
+back to defaults when its config is missing turns a truncated workspace into a
+passing verification.
 
 **The check, before the workspace is used for anything:** read the export rules
 and diff the file list.
