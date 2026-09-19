@@ -824,6 +824,27 @@ minutes apart in writing — which is exactly why the disagreement is worth
 catching. Two figures for one quantity means at least one is answering a
 question you are no longer asking.
 
+**A state change invalidates the body as surely as a push, and is easier to
+miss.** A push makes you re-read the body because you just wrote the change;
+flipping a flag does not. Yet the body is the one place that *asserts* the state
+in words, so it is the one place that can contradict it: a PR marked ready for
+review while the body still reads "still in draft while it waits for a look"
+says two different things to whoever opens it, and the sentence is the one they
+believe.
+
+Treat `gh pr ready`, `gh pr ready --undo` and `gh pr reopen` as edits to the
+body's factual content. After each, search your own text for the words naming
+the state you just left:
+
+```bash
+gh pr view "$PR" --json body --jq .body \
+  | grep -niE 'draft|WIP|work in progress|waiting on|blocked on|once .* lands'
+```
+
+Observed on a PR whose body stayed accurate through three force-pushes and then
+went stale the moment it was marked ready — the one change that did not involve
+writing a diff.
+
 ### Write the body in its own tool call, after the push
 
 A body that cites a commit can only be written once that commit is on the
