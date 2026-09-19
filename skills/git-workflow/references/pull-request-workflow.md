@@ -81,8 +81,9 @@ request* below), or where another open pull request is based on that branch
 (*Stacked PRs: retarget before you merge* below) — it asks
 `gh pr list --base <head-branch> --state open` and keeps the branch when
 anything comes back, naming the dependent pull requests so they can be
-retargeted first. A query it cannot run counts as "something is stacked": an
-empty answer from a broken query reads exactly like "nothing is", and here the
+retargeted first. A query that fails, and a `pr-status.sh` too old to report
+the head branch, both count as "something is stacked": an empty answer from a
+question that was never answered reads exactly like "nothing is", and here the
 difference decides whether somebody else's pull request survives.
 Afterwards it reads the PR back and reports only what it observed — `merged`
 when the state says so, `queued` when the PR really holds a queue entry, and a
@@ -2461,8 +2462,11 @@ bottom-up — but two GitHub behaviours break the naive loop:
    ```bash
    # 1. restore the base branch BY SHA — `--delete-branch` deletes the local
    #    branch too, so a name-based refspec fails with "src refspec does not
-   #    match any" in exactly the situation this is written for.
+   #    match any" in exactly the situation this is written for. The push needs
+   #    the object locally; refs/pull/<N>/head survives both the merge and the
+   #    branch deletion, so fetch it first if this is a fresh clone.
    SHA=$(gh pr view <MERGED_PR> -R owner/repo --json headRefOid --jq .headRefOid)
+   git fetch origin "refs/pull/<MERGED_PR>/head"
    git push origin "$SHA:refs/heads/<merged-branch>"
 
    # 2. reopen — refused while the base branch is missing
@@ -2525,12 +2529,11 @@ Observed 2026-08-09 (netresearch/t3x-nr-llm): merging only #665 landed #663, #66
 below) close as `CLOSED` and need their issues closed by hand.
 
 One preview-era caveat worth knowing before relying on it: deleting a lower
-branch can **close** the PR above it rather than retarget it, and in the case
-observed here it could not be reopened at all — where a hand-built stack's
-child reopens once its base branch is restored (point 1 above), this one did
-not. Leave `--delete-branch` off until the stack is fully merged; if it
-happens, try the restore-by-SHA first and expect to reopen the PR by hand if
-that is refused.
+branch can **close** the PR above it rather than retarget it, and reopening it
+was refused. The base branch was not restored in that case, so whether the
+restore-first sequence in point 1 would have reopened it is unmeasured. Leave
+`--delete-branch` off until the stack is fully merged; if it happens anyway,
+try the restore-first sequence before concluding the PR is lost.
 
 Related: a workflow **rerun executes the frozen merge commit** — it does not
 re-resolve `refs/pull/N/merge` against the moved base. A check that depends

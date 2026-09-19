@@ -4,11 +4,11 @@
 # cannot be retargeted — recovery means pushing the branch back, reopening,
 # retargeting and only then deleting.
 #
-# Three directions are asserted, because "never delete" would satisfy a
+# Four directions are asserted, because "never delete" would satisfy a
 # one-sided suite just as well: the flag is withheld when a dependent pull
-# request exists, still passed when none does, and withheld again when the
-# query itself fails — an empty answer from a broken query reads exactly like
-# "nothing is stacked".
+# request exists, still passed when none does, withheld again when the query
+# itself fails, and withheld when no head branch was reported — an answer to a
+# question that was never put reads exactly like "nothing is stacked".
 #
 # Runs against a stubbed pr-status.sh and a stubbed `gh`, so it needs no
 # network and no repo.
@@ -117,7 +117,14 @@ out=$(run); err=$(cat "$STUB_DIR/err"); args=$(cat "$STUB_DIR/gh-args")
 says_not "keeps the branch"          "--delete-branch"                    "$out"
 says     "says it could not check"   "no head branch"                     "$err"
 says_not "does not query blindly"    "pr list"                            "$args"
+
+echo "case 5: the query failed but printed something — it is not a PR list"
 make_status_stub
+make_gh_stub '#901 #902' 1 'gh: connection reset'
+out=$(run); err=$(cat "$STUB_DIR/err")
+says_not "keeps the branch"          "--delete-branch"                    "$out"
+says     "says it could not check"   "could not check for dependent"      "$err"
+says_not "invents no dependents"     "#901 #902"                          "$err"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"

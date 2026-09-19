@@ -2,7 +2,7 @@
 # pr-merge.sh — merge a pull request with the method the repository allows,
 # and only when the merge gate is actually open.
 #
-# Why this exists: `gh pr merge --merge --delete-branch` is wrong in two common
+# Why this exists: `gh pr merge --merge --delete-branch` is wrong in several common
 # repository configurations and gives no useful error until it fails. A repo
 # with `allow_merge_commit: false` answers "Merge commits are not allowed on
 # this repository"; a repo with a merge queue answers "Cannot use --delete-branch

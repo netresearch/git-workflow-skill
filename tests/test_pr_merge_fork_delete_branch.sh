@@ -41,7 +41,7 @@ cat <<JSON
 {
   "repo": "o/r", "number": 106, "queue_active": $2,
   "merge_methods": ["merge"], "cross_repository": $1,
-  "head": "feature/from-a-fork",
+  "head": "feature/some-branch",
   "headOid": "deadbeefcafe0000", "author": "a-contributor",
   "author_is_bot": false, "self_review_on_head": true,
   "next": {"action": "merge", "why": "clean", "method": "--merge"}
