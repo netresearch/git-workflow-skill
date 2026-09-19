@@ -52,12 +52,17 @@ STUB
     chmod +x "$STUB_DIR/pr-status.sh"
 }
 
-# gh stub. Args: <pr-list-json> <pr-list-exit>
+# gh stub. Args: <pr-list-stdout> <pr-list-exit> [stderr]
+# It records its own argv, so a query against the wrong branch or the wrong
+# repository is a test failure rather than an invisible regression.
 make_gh_stub() {
+    : > "$STUB_DIR/gh-args"
     cat > "$STUB_DIR/gh" <<STUB
 #!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$STUB_DIR/gh-args"
 if [ "\$1" = "pr" ] && [ "\$2" = "list" ]; then
   printf '%s' '$1'
+  printf '%s' '${3:-}' >&2
   exit $2
 fi
 exit 0
@@ -71,11 +76,14 @@ make_status_stub
 
 echo "case 1: another open PR is based on this branch — keep it"
 make_gh_stub '#108 #109' 0
-out=$(run); err=$(cat "$STUB_DIR/err")
+out=$(run); err=$(cat "$STUB_DIR/err"); args=$(cat "$STUB_DIR/gh-args")
 says     "merges"                    "gh pr merge 107 --repo o/r --merge" "$out"
 says_not "keeps the branch"          "--delete-branch"                    "$out"
 says     "names the dependent PRs"   "#108 #109"                          "$err"
 says     "names the branch"          "feature/base-of-another"            "$err"
+says     "asks about the HEAD branch" "--base feature/base-of-another"    "$args"
+says     "asks the right repository" "--repo o/r"                         "$args"
+says     "asks for open PRs only"    "--state open"                       "$args"
 
 echo "case 2: nothing is based on it — the flag is still passed"
 make_gh_stub '' 0
@@ -84,10 +92,32 @@ says     "deletes our own branch"    "--delete-branch"                    "$out"
 says_not "says nothing about stacks" "Retarget them"                      "$err"
 
 echo "case 3: the query failed — an empty answer must not read as 'none'"
-make_gh_stub '' 1
+make_gh_stub '' 1 'gh: HTTP 403'
 out=$(run); err=$(cat "$STUB_DIR/err")
 says_not "keeps the branch"          "--delete-branch"                    "$out"
-says     "says the query failed"     "could not be determined"            "$err"
+says     "says it could not check"   "could not check for dependent"      "$err"
+says     "relays why"                "HTTP 403"                           "$err"
+
+echo "case 4: no head branch reported — the same doubt, the same answer"
+make_gh_stub '' 0
+cat > "$STUB_DIR/pr-status.sh" <<'STUB'
+#!/usr/bin/env bash
+cat <<'JSON'
+{
+  "repo": "o/r", "number": 107, "queue_active": false,
+  "merge_methods": ["merge"], "cross_repository": false,
+  "headOid": "deadbeefcafe0000", "author": "a-maintainer",
+  "author_is_bot": false, "self_review_on_head": true,
+  "next": {"action": "merge", "why": "clean", "method": "--merge"}
+}
+JSON
+STUB
+chmod +x "$STUB_DIR/pr-status.sh"
+out=$(run); err=$(cat "$STUB_DIR/err"); args=$(cat "$STUB_DIR/gh-args")
+says_not "keeps the branch"          "--delete-branch"                    "$out"
+says     "says it could not check"   "no head branch"                     "$err"
+says_not "does not query blindly"    "pr list"                            "$args"
+make_status_stub
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"

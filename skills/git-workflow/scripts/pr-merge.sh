@@ -220,23 +220,34 @@ fi
 # An empty answer from a FAILED query would look exactly like "nothing is
 # stacked", so the query's exit status decides, and a failure keeps the branch.
 STACKED=""
-if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ] && [ -n "$HEADREF" ]; then
-  if STACKED=$(gh pr list --repo "$REPO" --base "$HEADREF" --state open \
-      --json number --jq '[.[].number | "#" + tostring] | join(" ")' 2>/dev/null); then
-    :
-  else
-    STACKED="(could not be determined)"
+STACKED_UNKNOWN=""
+TMPERR=$(mktemp)
+trap 'rm -f "$TMPERR"' EXIT
+if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ]; then
+  if [ -z "$HEADREF" ]; then
+    # Nothing to ask about: an older pr-status.sh that does not report the head
+    # branch leaves the same doubt a failed query does, and is answered the
+    # same way.
+    STACKED_UNKNOWN="pr-status.sh reported no head branch"
+  elif ! STACKED=$(gh pr list --repo "$REPO" --base "$HEADREF" --state open \
+      --json number --jq '[.[].number | "#" + tostring] | join(" ")' 2>"$TMPERR"); then
+    STACKED=""
+    STACKED_UNKNOWN=$(tr '\n' ' ' < "$TMPERR")
+    [ -n "$STACKED_UNKNOWN" ] || STACKED_UNKNOWN="gh pr list failed"
   fi
 fi
 
 CMD=(gh pr merge "$PR" --repo "$REPO" "$METHOD")
-if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ] && [ -z "$STACKED" ]; then
+if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ] && [ -z "$STACKED" ] && [ -z "$STACKED_UNKNOWN" ]; then
   CMD+=(--delete-branch)
 fi
 
 if [ -n "$STACKED" ]; then
   printf 'pr-merge: keeping branch %s — open pull requests are based on it: %s. Retarget them, then delete it.\n' \
     "$HEADREF" "$STACKED" >&2
+elif [ -n "$STACKED_UNKNOWN" ]; then
+  printf 'pr-merge: keeping branch %s — could not check for dependent pull requests: %s\n' \
+    "${HEADREF:-(unknown)}" "$STACKED_UNKNOWN" >&2
 fi
 
 if [ "$DRY" = "1" ]; then

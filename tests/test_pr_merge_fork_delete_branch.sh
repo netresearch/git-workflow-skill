@@ -41,6 +41,7 @@ cat <<JSON
 {
   "repo": "o/r", "number": 106, "queue_active": $2,
   "merge_methods": ["merge"], "cross_repository": $1,
+  "head": "feature/from-a-fork",
   "headOid": "deadbeefcafe0000", "author": "a-contributor",
   "author_is_bot": false, "self_review_on_head": true,
   "next": {"action": "merge", "why": "clean", "method": "--merge"}
@@ -50,7 +51,17 @@ STUB
     chmod +x "$STUB_DIR/pr-status.sh"
 }
 
-run() { "$SCRIPT" -R o/r 106 --dry-run 2>"$STUB_DIR/err"; }
+# A same-repo pull request now asks `gh pr list` whether another pull request is
+# based on this branch (tests/test_pr_merge_stacked_pr_delete_branch.sh covers
+# that check). Stub it as "nothing is stacked" so this test stays about the
+# fork and queue cases, and needs no network.
+cat > "$STUB_DIR/gh" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$STUB_DIR/gh"
+
+run() { PATH="$STUB_DIR:$PATH" "$SCRIPT" -R o/r 106 --dry-run 2>"$STUB_DIR/err"; }
 
 echo "case 1: fork PR — the head branch is not ours, so no --delete-branch"
 make_status_stub true false
