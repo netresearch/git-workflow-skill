@@ -85,7 +85,7 @@
 #   requested_reviewers
 #   merge_methods auto_merge_allowed queue_active queue_entry
 #   rulesets rules_fetched required_contexts undispatched unsigned
-#   classic_protection
+#   classic_protection awaiting_approval
 #   next
 #
 # `checks` is {total,pass,fail,pending,skip,...} and `next` is
@@ -139,7 +139,7 @@ REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
 # are deliberately not in here. tests/test_pr_status_draft_watch.sh pins the
 # two lists against every action literal this script can emit — a new action
 # must land in one of them.
-ACTIONABLE="fix-ci triage-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate"
+ACTIONABLE="fix-ci triage-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs"
 
 die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
 
@@ -314,10 +314,10 @@ collect_raw() {
 # would discard the status flag.
 
 evaluate() {
-  local gql="$1" rules="$2" ok="$3" marker="$4" prot="${5:-null}"
+  local gql="$1" rules="$2" ok="$3" marker="$4" prot="${5:-null}" runs="${6:-[]}"
   jq -n --argjson g "$gql" --argjson r "$rules" --argjson ok "$ok" \
         --argjson marker "$marker" --arg marker_path "$QUOTA_MARKER" \
-        --argjson prot "$prot" '
+        --argjson prot "$prot" --argjson runs "$runs" '
     # Defined once and used by BOTH the error list and the $head_reviews filter.
     # Two hand-kept copies would have to stay byte-identical: loosening one to
     # match a third error body and not the other puts the row back into
@@ -367,10 +367,24 @@ evaluate() {
     | ($checks | group_by(.name)
                | map(max_by([(if .state == "QUEUED" or .state == "PENDING" then 1 else 0 end),
                              (.started // "")]))) as $checks
-    # Effective required contexts come from the rules endpoint; classic
-    # protection alone misses rulesets entirely.
-    | ([$r[]? | select(.type=="required_status_checks")
-        | .parameters.required_status_checks[]?.context]) as $required
+    # Effective required contexts are the UNION of both sources. The rules
+    # endpoint misses classic branch protection and classic protection misses
+    # rulesets, and a repository can carry either or both. Taking only the
+    # rules endpoint reported `required_contexts: []` on a repo whose five
+    # required checks all came from classic protection, which then read as
+    # "nothing is required" and fell through to `investigate` with everything
+    # green — the question the tool exists to answer (#329,
+    # netresearch/orocommerce-skill#20).
+    #
+    # $prot is fetched lazily, only when the PR is BLOCKED or a review is
+    # demanded — which is exactly the state an unreported required context
+    # produces, so the classic half is present whenever it decides anything.
+    | (([$r[]? | select(.type=="required_status_checks")
+         | .parameters.required_status_checks[]?.context]
+        + (if ($prot | type) == "object"
+           then ($prot.required_status_checks.contexts? // [])
+           else [] end))
+       | unique) as $required
     # Required contexts with no check-run at all. A context that never
     # reported is invisible on the PR page — the rollup only lists what ran —
     # so this reads as BLOCKED with everything green.
@@ -641,6 +655,14 @@ evaluate() {
         # code-owner reviews). Admin-only endpoint, fetched lazily and only
         # when the PR looks review-blocked — null means "not fetched or not
         # visible", never "no classic protection".
+        # Workflow runs on this head that a maintainer has not approved yet.
+        # GitHub demands that approval on a fork pull request after EVERY new
+        # SHA, and an unapproved run is not a check run at all: it contributes
+        # nothing to the rollup, so the rung below reported `0 pending` and
+        # pointed at the review gate while eight required contexts had not
+        # started (#310). Empty on a same-repository PR, where the fetch is
+        # not made.
+        awaiting_approval: $runs,
         classic_protection: (if $prot == null or ($prot | type) != "object"
                              then null
                              else ($prot.required_pull_request_reviews // null
@@ -933,6 +955,27 @@ evaluate() {
                     else "" end)
                  + " — the queue merges it once its own checks pass; enqueueing"
                  + " again only restarts them")}
+         # No single quotes anywhere in this rung, comments included: the whole
+         # jq program is one single-quoted shell string and an apostrophe ends
+         # it (the parse then fails several hundred lines further down).
+         # Runs awaiting maintainer approval outrank every review and
+         # signature branch below, because none of those can unblock the PR:
+         # the required contexts have not started and will not start until
+         # someone presses approve. Reported as `0 pending` before, since an
+         # unapproved run produces no check run — so the ladder reached
+         # request-review and named an action that could not help, which is
+         # the failure mode this tool exists to prevent (#310, observed on
+         # netresearch/simple-ldap-go#227: 29 check runs before a force-push,
+         # 6 after, eight runs waiting).
+         elif (($s.awaiting_approval|length) > 0) then
+           {action:"approve-workflow-runs",
+            why:("\($s.awaiting_approval|length) workflow run(s) on \($s.headOid[0:8]) await maintainer approval"
+                 + " — \([$s.awaiting_approval[].name]|unique|join(", "))."
+                 + " This is a fork pull request, and GitHub demands that approval after every new SHA."
+                 + " Until then those runs report nothing at all, so the check counts above understate the gate"),
+            # No single quotes: this jq program lives in a single-quoted shell
+            # string (same trap the fix-signatures cmd below notes).
+            cmd:([$s.awaiting_approval[] | "gh api -X POST repos/\($s.repo)/actions/runs/\(.id)/approve"] | join(" ; "))}
          # A required-signatures gate can live in CLASSIC branch protection,
          # which neither the rulesets endpoint nor a non-admin protection
          # query can see: mergeState sits at BLOCKED while every visible gate
@@ -1287,7 +1330,22 @@ snapshot() {
     if pr_raw=$(gh api "repos/$REPO/branches/$enc/protection" 2>/dev/null); then prot="$pr_raw"; fi
   fi
 
-  out=$(evaluate "$g" "$r" "$ok" "$(quota_marker_seen)" "$prot")
+  # A fork pull request's workflow runs need a maintainer's approval after
+  # every new SHA, and an unapproved run is invisible in the check rollup
+  # (#310). Fetched only when the head is cross-repository, so a same-repo PR
+  # keeps its existing call count. A failed call leaves the list empty, which
+  # understates rather than invents — the same direction the rules fetch takes.
+  local runs='[]' head_oid rr
+  if [ "$(jq -r '.data.repository.pullRequest.isCrossRepository // false' <<<"$g")" = "true" ]; then
+    head_oid=$(jq -r '.data.repository.pullRequest.headRefOid // ""' <<<"$g")
+    if [ -n "$head_oid" ] && rr=$(gh api "repos/$REPO/actions/runs?head_sha=$head_oid&per_page=100" 2>/dev/null); then
+      runs=$(jq -c '[.workflow_runs[]?
+                     | select(.status == "action_required" or .conclusion == "action_required")
+                     | {id: .id, name: .name}]' <<<"$rr") || runs='[]'
+    fi
+  fi
+
+  out=$(evaluate "$g" "$r" "$ok" "$(quota_marker_seen)" "$prot" "$runs")
   # Written from the EVIDENCE field, never from the verdict: with
   # copilot_quota_exhausted the marker would re-assert itself, and the PR named
   # inside it would be whichever one read the file rather than the one that
@@ -1309,7 +1367,15 @@ emit() {
 
 # ---------------------------------------------------------------- run -------
 if [ "$WATCH" = "0" ]; then
-  emit "$(snapshot)"
+  # Same reason as the --watch branch below: `die` inside snapshot() runs in
+  # this command substitution's subshell, so a failed GraphQL read left $s
+  # empty and this path went on to `exit 0`. A caller keying on the exit
+  # status — a hook, a Makefile, a monitor — then read a failed gate read as a
+  # passed gate, and `--json` handed an empty string to whatever parses it.
+  if ! s=$(snapshot) || [ -z "$s" ] || ! jq -e '.next.action' <<<"$s" >/dev/null 2>&1; then
+    die "could not read the gate for ${REPO}#${PR}; cause on stderr above"
+  fi
+  emit "$s"
   exit 0
 fi
 
