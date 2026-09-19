@@ -75,9 +75,16 @@ unlike it, does name the reason.
 
 It reads `pr-status.sh --json` and refuses unless `NEXT` is `merge`, printing
 the gate that is shut instead. When it does merge it uses the method the
-repository allows and drops `--delete-branch` where a merge queue is active or
-the head branch lives in a fork (*Taking over a contributor's fork pull
-request* below).
+repository allows and drops `--delete-branch` where a merge queue is active,
+where the head branch lives in a fork (*Taking over a contributor's fork pull
+request* below), or where another open pull request is based on that branch
+(*Stacked PRs: retarget before you merge* below) — it asks
+`gh pr list --base <head-branch> --state open` and keeps the branch when
+anything comes back, naming the dependent pull requests so they can be
+retargeted first. A query that fails, and a `pr-status.sh` too old to report
+the head branch, both count as "something is stacked": an empty answer from a
+question that was never answered reads exactly like "nothing is", and here the
+difference decides whether somebody else's pull request survives.
 Afterwards it reads the PR back and reports only what it observed — `merged`
 when the state says so, `queued` when the PR really holds a queue entry, and a
 failure with exit 2 otherwise. `gh pr merge` exiting 0 proves nothing on a
@@ -2438,14 +2445,51 @@ A stacked chain (PR2 based on PR1's branch, PR3 on PR2's, …) merges
 bottom-up — but two GitHub behaviours break the naive loop:
 
 1. **`gh pr merge --delete-branch` on a stacked base CLOSES the child PR.**
-   GitHub's automatic retargeting of dependent PRs is unreliable: when the
-   base branch disappears, the child can be closed instead of retargeted to
-   the default branch (observed 2026-08-01: child PR closed mid-stack, its
-   base still pointing at the deleted branch).
-   Recovery, if it happens: re-push the deleted base branch (the local copy
-   still has it), `gh pr reopen <CHILD_NUMBER>`, then
-   `gh pr edit <CHILD_NUMBER> --base main` — the base of a *closed* PR cannot
-   be edited, so reopen first.
+   GitHub documents retargeting dependent PRs to the merged PR's base when a
+   head branch is deleted, but it is unreliable: the child can be closed
+   instead, its base still pointing at the deleted branch (observed 2026-08-01
+   mid-stack, and again 2026-09-19 on
+   `netresearch/ldap-selfservice-password-changer#685`, the child of a
+   two-PR stack).
+
+   `pr-merge.sh` prevents it — it withholds `--delete-branch` when
+   `gh pr list --base <head-branch> --state open` returns anything. The
+   recovery below is for a merge made by hand or by an older copy of the
+   script.
+
+   The two obvious repairs block each other, so only one order moves:
+
+   ```bash
+   # The branch has to come back in the repository the pull requests live in.
+   # `origin` is a local alias and points at the fork in a fork-based checkout,
+   # where recreating the branch would leave the child's base still missing.
+   # `git remote -v` says which remote is owner/repo.
+   BASE=origin
+
+   # 1. restore the base branch BY SHA — `--delete-branch` deletes the local
+   #    branch too, so a name-based refspec fails with "src refspec does not
+   #    match any" in exactly the situation this is written for. The push needs
+   #    the object locally, which it is not after a squash or rebase merge, or
+   #    in a shallow clone. refs/pull/<N>/head survives both the merge and the
+   #    branch deletion, and fetching it is idempotent, so just do it.
+   SHA=$(gh pr view <MERGED_PR> -R owner/repo --json headRefOid --jq .headRefOid)
+   git fetch "$BASE" "refs/pull/<MERGED_PR>/head"
+   git push "$BASE" "$SHA:refs/heads/<merged-branch>"
+
+   # 2. reopen — refused while the base branch is missing
+   #    ("Could not open the pull request")
+   gh pr reopen <CHILD_NUMBER> -R owner/repo
+
+   # 3. retarget — refused while the PR is closed
+   #    ("Cannot change the base branch of a closed pull request")
+   gh pr edit <CHILD_NUMBER> -R owner/repo --base main
+
+   # 4. now the branch can go
+   git push "$BASE" --delete <merged-branch>
+   ```
+
+   Merging the child first, then its base, avoids the situation entirely and
+   is worth preferring when the review order allows it.
 2. **`mergeStateStatus` needs time and only `CLEAN` is trustworthy.** After a
    retarget it cycles through `UNKNOWN`/`BLOCKED`/`UNSTABLE` before settling.
    `UNSTABLE` means a **non-required** check is failing — decide explicitly
@@ -2492,9 +2536,11 @@ Observed 2026-08-09 (netresearch/t3x-nr-llm): merging only #665 landed #663, #66
 below) close as `CLOSED` and need their issues closed by hand.
 
 One preview-era caveat worth knowing before relying on it: deleting a lower
-branch can **close** the PR above it rather than retarget it, and a closed PR of
-this kind cannot be reopened. Leave `--delete-branch` off until the stack is
-fully merged.
+branch can **close** the PR above it rather than retarget it, and reopening it
+was refused. The base branch was not restored in that case, so whether the
+restore-first sequence in point 1 would have reopened it is unmeasured. Leave
+`--delete-branch` off until the stack is fully merged; if it happens anyway,
+try the restore-first sequence before concluding the PR is lost.
 
 Related: a workflow **rerun executes the frozen merge commit** — it does not
 re-resolve `refs/pull/N/merge` against the moved base. A check that depends

@@ -2,13 +2,16 @@
 # pr-merge.sh — merge a pull request with the method the repository allows,
 # and only when the merge gate is actually open.
 #
-# Why this exists: `gh pr merge --merge --delete-branch` is wrong in two common
-# repository configurations and gives no useful error until it fails. A repo
+# Why this exists: `gh pr merge --merge --delete-branch` is wrong in several
+# repository configurations and gives no useful error until it fails. Two of
+# them answer with a message; the other two are silent. A repo
 # with `allow_merge_commit: false` answers "Merge commits are not allowed on
 # this repository"; a repo with a merge queue answers "Cannot use --delete-branch
 # when merge queue enabled". Hand-rolling the detection per call site is how a
-# 54-repository rollout hit both, three times each. pr-status.sh already knows
-# the answer — this reads it instead of guessing.
+# 54-repository rollout hit both, three times each. The silent two are a fork
+# head, which is not ours to delete, and a branch another open pull request is
+# based on, whose deletion closes that pull request. pr-status.sh already knows
+# most of the answer — this reads it instead of guessing.
 #
 # Squash is never used: it discards atomic commits and their signatures.
 #
@@ -104,10 +107,11 @@ read_status() {
       (.number|tostring),
       (.queue_active|tostring),
       (.merge_methods|join(",")),
-      (.cross_repository|tostring)
+      (.cross_repository|tostring),
+      (.head // "")
     ] | @tsv') || die "pr-status.sh returned unexpected JSON"
 
-  IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS CROSS <<EOF
+  IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS CROSS HEADREF <<EOF
 $FIELDS
 EOF
   [ -n "$ACTION" ] && [ -n "$REPO" ] && [ -n "$PR" ] || die "pr-status.sh returned no action"
@@ -208,9 +212,45 @@ fi
 # through maintainerCanModify, and the contributor loses the branch their work
 # is on — the one case where the flag destroys somebody else's state rather
 # than tidying our own.
-CMD=(gh pr merge "$PR" --repo "$REPO" "$METHOD")
+# Third case: the head branch is the BASE of another open pull request. Deleting
+# it CLOSES that pull request — and a closed pull request's base cannot be
+# retargeted, so recovery is pushing the branch back, reopening, retargeting and
+# deleting again, in that order. (GitHub documents retargeting dependent pull
+# requests when a merged head branch is deleted; on
+# netresearch/ldap-selfservice-password-changer#685 it closed instead, so the
+# branch is kept rather than the documented behaviour trusted.)
+#
+# An empty answer from a FAILED query would look exactly like "nothing is
+# stacked", so the query's exit status decides, and a failure keeps the branch.
+STACKED=""
+STACKED_UNKNOWN=""
+TMPERR=$(mktemp)
+trap 'rm -f "$TMPERR"' EXIT
 if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ]; then
+  if [ -z "$HEADREF" ]; then
+    # Nothing to ask about: an older pr-status.sh that does not report the head
+    # branch leaves the same doubt a failed query does, and is answered the
+    # same way.
+    STACKED_UNKNOWN="pr-status.sh reported no head branch"
+  elif ! STACKED=$(gh pr list --repo "$REPO" --base "$HEADREF" --state open \
+      --json number --jq '[.[].number | "#" + tostring] | join(" ")' 2>"$TMPERR"); then
+    STACKED=""
+    STACKED_UNKNOWN=$(tr '\n' ' ' < "$TMPERR")
+    [ -n "$STACKED_UNKNOWN" ] || STACKED_UNKNOWN="gh pr list failed"
+  fi
+fi
+
+CMD=(gh pr merge "$PR" --repo "$REPO" "$METHOD")
+if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ] && [ -z "$STACKED" ] && [ -z "$STACKED_UNKNOWN" ]; then
   CMD+=(--delete-branch)
+fi
+
+if [ -n "$STACKED" ]; then
+  printf 'pr-merge: keeping branch %s — open pull requests are based on it: %s. Retarget them, then delete it.\n' \
+    "$HEADREF" "$STACKED" >&2
+elif [ -n "$STACKED_UNKNOWN" ]; then
+  printf 'pr-merge: keeping branch %s — could not check for dependent pull requests: %s\n' \
+    "${HEADREF:-(unknown)}" "$STACKED_UNKNOWN" >&2
 fi
 
 if [ "$DRY" = "1" ]; then
