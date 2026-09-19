@@ -2460,6 +2460,12 @@ bottom-up — but two GitHub behaviours break the naive loop:
    The two obvious repairs block each other, so only one order moves:
 
    ```bash
+   # The branch has to come back in the repository the pull requests live in.
+   # `origin` is a local alias and points at the fork in a fork-based checkout,
+   # where recreating the branch would leave the child's base still missing.
+   # `git remote -v` says which remote is owner/repo.
+   BASE=origin
+
    # 1. restore the base branch BY SHA — `--delete-branch` deletes the local
    #    branch too, so a name-based refspec fails with "src refspec does not
    #    match any" in exactly the situation this is written for. The push needs
@@ -2467,8 +2473,8 @@ bottom-up — but two GitHub behaviours break the naive loop:
    #    in a shallow clone. refs/pull/<N>/head survives both the merge and the
    #    branch deletion, and fetching it is idempotent, so just do it.
    SHA=$(gh pr view <MERGED_PR> -R owner/repo --json headRefOid --jq .headRefOid)
-   git fetch origin "refs/pull/<MERGED_PR>/head"
-   git push origin "$SHA:refs/heads/<merged-branch>"
+   git fetch "$BASE" "refs/pull/<MERGED_PR>/head"
+   git push "$BASE" "$SHA:refs/heads/<merged-branch>"
 
    # 2. reopen — refused while the base branch is missing
    #    ("Could not open the pull request")
@@ -2479,7 +2485,7 @@ bottom-up — but two GitHub behaviours break the naive loop:
    gh pr edit <CHILD_NUMBER> -R owner/repo --base main
 
    # 4. now the branch can go
-   git push origin --delete <merged-branch>
+   git push "$BASE" --delete <merged-branch>
    ```
 
    Merging the child first, then its base, avoids the situation entirely and
