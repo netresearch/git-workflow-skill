@@ -198,11 +198,11 @@ OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
 # the answer lives instead (#250).
 case "$REPO" in
   */*/*)
-    die "\"$REPO\" is not owner/repo. pr-status.sh is GitHub-only; for a GitLab merge request see references/pull-request-workflow.md § \"GitHub only\" and the netresearch-gitlab skill" ;;
+    die "\"$REPO\" is not owner/repo. pr-status.sh is GitHub-only; for a GitLab merge request see references/pull-request-workflow.md § \"GitLab: the same gate with glab\"" ;;
 esac
 case "${OWNER}" in
   *.*)
-    die "\"$OWNER\" looks like a host, not a GitHub owner. pr-status.sh is GitHub-only; for a GitLab merge request see references/pull-request-workflow.md § \"GitHub only\" and the netresearch-gitlab skill" ;;
+    die "\"$OWNER\" looks like a host, not a GitHub owner. pr-status.sh is GitHub-only; for a GitLab merge request see references/pull-request-workflow.md § \"GitLab: the same gate with glab\"" ;;
 esac
 
 # --------------------------------------------------------- quota marker -----
