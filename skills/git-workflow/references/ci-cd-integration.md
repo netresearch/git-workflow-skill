@@ -128,6 +128,28 @@ a validator's own green `Errors: 0` summary. Four such calls produced no
 information about a failure whose step was called `Python lint`; the API call
 above answered on the first try.
 
+#### Reproduce with the version CI runs, not the one your cache holds
+
+"Usually enough to reproduce locally" has a condition attached: the same tool at
+the same version. A step written as `uvx ruff check .` or `npx <tool>` resolves
+to the newest release on every CI run, while the local cache can be months old
+and answer green on the identical file. The local pass then reads as "the check
+is wrong" or "it is an infrastructure problem", and the actual finding is never
+seen.
+
+Read the version out of the workflow file, and when it is unpinned force the
+current one:
+
+```bash
+grep -nE 'uvx |npx |pip install|--version' .github/workflows/<file>.yml
+uvx ruff@latest check .          # what an unpinned CI step actually runs
+uvx ruff@0.16.0 check .          # or the pin, where there is one
+```
+
+Measured: ruff 0.16.0 stabilised `FURB105`, `EXE001` and `BLE001`, so a required
+check went red on scripts that had not changed, while the locally cached ruff
+passed them. Three findings, all real, all invisible until the version matched.
+
 ### A green pre-commit run is not a green CI lint step
 
 Two distinct reasons, and the second is the one that is easy to miss.
