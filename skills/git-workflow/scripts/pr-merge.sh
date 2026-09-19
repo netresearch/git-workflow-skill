@@ -104,10 +104,11 @@ read_status() {
       (.number|tostring),
       (.queue_active|tostring),
       (.merge_methods|join(",")),
-      (.cross_repository|tostring)
+      (.cross_repository|tostring),
+      (.head // "")
     ] | @tsv') || die "pr-status.sh returned unexpected JSON"
 
-  IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS CROSS <<EOF
+  IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS CROSS HEADREF <<EOF
 $FIELDS
 EOF
   [ -n "$ACTION" ] && [ -n "$REPO" ] && [ -n "$PR" ] || die "pr-status.sh returned no action"
@@ -208,9 +209,34 @@ fi
 # through maintainerCanModify, and the contributor loses the branch their work
 # is on — the one case where the flag destroys somebody else's state rather
 # than tidying our own.
+# Third case: the head branch is the BASE of another open pull request. Deleting
+# it CLOSES that pull request — and a closed pull request's base cannot be
+# retargeted, so recovery is pushing the branch back, reopening, retargeting and
+# deleting again, in that order. (GitHub documents retargeting dependent pull
+# requests when a merged head branch is deleted; on
+# netresearch/ldap-selfservice-password-changer#685 it closed instead, so the
+# branch is kept rather than the documented behaviour trusted.)
+#
+# An empty answer from a FAILED query would look exactly like "nothing is
+# stacked", so the query's exit status decides, and a failure keeps the branch.
+STACKED=""
+if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ] && [ -n "$HEADREF" ]; then
+  if STACKED=$(gh pr list --repo "$REPO" --base "$HEADREF" --state open \
+      --json number --jq '[.[].number | "#" + tostring] | join(" ")' 2>/dev/null); then
+    :
+  else
+    STACKED="(could not be determined)"
+  fi
+fi
+
 CMD=(gh pr merge "$PR" --repo "$REPO" "$METHOD")
-if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ]; then
+if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ] && [ -z "$STACKED" ]; then
   CMD+=(--delete-branch)
+fi
+
+if [ -n "$STACKED" ]; then
+  printf 'pr-merge: keeping branch %s — open pull requests are based on it: %s. Retarget them, then delete it.\n' \
+    "$HEADREF" "$STACKED" >&2
 fi
 
 if [ "$DRY" = "1" ]; then

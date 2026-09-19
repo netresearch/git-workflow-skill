@@ -75,9 +75,10 @@ unlike it, does name the reason.
 
 It reads `pr-status.sh --json` and refuses unless `NEXT` is `merge`, printing
 the gate that is shut instead. When it does merge it uses the method the
-repository allows and drops `--delete-branch` where a merge queue is active or
-the head branch lives in a fork (*Taking over a contributor's fork pull
-request* below).
+repository allows and drops `--delete-branch` where a merge queue is active,
+where the head branch lives in a fork (*Taking over a contributor's fork pull
+request* below), or where another open pull request is based on that branch
+(*Deleting a branch another PR is based on closes it* below).
 Afterwards it reads the PR back and reports only what it observed — `merged`
 when the state says so, `queued` when the PR really holds a queue entry, and a
 failure with exit 2 otherwise. `gh pr merge` exiting 0 proves nothing on a
@@ -91,6 +92,41 @@ answers "Cannot use `--delete-branch` when merge queue enabled". A 54-repository
 rollout hit each of them three times before the detection was written down
 once. Squash is never used — it discards the atomic commits and their
 signatures.
+
+### Deleting a branch another PR is based on closes it
+
+A stacked pull request — B based on A's branch rather than on `main` — is the
+normal way to keep a second change reviewable while the first is in flight. It
+has one trap, and it fires at merge time.
+
+Merging A with `--delete-branch` removes the branch B targets. GitHub documents
+retargeting dependent pull requests to the merged pull request's base when this
+happens; on `netresearch/ldap-selfservice-password-changer#685` it **closed** B
+instead, base still pointing at the deleted branch. Whatever the cause, the
+recovery is the expensive part: a closed pull request's base cannot be changed
+(`Cannot change the base branch of a closed pull request`), and it cannot be
+reopened either while the branch it points at is gone (`Could not open the pull
+request`). Neither half moves without the other.
+
+The way out, in this order — anything else deadlocks:
+
+```bash
+git push origin <merged-branch>:refs/heads/<merged-branch>   # restore it at the merged tip
+gh pr reopen <B> -R owner/repo                               # now the base exists again
+gh pr edit <B> -R owner/repo --base main                     # retarget before deleting
+git push origin --delete <merged-branch>
+```
+
+`pr-merge.sh` avoids the whole sequence: before it would pass
+`--delete-branch`, it asks `gh pr list --base <head-branch> --state open` and
+keeps the branch when anything comes back, naming the dependent pull requests
+so they can be retargeted first. A failed query counts as "something is
+stacked" — an empty answer from a broken query reads exactly like "nothing is",
+and the two must not be confused when the difference is whether somebody else's
+pull request survives.
+
+Merging B first, then A, avoids the situation entirely and is worth preferring
+when the review order allows it.
 
 ### `--watch` returns on the first actionable event, not at full settle
 
