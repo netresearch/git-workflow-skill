@@ -3192,17 +3192,18 @@ gh pr list --repo OWNER/REPO --author @me --state open \
     --jq '.[] | "#\(.number) \(.title)\n  " + ([.files[].path] | join("\n  "))'
 ```
 
-If a file you are about to edit appears there, you have three options and the
-choice is the maintainer's, not yours:
+If a file you are about to edit appears there, pick one of three deliberately:
 
 1. **Drop the edit** and let the existing PR carry it — usually right when the
    other PR does the same thing for its own reasons.
 2. **Rebase onto it** if it is about to merge, making yours depend on it.
-3. **Say so in both PRs** if both edits must stand, so whoever merges knows the
-   order matters.
+3. **Keep both** if both edits must stand — then simulate the merged tree
+   (`git merge-tree --write-tree`, see the section below) and say in both PRs
+   whether the order matters.
 
-Say which you picked in the PR body. A conflict a maintainer discovers is a
-round trip; a conflict you flagged is a decision.
+Whichever you pick, say so in the PR body: a conflict a maintainer discovers is
+a round trip, one you flagged is a decision. Where the answer changes what the
+other PR should do, it is theirs to make, not yours to assume.
 
 The same check belongs in the post-merge sweep. After a sibling merges, rebase
 and re-run the gates rather than trusting the last green run: your branch was
