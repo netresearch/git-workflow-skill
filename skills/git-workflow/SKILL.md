@@ -16,7 +16,7 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 
 Releases: `github-release`. BLOCKED-PR diagnosis: `github-project`.
 
-**GitHub only.** Everything below the branching and commit sections — `pr-status.sh`, `pr-merge.sh`, the merge gate, review threads — speaks GitHub GraphQL. For a GitLab merge request the equivalent `glab` calls are in `references/pull-request-workflow.md` § *GitHub only*.
+**GitHub only.** Everything below the branching and commit sections — `pr-status.sh`, `pr-merge.sh`, the merge gate, review threads — speaks GitHub GraphQL. For a GitLab merge request the equivalent `glab` calls are in `references/pull-request-workflow.md` § *GitLab: the same gate with `glab`*.
 
 ## Critical Rules (Non-Negotiable)
 

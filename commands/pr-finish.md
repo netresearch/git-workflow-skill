@@ -14,12 +14,12 @@ resolution, and merge-queue handling. Then execute, in order:
 
 **Check the forge before step 0.** Every command below is GitHub — `gh`, GraphQL
 review threads, `mergeStateStatus`, rulesets, merge queue. None of it answers for
-a **GitLab merge request**: `pr-status.sh` accepts `-R git.netresearch.de/group/project`
+a **GitLab merge request**: `pr-status.sh` accepts `-R host.example.com/group/project`
 and then fails with a bare `pr-status: GraphQL query failed`, and `--watch` produces
 nothing until it is killed. For a GitLab MR, read the gate from
-`references/pull-request-workflow.md` § *GitHub only* — `detailed_merge_status`,
-`blocking_discussions_resolved` and `/discussions` in one `glab api` block — and, at
-Netresearch, the `netresearch-gitlab` skill's `references/glab_cheatsheet.md`. Steps
+`references/pull-request-workflow.md` § *GitLab: the same gate with `glab`* —
+`detailed_merge_status`, `blocking_discussions_resolved` and `/discussions` in one
+`glab api` block. Steps
 1–6 below still apply as *intent* (rebase, fix CI, answer every thread, update the
 description, merge only when the gate is open, clean up); only the commands change.
 
