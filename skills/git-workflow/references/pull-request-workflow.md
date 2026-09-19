@@ -3170,6 +3170,45 @@ Defend:
 3. **`gh pr diff` vs the file you `Read` disagree?** The branch was force-pushed
    between calls — re-fetch and re-derive from the committed state on origin.
 
+## Before Editing Shared Config, List Your Own Open PRs
+
+The section below assumes you know the sibling PR exists. Often you do not — and
+the one you are most likely to miss is **your own**, opened weeks earlier and
+forgotten.
+
+Shared config is the collision surface: a CI workflow, `composer.json` /
+`package.json`, a linter or static-analysis config, a Renovate or Dependabot
+file. Two open PRs editing the same few lines conflict whichever merges second,
+and **neither pipeline can show it** — each only ever runs its own copy of the
+file. Nothing goes red until a maintainer hits the conflict, or worse, until the
+second merge quietly reverts the first.
+
+One call, before the edit:
+
+```bash
+# Every PR you have open on this repo, and what each one touches.
+gh pr list --repo OWNER/REPO --author @me --state open \
+    --json number,title,files \
+    --jq '.[] | "#\(.number) \(.title)\n  " + ([.files[].path] | join("\n  "))'
+```
+
+If a file you are about to edit appears there, you have three options and the
+choice is the maintainer's, not yours:
+
+1. **Drop the edit** and let the existing PR carry it — usually right when the
+   other PR does the same thing for its own reasons.
+2. **Rebase onto it** if it is about to merge, making yours depend on it.
+3. **Say so in both PRs** if both edits must stand, so whoever merges knows the
+   order matters.
+
+Say which you picked in the PR body. A conflict a maintainer discovers is a
+round trip; a conflict you flagged is a decision.
+
+The same check belongs in the post-merge sweep. After a sibling merges, rebase
+and re-run the gates rather than trusting the last green run: your branch was
+green against the *old* base, and a redundant hunk of yours may now conflict
+with, or silently duplicate, what landed.
+
 ## A New Gate Retroactively Raises the Bar for Sibling PRs
 
 When one PR in a related set introduces a new check — a linter, a security scan
