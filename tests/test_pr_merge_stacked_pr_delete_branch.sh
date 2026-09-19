@@ -8,7 +8,9 @@
 # one-sided suite just as well: the flag is withheld when a dependent pull
 # request exists, still passed when none does, withheld again when the query
 # itself fails, and withheld when no head branch was reported — an answer to a
-# question that was never put reads exactly like "nothing is stacked".
+# question that was never put reads exactly like "nothing is stacked". The last
+# case goes further than the flag: a query that fails after printing must not
+# have its partial output reported as the list of dependent pull requests.
 #
 # Runs against a stubbed pr-status.sh and a stubbed `gh`, so it needs no
 # network and no repo.
@@ -118,7 +120,7 @@ says_not "keeps the branch"          "--delete-branch"                    "$out"
 says     "says it could not check"   "no head branch"                     "$err"
 says_not "does not query blindly"    "pr list"                            "$args"
 
-echo "case 5: the query failed but printed something — it is not a PR list"
+echo "case 5: the query failed after printing — the output is not a PR list"
 make_status_stub
 make_gh_stub '#901 #902' 1 'gh: connection reset'
 out=$(run); err=$(cat "$STUB_DIR/err")

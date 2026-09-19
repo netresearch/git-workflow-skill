@@ -2,13 +2,16 @@
 # pr-merge.sh — merge a pull request with the method the repository allows,
 # and only when the merge gate is actually open.
 #
-# Why this exists: `gh pr merge --merge --delete-branch` is wrong in several common
-# repository configurations and gives no useful error until it fails. A repo
+# Why this exists: `gh pr merge --merge --delete-branch` is wrong in several
+# repository configurations and gives no useful error until it fails. Two of
+# them answer with a message; the other two are silent. A repo
 # with `allow_merge_commit: false` answers "Merge commits are not allowed on
 # this repository"; a repo with a merge queue answers "Cannot use --delete-branch
 # when merge queue enabled". Hand-rolling the detection per call site is how a
-# 54-repository rollout hit both, three times each. pr-status.sh already knows
-# the answer — this reads it instead of guessing.
+# 54-repository rollout hit both, three times each. The silent two are a fork
+# head, which is not ours to delete, and a branch another open pull request is
+# based on, whose deletion closes that pull request. pr-status.sh already knows
+# most of the answer — this reads it instead of guessing.
 #
 # Squash is never used: it discards atomic commits and their signatures.
 #

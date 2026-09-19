@@ -2463,8 +2463,9 @@ bottom-up — but two GitHub behaviours break the naive loop:
    # 1. restore the base branch BY SHA — `--delete-branch` deletes the local
    #    branch too, so a name-based refspec fails with "src refspec does not
    #    match any" in exactly the situation this is written for. The push needs
-   #    the object locally; refs/pull/<N>/head survives both the merge and the
-   #    branch deletion, so fetch it first if this is a fresh clone.
+   #    the object locally, which it is not after a squash or rebase merge, or
+   #    in a shallow clone. refs/pull/<N>/head survives both the merge and the
+   #    branch deletion, and fetching it is idempotent, so just do it.
    SHA=$(gh pr view <MERGED_PR> -R owner/repo --json headRefOid --jq .headRefOid)
    git fetch origin "refs/pull/<MERGED_PR>/head"
    git push origin "$SHA:refs/heads/<merged-branch>"
