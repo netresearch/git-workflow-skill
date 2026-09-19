@@ -146,9 +146,11 @@ uvx ruff@latest check .          # what an unpinned CI step actually runs
 uvx ruff@0.16.0 check .          # or the pin, where there is one
 ```
 
-Measured: ruff 0.16.0 stabilised `FURB105`, `EXE001` and `BLE001`, so a required
-check went red on scripts that had not changed, while the locally cached ruff
-passed them. Three findings, all real, all invisible until the version matched.
+Measured: a required check went red on scripts that had not changed, reporting
+`FURB105`, `EXE001` and `BLE001`, while the locally cached ruff passed the same
+files. All three rules are non-preview in current ruff, so the CI runner had
+simply moved to a release that enforces them and the cache had not. Three real
+findings, invisible until the versions matched.
 
 ### A green pre-commit run is not a green CI lint step
 
