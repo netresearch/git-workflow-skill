@@ -154,6 +154,35 @@ Watching several PRs in one loop needs one latch **per PR** (`declare -A seen`),
 not one shared variable — otherwise two PRs reaching the same state alternate and
 each re-emits.
 
+Two more traps sit in the fan-out shape, both measured, and both produce a
+*confident* wrong answer rather than an error:
+
+**A per-PR output file keyed by `owner/repo` writes into a directory that does
+not exist.** `out="$DIR/gate-$1-$2.txt"` with `$1=netresearch/foo` expands to
+`$DIR/gate-netresearch/foo-12.txt`; the redirect fails, every watcher in the
+fan-out dies at once, and the only evidence is seven `No such file or directory`
+lines buried above the summary. Key the file by the repo's basename
+(`${1##*/}`) or slugify it.
+
+**Do not end the fan-out with an `echo` that asserts a state you have not
+read.** `for …; do … & done; wait; echo "all gates settled"` prints that line
+whether the watchers ran, died on a bad redirect, or were never started —
+it is the loop's own claim about itself, not a measurement. Print the
+per-PR results, or a count of the result files actually produced:
+
+```bash
+for p in "${PRS[@]}"; do
+    set -- $p
+    out="$DIR/gate-${1##*/}-$2.txt"          # basename: no slash in the filename
+    pr-status.sh -R "$1" "$2" --watch > "$out" 2>&1 &
+done
+wait
+ls "$DIR"/gate-*.txt | wc -l                  # what exists, not what was intended
+```
+
+Both fired in one session: the fan-out over seven pull requests produced no
+files and reported that every gate had settled.
+
 ### Running `pr-status.sh --watch` under a Monitor
 
 `pr-status.sh --watch` already exits on the first actionable event, so it is the
