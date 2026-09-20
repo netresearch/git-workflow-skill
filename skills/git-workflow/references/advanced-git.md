@@ -786,6 +786,36 @@ from it:
 git -C .bare remote get-url origin   # must match the intended remote
 ```
 
+**`git clone --bare` leaves `remote.origin.fetch` empty, and that breaks
+`--force-with-lease`.** Without a refspec the clone creates no `refs/remotes/*`
+at all, so the lease has no recorded remote state to compare against and the
+push is rejected:
+
+```text
+ ! [rejected]        HEAD -> feature (stale info)
+```
+
+The message reads as "somebody else pushed", which is the trap — nobody did, and
+the reflex it invites is `--force`, dropping the protection entirely. Two
+remedies, both measured on git 2.55.0. Give the lease its value explicitly:
+
+```bash
+SHA=$(git ls-remote origin refs/heads/<branch> | cut -f1)
+git push --force-with-lease=<branch>:"$SHA" origin HEAD:<branch>
+```
+
+Or repair the clone once, after which the ordinary form works and `origin/*`
+starts tracking:
+
+```bash
+git -C .bare config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git fetch origin
+```
+
+The second is what a long-lived bare layout wants: with no refspec, `git fetch
+origin` updates nothing, so every later "is my branch behind?" question is
+answered from refs that never move.
+
 Skipping this once meant building an ADR off a *different* repo's config until a
 version/branch mismatch exposed it.
 
