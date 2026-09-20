@@ -984,6 +984,30 @@ it — the "new" case-sensitivity finding was a regression introduced by that
 review's requested guards, and the real next step (re-review of the standing
 blocker) surfaced only after posting.
 
+### Feedback sits on three surfaces — query all of them
+
+"Read the comments on this PR" is three separate API calls, and each one returns
+an empty list when the feedback lives on another surface:
+
+| Surface | Query | Holds |
+|---|---|---|
+| issue comments | `gh api repos/$R/issues/$PR/comments --paginate` | the plain comment box under the PR |
+| reviews | `gh api repos/$R/pulls/$PR/reviews --paginate` | a review's own body, including `suggestion` blocks written there |
+| review comments | `gh api repos/$R/pulls/$PR/comments --paginate` | the inline comments anchored to diff lines |
+
+A maintainer can put a whole review — prose, reasoning, several `suggestion`
+blocks — into the review **body** rather than onto a diff line. Both other
+queries then return `[]`, and "there are no comments on this PR" is wrong while
+a full review is waiting. Observed on
+TYPO3-Documentation/TYPO3CMS-Reference-CoreApi#6992, 2026-09-18: issue comments
+0, review comments 0, and one `COMMENTED` review carrying two suggestions.
+
+Two consequences for the reply. A `suggestion` block in a review body has **no
+"Apply suggestion" button** — that control belongs to inline review comments —
+so the change is made by hand and "I committed your suggestion" mis-states what
+happened. And the review body is not a thread, so there is nothing to resolve:
+answer with a PR comment citing the commit SHA.
+
 ### Subagent findings: verify line anchors against the diff you fetched
 
 Inline comments anchor to diff positions. A file:line pair reported by a review
