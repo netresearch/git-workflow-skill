@@ -531,6 +531,20 @@ refuses a worktree with uncommitted changes, which is the check that catches a
 removal you did not intend. If a later command already failed this way, `cd` to a real directory
 and re-run it — do not start diagnosing the repository.
 
+**That check only covers tracked files.** Everything `.gitignore` matches is
+deleted without a prompt and without `--force` being involved: build output,
+caches, a local `.env`, and whatever a job or a script wrote into the worktree.
+Those are exactly the files that exist in no other copy, and git offers nothing
+to recover them from — they were never in the object store.
+
+Measured on git 2.55.0: a worktree holding an ignored `.env` and an ignored
+`build/out.txt` was removed by a plain `git worktree remove` with exit 0, no
+warning, and both files gone. Read what would be lost before removing:
+
+```bash
+git -C <worktree> status --porcelain --ignored   # `!!` lines are what dies silently
+```
+
 #### A background process keeps the cwd it started with
 
 Moving the shell out first does not save a process that is already running
@@ -771,6 +785,36 @@ from it:
 ```bash
 git -C .bare remote get-url origin   # must match the intended remote
 ```
+
+**`git clone --bare` leaves `remote.origin.fetch` empty, and that breaks
+`--force-with-lease`.** Without a refspec the clone creates no `refs/remotes/*`
+at all, so the lease has no recorded remote state to compare against and the
+push is rejected:
+
+```text
+ ! [rejected]        HEAD -> feature (stale info)
+```
+
+The message reads as "somebody else pushed", which is the trap — nobody did, and
+the reflex it invites is `--force`, dropping the protection entirely. Two
+remedies, both measured on git 2.55.0. Give the lease its value explicitly:
+
+```bash
+SHA=$(git ls-remote origin refs/heads/<branch> | cut -f1)
+git push --force-with-lease=<branch>:"$SHA" origin HEAD:<branch>
+```
+
+Or repair the clone once, after which the ordinary form works and `origin/*`
+starts tracking:
+
+```bash
+git -C .bare config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git fetch origin
+```
+
+The second is what a long-lived bare layout wants: with no refspec, `git fetch
+origin` updates nothing, so every later "is my branch behind?" question is
+answered from refs that never move.
 
 Skipping this once meant building an ADR off a *different* repo's config until a
 version/branch mismatch exposed it.
