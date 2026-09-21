@@ -87,7 +87,7 @@ for i in $(seq 1 100); do
   if [ "$HARD" -gt 0 ] && [ "$PENDING" -eq 0 ]; then
     # one rerun for infra flakes only, then HOLD
     if [ "$RERUN_DONE" -eq 0 ] && grep "fail" <<<"$CHECKS" | grep -qE "E2E|Integration|docker"; then
-      gh run rerun "$(gh run list --repo $R --branch $BR --workflow CI --limit 1 --json databaseId --jq '.[0].databaseId')" --repo $R --failed
+      gh run rerun "$(gh run list --repo $R --branch $BR --workflow ci.yml --limit 1 --json databaseId --jq '.[0].databaseId')" --repo $R --failed
       RERUN_DONE=1; sleep 60; continue
     fi
     echo "HOLD: hard fails"; grep fail <<<"$CHECKS"; exit 1
@@ -570,3 +570,26 @@ case "$rel" in "$TAG") echo "release exists";; esac   # right — tests the valu
 ```
 
 Observed 2026-08-09: a release watcher announced "release published" while the API was still answering 404 and the workflow was mid-run. Match the value you expect, or add `-q` handling that distinguishes exit status from output.
+
+### `--workflow` takes the file name, never the display name
+
+`gh run list --workflow CI` looks like the readable form and is the one that
+breaks: when a repository holds both a workflow *file* and a workflow *name*
+that a prefix matches, `gh` refuses with
+
+```
+could not resolve to a unique workflow; found: codeql.yml codeql
+```
+
+and prints it on **stderr with a zero-length stdout**. Inside an `until` loop
+that compares a captured count, the empty string is not the terminating value,
+so the loop never exits — it spins on the error for as long as it is left
+running, and from the outside that is indistinguishable from "the run has not
+finished yet". Observed on `netresearch/.github`, where a watcher polled a
+resolution error for hours while the run it was waiting for had long since
+completed.
+
+Pass the file name — `--workflow codeql.yml`, `--workflow ci.yml` — which is
+unique by construction. And when a loop's condition is built from a command
+that can fail, make the failure terminate it rather than feed it: check the
+exit status, or `|| break`.
