@@ -117,10 +117,9 @@ Pitfalls baked in: `grep -c` exits 1 on zero matches (`|| true`); decide hard-fa
 
 **Review bots converge over multiple rounds.** A `copilot_code_review` rule is not a merge gate: Copilot leaves a `COMMENT` review, which per GitHub's docs does "not count toward required approvals and will not block merging". Nor does every push invalidate the standing review — re-review on push is the rule's `review_on_push` parameter, and when it is unset "Copilot will only review the pull request once". Read the rule's `parameters`, not just its presence: `gh api repos/$R/rules/branches/$BRANCH --jq '.[] | select(.type=="copilot_code_review")'`. Re-request when you want fresh feedback on a new head: `gh api repos/$R/pulls/$PR/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`, then confirm the request registered off the timeline, not off `requested_reviewers` — a reviewer that has *started* drops off that list without having submitted (see `references/pull-request-workflow.md`, "Review on an earlier head + `CLEAN`"). Later rounds may flag UNCHANGED lines adjacent to the diff (latent legacy bugs) — triage each finding on its merits; expect 3–6 rounds on large refactor PRs, with finding severity decreasing per round. Re-arm the watcher after every push.
 
-**CodeRabbit reports its refusal as a passing commit status.** Alongside the summary
-comment described in `pull-request-workflow.md`, it writes a legacy commit status named
-`CodeRabbit`, and when it declined the description carries the reason while the state stays
-green:
+**CodeRabbit reports its refusal as a passing commit status.** It writes a legacy commit
+status named `CodeRabbit`, and when it declined the description carries the reason while the
+state stays green:
 
 ```bash
 gh api "repos/$R/commits/$SHA/status" --jq '.statuses[] | "\(.context): \(.state) — \(.description)"'
@@ -130,8 +129,8 @@ gh api "repos/$R/commits/$SHA/status" --jq '.statuses[] | "\(.context): \(.state
 
 `success — Review rate limited` is a passed check that means *no review happened*, and it
 counts toward the "all checks green" line in every summary, including this skill's own.
-`pr-status.sh` reads the refusal off the summary comment rather than this status, so the
-two agree — but a human reading the checks tab sees only green. When the question is
+`pr-status.sh` reports the same refusal from the bot's own summary comment, so the tool and
+the status agree — but a human reading the checks tab sees only green. When the question is
 whether the head was reviewed, read the description, not the state.
 
 **A bot review can be a failure notice, not a review — read the body, not the state.** `copilot-pull-request-reviewer` posts its quota and capacity failures as an ordinary `COMMENTED` review whose body is `Copilot was unable to review this pull request because the user who requested the review has reached their quota limit.` Every state-based check reads that as a satisfied gate: `reviews` is non-empty, `reviewThreads` is `0`, inline `comments` is `0`, and `mergeStateStatus` is `CLEAN` — indistinguishable from a clean review that found nothing. Before treating a bot review as landed, read the body:
