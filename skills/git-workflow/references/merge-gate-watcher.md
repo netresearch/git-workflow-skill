@@ -407,6 +407,36 @@ fi
 errors=0
 ```
 
+### "Every run has finished" is true before any run exists — and a second query cannot repair it
+
+A tag push or a merge does not create the workflow runs immediately; for a second or two `actions/runs?head_sha=…` answers `{"workflow_runs": []}` for a SHA that will carry several. A loop whose condition is "no run has a status other than `completed`" is therefore **vacuously true on its first tick**, exits at once, and reports a settled state that never happened. The guard in the previous section does not catch this one: the extraction succeeds, it just extracts a count of zero from an honest empty list.
+
+The reflex repair is a second condition — "and the list is not empty". Put it in a **second API call** and the two conditions stop describing the same moment:
+
+```bash
+# WRONG — two calls, two different instants
+until [ "$(gh api "…" --jq '[.workflow_runs[]|select(.status!="completed")]|length')" = 0 ] \
+   && [ "$(gh api "…" --jq '.workflow_runs|length')" != 0 ]; do sleep 60; done
+```
+
+The runs appear *between* the calls: the first sees none unfinished because it sees none at all, the second sees them and reports non-empty, and the loop exits on its first pass. Observed 2026-09-22 on `netresearch/ldap-manager` v1.7.0 — the loop returned instantly and printed `Release: null` and `CI: null`, which are a `queued` and an `in_progress` run.
+
+Both facts have to come out of **one** response:
+
+```bash
+gh api "repos/$R/actions/runs?head_sha=$SHA&per_page=100" \
+  --jq '[.workflow_runs[]] as $r | ($r|length) > 0 and ([$r[]|select(.status!="completed")]|length) == 0'
+```
+
+Even that only answers for the runs that exist *now*, so a watcher waiting on two workflows can still settle while the second has not been created. Where you know which workflow matters, resolve its run once and let `gh` block on it — the id fixes the subject, and the exit code carries the conclusion:
+
+```bash
+RID=$(gh api "repos/$R/actions/runs?head_sha=$SHA&per_page=100" \
+        --jq '[.workflow_runs[]|select(.name=="Release")][0].id')
+[ -n "$RID" ] && [ "$RID" != "null" ] || { echo "no Release run for $SHA yet"; exit 1; }
+gh run watch "$RID" --repo "$R" --exit-status
+```
+
 ### A file read right after a merge can still return the pre-merge content
 
 `contents/<path>?ref=<branch>` has been observed answering with pre-merge content immediately after a merge. A post-merge verification that reads the branch ref can therefore report the merged change as **absent** — an invented regression, produced by measuring too early rather than by anything being wrong. The mechanism is not established here (no attempt was made to reproduce it against a controlled merge); what is established is that the branch ref answered stale and the merge commit answered correctly. Address the merge commit, the same way the rest of this section does:
