@@ -278,10 +278,11 @@ runs where the full SHA of the same commit listed 1. The REST filter
 `actions/runs?head_sha=` behaves the same way (`total_count` 0 against 1), and
 the watchers in `merge-gate-watcher.md` are built on it. What the empty list
 does depends on the loop: one that waits for a run to appear waits out its
-budget and reports "no run"; one that counts unfinished runs, like the loop
-below, reads `pending=0` and reports "settled" at once. The exit-status guard
+budget and reports "no run"; one that counts only unfinished runs reads
+`pending=0` and reports "settled" at once. The exit-status guard
 below does not catch it, because the query succeeded — require at least one
-run, as `merge-gate-watcher.md` does for "true before any run exists". Resolve
+run, as the loop below and `merge-gate-watcher.md` ("true before any run
+exists") do. Resolve
 the SHA first, with `SHA=$(git rev-parse --verify "$REF^{commit}") || exit 1`
 or `headRefOid` from `gh pr view --json headRefOid`. Plain `git rev-parse "$REF"`
 echoes an unknown short hash back unchanged and exits 128 inside the
@@ -300,7 +301,9 @@ if ! out=$(gh run list --repo "$R" --commit "$SHA" --json status 2>&1); then
 fi
 total=$(printf '%s' "$out" | jq 'length')
 pending=$(printf '%s' "$out" | jq '[.[] | select(.status != "completed")] | length')
-case $total$pending in ''|*[!0-9]*) echo "unusable count: ${total@Q} ${pending@Q}" >&2; exit 1 ;; esac
+for n in "$total" "$pending"; do
+  case $n in ''|*[!0-9]*) echo "unusable count: ${n@Q}" >&2; exit 1 ;; esac
+done
 # No run yet is not "all finished": wait until at least one exists.
 [ "$total" -gt 0 ] && [ "$pending" -eq 0 ] && break
 ```
