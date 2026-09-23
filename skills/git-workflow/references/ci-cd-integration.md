@@ -298,9 +298,11 @@ number:
 if ! out=$(gh run list --repo "$R" --commit "$SHA" --json status 2>&1); then
   echo "query failed: $out" >&2; exit 1
 fi
+total=$(printf '%s' "$out" | jq 'length')
 pending=$(printf '%s' "$out" | jq '[.[] | select(.status != "completed")] | length')
-case $pending in ''|*[!0-9]*) echo "unusable count: ${pending@Q}" >&2; exit 1 ;; esac
-[ "$pending" -eq 0 ] && break
+case $total$pending in ''|*[!0-9]*) echo "unusable count: ${total@Q} ${pending@Q}" >&2; exit 1 ;; esac
+# No run yet is not "all finished": wait until at least one exists.
+[ "$total" -gt 0 ] && [ "$pending" -eq 0 ] && break
 ```
 
 A loop that cannot fail loudly waits out its whole timeout and then reports on a
