@@ -1070,5 +1070,27 @@
         "pattern": "(not the author|did not author|author is|belongs to the author)"
       }
     ]
+  },
+  {
+    "name": "bounded_review_loop_on_heuristic_code",
+    "prompt": "/pr-finish review and fix all findings until no new findings, then merge when everything is green. The PR adds a regex-based classifier for shell commands found in agent transcripts. Brief the review agent for round one.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(counts?|finding)[^.]{0,80} (only|if|when) [^.]{0,80}(real data|stored (transcripts|logs)|reproduce)"
+      },
+      {
+        "type": "content",
+        "pattern": "(constructed|invented|made-up)[^.]{0,60}(do not count|don't count|not (a )?finding|out of scope)"
+      }
+    ],
+    "samples": {
+      "passing": "Round one brief: review the classifier at the named SHA. A finding counts only when it reproduces on real data from the stored transcripts, breaks a literal input an earlier round turned into a test, or contradicts a sentence in the change's own documentation. Constructed variants that no stored transcript contains do not count. Probe the shapes each fix introduces before it is pushed.",
+      "failing": [
+        "Review the classifier as adversarially as you can: construct every shell input you can think of that it gets wrong, and report each one. We fix and repeat until a round finds nothing.",
+        "Do not use real data; review constructed cases and report every input the classifier misreads.",
+        "Check the code for correctness, readability and performance, and list all findings by severity."
+      ]
+    }
   }
 ]

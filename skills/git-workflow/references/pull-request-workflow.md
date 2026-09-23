@@ -788,6 +788,32 @@ repeating:
 Stop when a round returns only wording, not substance. Rounds that converge on
 phrasing have found the floor.
 
+### "Review until no new findings" needs a bounded finding criterion from round one
+
+A loop that runs until a round finds nothing may fail to end when the reviewer's
+input space is open-ended. On code that reads an open-ended input -- a parser, a
+heuristic over shell commands, a text classifier -- an adversarial reviewer may
+construct another input the code gets wrong when such a defect exists, and the
+loop can then continue instead of reaching zero. Each fix also adds new shapes
+of its own, and the next round finds their variants.
+
+Measured on one PR (netresearch/retro-skill#124): with the reviewer free to
+construct inputs, rounds 1-10 found 6, 8, 7, 6, 5, 7, 5, 7, 7 and 6 defects. Once
+the criterion was bounded, rounds 11-19 found 3, 4, 1, 1, 2, 1, 2, 1 and 0. In
+rounds 13-18, 6 of the 8 findings were regressions of the previous round's fix.
+
+So state the criterion in the first brief, not after round ten. A finding counts
+when it:
+
+- reproduces on real data (stored logs, transcripts, production input), or
+- breaks a literal input an earlier round turned into a test, or
+- contradicts a sentence the change's own documentation states, or
+- sits in a part of the change that has no open input space.
+
+Constructed variants outside these do not count; the documentation states the
+limit instead. And before pushing a fix, probe the shapes the fix itself
+introduces -- that is where the next round's findings come from.
+
 ### A PR body describes the branch it had, not the branch it has
 
 A body written months ago documents a state the branch has since left. Every
