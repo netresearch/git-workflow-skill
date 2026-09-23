@@ -498,7 +498,7 @@ gh api "repos/$R/actions/jobs/<job-id>/logs"      # the step output, for the act
 
 Three consequences for the diagnosis:
 
-- **Time-box the branch filter.** A re-queued PR produces a *second* run set on a branch whose name shares the `pr-<n>-` prefix. A filter matching only the prefix returns the old failed run alongside the new one and reads as a fresh failure. Add `select(.created_at > $since)` with the re-queue time.
+- **Time-box the branch filter.** A re-queued PR produces a *second* run set on a branch whose name shares the `pr-<n>-` prefix. A filter matching only the prefix returns the old failed run alongside the new one and reads as a fresh failure. Bind the re-queue time in the `jq` call — `--arg since "$REQUEUE_TIME"`, ISO 8601 such as `2026-09-22T22:20:00Z`, the format `created_at` uses, so the string comparison orders correctly — and add `select(.created_at > $since)` to the filter.
 - **A dequeue is not evidence of a defect in the PR.** Observed 2026-08-09 (netresearch/t3x-nr-llm#686): five of six workflows green, `Checks` red on one job — `composer audit` exited 100 because `https://packagist.org/api/security-advisories/` answered HTTP 502. The identical workflow had passed on the previous queue branch 30 minutes earlier. Read the step log before concluding anything about the branch; a network-dependent step in a required check turns any upstream outage into a dequeue.
 - **A red job can be a race with the queue's own cleanup.** Observed 2026-09-22 (netresearch/t3x-nr-llm#957): the required `All security checks` job failed because its SARIF upload targeted the queue branch after the queue had already deleted it — `ref 'refs/heads/gh-readonly-queue/main/pr-<n>-<sha>' not found` — while every Opengrep finding was suppressed and 0 were uploaded. That is not a finding. Re-queue.
 
@@ -524,12 +524,12 @@ Re-enqueueing after such a drop is not reliable. On the same PR GitHub re-enqueu
 
 ### Watching a queued PR: ask git
 
-Two PR-scoped tools do not answer "has it merged" once the PR is queued:
+What the PR-scoped tools do once the PR is queued:
 
-- `pr-status.sh --watch` returns immediately with `NEXT: wait — already in the merge queue …`. A queued PR is its end state, so it does not wait for the merge.
+- `pr-status.sh --watch` keeps polling. `wait` is not an actionable NEXT, so every interval (default 20 s) it prints `waiting: already in the merge queue at position …` — a heartbeat, not a hang. It returns when the entry leaves the queue: `ACTIONABLE: none` with `PR is MERGED` after the merge, the next actionable step (for example `merge`) after a silent drop, or `TIMEOUT` after `--max-wait` (default 3600 s). Each poll is a GraphQL read, so a long queue wait spends GraphQL budget (see [Watcher cost](#watcher-cost-graphql-and-rest-rate-limits-are-separate-budgets)).
 - `gh pr view --json isInMergeQueue` fails with `Unknown JSON field`. The field exists only in GraphQL, as `repository.pullRequest.isInMergeQueue`.
 
-The git ancestry check in ["Has it merged yet?" costs nothing — ask git, not the API](#has-it-merged-yet-costs-nothing--ask-git-not-the-api) worked for this and costs no API budget.
+The git ancestry check in ["Has it merged yet?" costs nothing — ask git, not the API](#has-it-merged-yet-costs-nothing--ask-git-not-the-api) answers "has it merged" without any API budget.
 
 ## Watcher cost: GraphQL and REST rate limits are separate budgets
 
