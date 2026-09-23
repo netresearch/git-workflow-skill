@@ -1314,7 +1314,17 @@ snapshot() {
 
   local enc r ok out
   enc=$(printf '%s' "$base" | jq -sRr @uri)
-  if r=$(gh api "repos/$REPO/rules/branches/$enc" 2>/dev/null); then ok=1; else ok=0; r='[]'; fi
+  # A private repository on a plan without branch rules answers 403 "Upgrade to
+  # GitHub Pro or make this repository public". That is not an unreadable gate:
+  # no ruleset and no protection can exist there, so the required list is empty
+  # by construction and the verdict rests on mergeStateStatus and the checks.
+  # Every other failure still means "unknown" (claude-code-marketplace-P#8).
+  local rerr
+  rerr=$(mktemp)
+  if r=$(gh api "repos/$REPO/rules/branches/$enc" 2>"$rerr"); then ok=1
+  elif grep -q 'Upgrade to GitHub Pro' "$rerr" && grep -q 'HTTP 403' "$rerr"; then ok=1; r='[]'
+  else ok=0; r='[]'; fi
+  rm -f "$rerr"
 
   # Classic branch protection holds review gates the rules endpoint never
   # shows (require_last_push_approval, approval count, code-owner reviews;
