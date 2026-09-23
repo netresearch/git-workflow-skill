@@ -296,7 +296,8 @@ and keeps polling. Gate on the exit status, or refuse a value that is not a
 number:
 
 ```bash
-if ! out=$(gh run list --repo "$R" --commit "$SHA" --json status 2>&1); then
+LIMIT=200   # gh run list returns 20 runs unless told otherwise
+if ! out=$(gh run list --repo "$R" --commit "$SHA" --limit "$LIMIT" --json status 2>&1); then
   echo "query failed: $out" >&2; exit 1
 fi
 total=$(printf '%s' "$out" | jq 'length')
@@ -304,6 +305,8 @@ pending=$(printf '%s' "$out" | jq '[.[] | select(.status != "completed")] | leng
 for n in "$total" "$pending"; do
   case $n in ''|*[!0-9]*) echo "unusable count: ${n@Q}" >&2; exit 1 ;; esac
 done
+# A full page may hide an unfinished run beyond it: refuse, do not count on.
+[ "$total" -lt "$LIMIT" ] || { echo "run list truncated at $total" >&2; exit 1; }
 # No run yet is not "all finished": wait until at least one exists.
 [ "$total" -gt 0 ] && [ "$pending" -eq 0 ] && break
 ```
