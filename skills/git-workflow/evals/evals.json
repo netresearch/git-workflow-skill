@@ -1070,5 +1070,19 @@
         "pattern": "(not the author|did not author|author is|belongs to the author)"
       }
     ]
+  },
+  {
+    "name": "bounded_review_loop_on_heuristic_code",
+    "prompt": "/pr-finish review and fix all findings until no new findings, then merge when everything is green. The PR adds a regex-based classifier for shell commands found in agent transcripts. Brief the review agent for round one.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(real data|stored (transcripts|logs)|reproduce[sd]? (on|in) (real|stored))"
+      },
+      {
+        "type": "content",
+        "pattern": "(constructed|made-up|invented) (input|variant|case)s?"
+      }
+    ]
   }
 ]
