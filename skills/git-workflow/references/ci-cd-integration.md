@@ -272,6 +272,14 @@ were still queued.
 the merge-triggered runs on the base branch need after a merge — `--branch main`
 alone also matches the runs of every earlier merge.
 
+**`--commit` takes the full 40-character SHA.** A short SHA matches nothing and
+returns an empty list with exit 0, not an error: `--commit 63df7f6` listed 0
+runs where the full SHA of the same commit listed 1. A watcher that waits for
+the run to appear then waits out its budget and reports "no run". Resolve the
+SHA first — `SHA=$(git rev-parse "$REF")`, or `headRefOid` from
+`gh pr view --json headRefOid` — and never pass a hash copied from a `--oneline`
+log.
+
 The general rule behind it: **a polling loop must distinguish "the query failed"
 from "the condition is not met yet"**, and it has to *act* on the difference.
 Counting instead of testing emptiness is not enough on its own — a failed query
