@@ -790,12 +790,12 @@ phrasing have found the floor.
 
 ### "Review until no new findings" needs a bounded finding criterion from round one
 
-A loop that runs until a round finds nothing only ends if the reviewer's input
-space is bounded. On code that reads an open-ended input -- a parser, a
-heuristic over shell commands, a text classifier -- an adversarial reviewer can
-always construct one more input the code gets wrong, and the loop never reaches
-zero. Each fix also adds new shapes of its own, and the next round finds their
-variants.
+A loop that runs until a round finds nothing may fail to end when the reviewer's
+input space is open-ended. On code that reads an open-ended input -- a parser, a
+heuristic over shell commands, a text classifier -- an adversarial reviewer may
+construct another input the code gets wrong when such a defect exists, and the
+loop can then continue instead of reaching zero. Each fix also adds new shapes
+of its own, and the next round finds their variants.
 
 Measured on one PR (netresearch/retro-skill#124): with the reviewer free to
 construct inputs, rounds 1-10 found 6, 8, 7, 6, 5, 7, 5, 7, 7 and 6 defects. Once

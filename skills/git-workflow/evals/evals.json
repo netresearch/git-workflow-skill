@@ -1077,11 +1077,11 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(real data|stored (transcripts|logs)|reproduce[sd]? (on|in) (real|stored))"
+        "pattern": "(counts?|finding)[^.\\n]{0,80}\\b(only|if|when)\\b[^.\\n]{0,80}(real data|stored (transcripts|logs)|reproduce)"
       },
       {
         "type": "content",
-        "pattern": "(constructed|made-up|invented) (input|variant|case)s?"
+        "pattern": "(constructed|invented|made-up)[^.\\n]{0,60}(do not count|don't count|not (a )?finding|out of scope)"
       }
     ]
   }
