@@ -496,10 +496,40 @@ gh api "repos/$R/actions/runs/$RID/jobs" --jq '.jobs[] | select(.conclusion=="fa
 gh api "repos/$R/actions/jobs/<job-id>/logs"      # the step output, for the actual cause
 ```
 
-Two consequences for the diagnosis:
+Three consequences for the diagnosis:
 
 - **Time-box the branch filter.** A re-queued PR produces a *second* run set on a branch whose name shares the `pr-<n>-` prefix. A filter matching only the prefix returns the old failed run alongside the new one and reads as a fresh failure. Add `select(.created_at > $since)` with the re-queue time.
 - **A dequeue is not evidence of a defect in the PR.** Observed 2026-08-09 (netresearch/t3x-nr-llm#686): five of six workflows green, `Checks` red on one job — `composer audit` exited 100 because `https://packagist.org/api/security-advisories/` answered HTTP 502. The identical workflow had passed on the previous queue branch 30 minutes earlier. Read the step log before concluding anything about the branch; a network-dependent step in a required check turns any upstream outage into a dequeue.
+- **A red job can be a race with the queue's own cleanup.** Observed 2026-09-22 (netresearch/t3x-nr-llm#957): the required `All security checks` job failed because its SARIF upload targeted the queue branch after the queue had already deleted it — `ref 'refs/heads/gh-readonly-queue/main/pr-<n>-<sha>' not found` — while every Opengrep finding was suppressed and 0 were uploaded. That is not a finding. Re-queue.
+
+### A queue entry also drops when its jobs never start
+
+The queue has its own timeout, and it is not on the PR or in the workflow: it is the ruleset's `merge_queue` parameter `check_response_timeout_minutes`.
+
+```bash
+gh api "repos/$R/rulesets/<id>" --jq '.rules[] | select(.type=="merge_queue") | .parameters'
+# {"check_response_timeout_minutes":60, …}
+```
+
+When the queue run's jobs are still `queued` — not `in_progress` — once that limit passes, the entry is dropped with **no failed check** anywhere. That is runner starvation, not a defect in the PR. Tell it apart on the queue run itself:
+
+```bash
+gh api "repos/$R/actions/runs/$RID/jobs" --jq '.jobs[] | "\(.name) \(.status)"'   # every job `queued`
+gh api "repos/$R/actions/runs?status=in_progress" --jq '.total_count'              # 0
+```
+
+Observed 2026-09-22 on netresearch/t3x-nr-llm#957: from 22:20Z the CI run's 39 jobs stayed `queued` for over an hour, while short workflows on the same queue branch finished and other repositories in the organisation also had only queued runs. githubstatus.com reported Actions operational, and billing was not the cause.
+
+Re-enqueueing after such a drop is not reliable. On the same PR GitHub re-enqueued it once on its own (auto-merge was still armed) and once did not — although that run later finished green, after the timeout had already dropped the entry. Once runners move again, re-queue by hand: `gh pr merge <n>`, or `pr-merge.sh`.
+
+### Watching a queued PR: ask git
+
+Two PR-scoped tools do not answer "has it merged" once the PR is queued:
+
+- `pr-status.sh --watch` returns immediately with `NEXT: wait — already in the merge queue …`. A queued PR is its end state, so it does not wait for the merge.
+- `gh pr view --json isInMergeQueue` fails with `Unknown JSON field`. The field exists only in GraphQL, as `repository.pullRequest.isInMergeQueue`.
+
+The git ancestry check in ["Has it merged yet?" costs nothing — ask git, not the API](#has-it-merged-yet-costs-nothing--ask-git-not-the-api) worked for this and costs no API budget.
 
 ## Watcher cost: GraphQL and REST rate limits are separate budgets
 
