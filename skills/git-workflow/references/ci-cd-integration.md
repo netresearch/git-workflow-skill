@@ -272,6 +272,22 @@ were still queued.
 the merge-triggered runs on the base branch need after a merge — `--branch main`
 alone also matches the runs of every earlier merge.
 
+**`--commit` takes the full 40-character SHA.** A short SHA matches nothing and
+returns an empty list with exit 0, not an error: `--commit 63df7f6` listed 0
+runs where the full SHA of the same commit listed 1. The REST filter
+`actions/runs?head_sha=` behaves the same way (`total_count` 0 against 1), and
+the watchers in `merge-gate-watcher.md` are built on it. What the empty list
+does depends on the loop: one that waits for a run to appear waits out its
+budget and reports "no run"; one that counts only unfinished runs reads
+`pending=0` and reports "settled" at once. The exit-status guard
+below does not catch it, because the query succeeded — require at least one
+run, as the loop below and `merge-gate-watcher.md` ("true before any run
+exists") do. Resolve
+the SHA first, with `SHA=$(git rev-parse --verify "$REF^{commit}") || exit 1`
+or `headRefOid` from `gh pr view --json headRefOid`. Plain `git rev-parse "$REF"`
+echoes an unknown short hash back unchanged and exits 128 inside the
+assignment, so it hands the same short string on.
+
 The general rule behind it: **a polling loop must distinguish "the query failed"
 from "the condition is not met yet"**, and it has to *act* on the difference.
 Counting instead of testing emptiness is not enough on its own — a failed query
@@ -280,12 +296,19 @@ and keeps polling. Gate on the exit status, or refuse a value that is not a
 number:
 
 ```bash
-if ! out=$(gh run list --repo "$R" --commit "$SHA" --json status 2>&1); then
+LIMIT=200   # gh run list returns 20 runs unless told otherwise
+if ! out=$(gh run list --repo "$R" --commit "$SHA" --limit "$LIMIT" --json status 2>&1); then
   echo "query failed: $out" >&2; exit 1
 fi
+total=$(printf '%s' "$out" | jq 'length')
 pending=$(printf '%s' "$out" | jq '[.[] | select(.status != "completed")] | length')
-case $pending in ''|*[!0-9]*) echo "unusable count: ${pending@Q}" >&2; exit 1 ;; esac
-[ "$pending" -eq 0 ] && break
+for n in "$total" "$pending"; do
+  case $n in ''|*[!0-9]*) echo "unusable count: ${n@Q}" >&2; exit 1 ;; esac
+done
+# A full page may hide an unfinished run beyond it: refuse, do not count on.
+[ "$total" -lt "$LIMIT" ] || { echo "run list truncated at $total" >&2; exit 1; }
+# No run yet is not "all finished": wait until at least one exists.
+[ "$total" -gt 0 ] && [ "$pending" -eq 0 ] && break
 ```
 
 A loop that cannot fail loudly waits out its whole timeout and then reports on a
