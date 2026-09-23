@@ -66,6 +66,10 @@ check "baseline is a real verdict" "false" "$([ "$baseline" = "rules-unavailable
 stub 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)'
 check "plan-limited matches the baseline" "$baseline" "$(next_action)"
 
+echo "case: the message without HTTP 403 is not the plan limit"
+stub 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 502)'
+check "rules-unavailable" "rules-unavailable" "$(next_action)"
+
 echo "case: any other failure still leaves the gate unknown"
 stub 'gh: Resource not accessible by integration (HTTP 403)'
 check "rules-unavailable" "rules-unavailable" "$(next_action)"

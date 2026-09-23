@@ -1322,7 +1322,7 @@ snapshot() {
   local rerr
   rerr=$(mktemp)
   if r=$(gh api "repos/$REPO/rules/branches/$enc" 2>"$rerr"); then ok=1
-  elif grep -q 'Upgrade to GitHub Pro' "$rerr"; then ok=1; r='[]'
+  elif grep -q 'Upgrade to GitHub Pro' "$rerr" && grep -q 'HTTP 403' "$rerr"; then ok=1; r='[]'
   else ok=0; r='[]'; fi
   rm -f "$rerr"
 
