@@ -368,6 +368,7 @@ check_grep "and is a candidate, rollup comparison not possible" \
 text="$(run_text)"
 check "text does not call the suites unreadable" "0" "$(grep -c 'check suites could not be read' <<<"$text" || true)"
 check "unknown contexts are not printed as FLAG" "0" "$(grep -c 'FLAG' <<<"$text" || true)"
+check_grep "unknown contexts are printed with ?" "  ?           : security / Composer Audit" "$text"
 
 echo "case 11: check-suites fail"
 build BLOCKED yes false 0 15368
@@ -431,6 +432,16 @@ check "the suite is listed, not compared" "3:null" \
 check "no claim of absence from the rollup" "0" \
       "$(jq -r '.next.evidence.candidates[]' <<<"$out" | grep -c 'absent from the GraphQL rollup' || true)"
 check_grep "text says not compared" "not compared (rollup truncated at 100)" "$(run_text)"
+
+# --- case 18: a suite that never started ------------------------------------
+echo "case 18: a check suite concluded startup_failure (the workflow did not start)"
+build BLOCKED no false 0 15368
+jq '.check_suites += [{"id": 4, "status": "completed", "conclusion": "startup_failure",
+                       "app": {"id": 15368, "slug": "github-actions"}}]' \
+   "$STUB_DIR/checksuites.json" > "$STUB_DIR/checksuites.tmp" && mv "$STUB_DIR/checksuites.tmp" "$STUB_DIR/checksuites.json"
+out="$(run_json)"
+check "the startup_failure suite is listed" "4:startup_failure" \
+      "$(jq -r '.next.evidence.failed_suites_outside_rollup[] | "\(.suite_id):\(.conclusion)"' <<<"$out")"
 
 # --- case 16: many check-runs do not overflow the argument list --------------
 echo "case 16: 3000 check-runs on the head"

@@ -1425,7 +1425,7 @@ investigate_evidence() {
        else "compared" end) as $rollup_comparison
     | (if $cs_ok then
          [$cs[] | select(.conclusion as $c
-                         | ["failure", "cancelled", "timed_out", "action_required"] | index($c))
+                         | ["failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"] | index($c))
           | .id as $sid
           | {suite_id: .id, app: (.app.slug // null), app_id: (.app.id // null), conclusion,
              check_runs: (if $cr_ok then [$cr[] | select(.check_suite.id == $sid) | .name] else null end),
