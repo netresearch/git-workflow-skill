@@ -1921,6 +1921,20 @@ Plain `git rebase base` flattens/omits merge commits and skips patches whose pat
 
 A tree can hold untracked files the user explicitly keeps untracked; `-A`/`.` sweeps them into the commit, and after a push the cleanup needs a second commit (the add+delete stays in history). The staging step after a change is always: named files, or a named directory you fully own.
 
+## Exclude a local-only working note in `.git/info/exclude`, not `.gitignore`
+
+A note that must sit in the worktree but never be committed — an analysis a follow-up session reads, a temporary debugging scratch file — reaches for `.gitignore` by reflex. `.gitignore` is itself versioned, so the exclusion becomes a repo change everybody gets, for something purely local. `.git/info/exclude` takes the same syntax, applies to this clone only, and is not versioned; the file then shows up in neither `git status` nor `git add -A`. The tradeoff is the flip side of the same property: it lives inside `.git/`, so it does not survive a re-clone and reaches nobody else — exclusions the whole team needs (`vendor/`, `node_modules/`, build output) still belong in `.gitignore`. For a file that is already *tracked* and should differ locally, neither applies; the nearest tool is `git update-index --skip-worktree`, but it is not an equivalent. `git help update-index` defines the bit as "avoid writing the file to the working directory **when reasonably possible**" and warns that "not all git commands will pay attention to this bit, and some only partially support it" — and in a sparse checkout git clears the bit outright for a marked file it finds in the worktree. Treat it as a hint, not as a guarantee that a local change survives.
+
+Write through `git rev-parse --git-path`, not the literal `.git/` path: in a linked worktree `.git` is a *file* pointing at `…/.git/worktrees/<name>`, so `>> .git/info/exclude` fails with "Not a directory". `--git-path` resolves to the shared `info/exclude` in both layouts. Verify the pattern took effect afterwards — a typo is silently inert, and an empty `git status` alone does not say which file did the excluding:
+
+```bash
+printf 'ANALYSIS-scratch.md\n' >> "$(git rev-parse --git-path info/exclude)"
+# -v prints source file, line and pattern, so an exclude hit is distinguishable
+# from a .gitignore hit and from no match at all (exit 1):
+git check-ignore -v ANALYSIS-scratch.md
+# .git/info/exclude:7:ANALYSIS-scratch.md    ANALYSIS-scratch.md
+```
+
 ## Bulk sed/rename across a worktree must not touch its `.git` FILE
 
 A linked worktree's `.git` is a file holding a `gitdir:` pointer, not a directory — `--exclude-dir=.git` does NOT protect it, and a blind `sed -i` over `grep -rl` output rewrites the pointer and breaks the worktree (`fatal: not a git repository`). Exclude the path explicitly (`grep -rl --exclude=.git` or filter the file list) before any bulk edit.
