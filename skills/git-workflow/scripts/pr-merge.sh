@@ -322,7 +322,7 @@ if [ "$INQ" = "true" ]; then
   # exists only in GraphQL, so every poll failed with `Unknown JSON field`.
   # pr-status.sh --watch holds on a queued entry (`wait`) and returns once the
   # PR is merged (`none`) or has dropped out (the next actionable step).
-  printf '  wait with: %s -R %s %s --watch   (returns when merged or dropped from the queue)\n' \
+  printf '  wait with: %q -R %q %q --watch   (returns when merged or dropped from the queue)\n' \
     "$SCRIPT_DIR/pr-status.sh" "$REPO" "$PR"
   exit 0
 fi

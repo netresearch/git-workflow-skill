@@ -1086,19 +1086,30 @@ hand-written conflict resolution inside the merge is invisible to it (measured
 with git 2.55). Prove what the merge adds instead:
 
 ```bash
-read -r _ p1 p2 <<<"$(git rev-list --parents -n1 "$B")"   # merge, parent 1, parent 2
-if git merge-base --is-ancestor "$p1" origin/main \
-   && git merge-base --is-ancestor "$p2" origin/main; then
-  echo "both parents are on main"
-fi
-# First line of merge-tree is the tree id; on a conflict it exits 1 and lists
-# the conflicted paths after it — read the first line only.
-auto=$(git merge-tree --write-tree "$p1" "$p2" | head -1)
-[ "$auto" = "$(git rev-parse "$B^{tree}")" ] && echo "pure automatic merge: nothing but main"
-git diff --stat "$auto" "$B^{tree}"                # else: exactly what the hand resolution added
+merge_only() { # merge_only <branch>: what does its merge of main add?
+  local B="$1" _ p1 p2 auto
+  read -r _ p1 p2 <<<"$(git rev-list --parents -n1 "$B")"   # merge, parent 1, parent 2
+  if ! git merge-base --is-ancestor "$p1" origin/main \
+     || ! git merge-base --is-ancestor "$p2" origin/main; then
+    echo "a parent is not on main: stop, the branch holds unmerged work"
+    return 1
+  fi
+  # First line of merge-tree is the tree id; on a conflict it exits 1 and lists
+  # the conflicted paths after it — read the first line only.
+  auto=$(git merge-tree --write-tree "$p1" "$p2" | head -1)
+  if [ "$auto" = "$(git rev-parse "$B^{tree}")" ]; then
+    echo "pure automatic merge: nothing but main"
+  else
+    git diff --stat "$auto" "$B^{tree}"   # exactly what the hand resolution added
+  fi
+}
+merge_only "$B"
 ```
 
-Equal trees mean the branch holds nothing `main` lacks. Different trees name
+The ancestry check must stop the recipe: a branch with an unmerged commit
+before its merge of `main` has a first parent that is not on `main`, and its
+tree comparison would still read "nothing but main". Equal trees mean the
+branch holds nothing `main` lacks. Different trees name
 the files the resolution touched; when those are only conflict resolutions in
 files whose final state reached `main` another way — the feature landed through
 a collector PR — `branch -D` loses nothing of value. (Observed 2026-09-24 on

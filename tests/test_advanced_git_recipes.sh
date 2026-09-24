@@ -17,6 +17,8 @@
 
 set -uo pipefail
 
+DOC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/skills/git-workflow/references/advanced-git.md"
+
 failures=0
 ran=0
 pass() { ran=$((ran + 1)); printf '  OK   %s\n' "$1"; }
@@ -530,31 +532,30 @@ printf 'a\nfeat\nmain\nresolved-by-hand\n' > f; git add f; git commit -qm "Merge
 git checkout -q main; git merge -q --no-edit clean
 git update-ref refs/remotes/origin/main main
 
-merge_only() { # merge_only <branch> -> the recipe's verdict, one line
-  local B="$1" auto _ p1 p2
-  read -r _ p1 p2 <<<"$(git rev-list --parents -n1 "$B")"
-  if ! git merge-base --is-ancestor "$p1" origin/main \
-     || ! git merge-base --is-ancestor "$p2" origin/main; then
-    echo "a parent is not on main"; return
-  fi
-  auto=$(git merge-tree --write-tree "$p1" "$p2" | head -1)
-  if [ "$auto" = "$(git rev-parse "$B^{tree}")" ]; then echo "pure automatic merge"
-  else git diff --name-only "$auto" "$B^{tree}" | tr '\n' ' '; fi
-}
+# The function is read from the document, so the suite runs the recipe itself
+# rather than a copy of it. Only the final call line is left out.
+recipe=$(awk '/^\*\*A branch whose only extra commit is a merge/{f=1} f&&/^```bash$/{c=1; next} c&&/^```$/{exit} c' "$DOC")
+check "the recipe block was found in the document" "1" "$(grep -c '^merge_only() {' <<<"$recipe")"
+# shellcheck disable=SC2016  # the pattern matches the literal text `merge_only "$B"`
+eval "$(grep -v '^merge_only "\$B"$' <<<"$recipe")"
 
 check "git branch -d refuses the resolved branch" "refused" \
       "$(git branch -d resolved >/dev/null 2>&1 && echo deleted || echo refused)"
 check "git cherry does not list the merge commit" \
       "$(git rev-parse resolved~1)" "$(git cherry origin/main resolved | awk '{print $2}' | tr -d '\n')"
-check "an automatic merge is recognised as nothing but main" "pure automatic merge" \
-      "$(merge_only clean)"
+check "an automatic merge is recognised as nothing but main" \
+      "pure automatic merge: nothing but main" "$(merge_only clean)"
+# resolved's own commit is not on main yet: the recipe must stop, not compare.
+check "a parent missing from main stops the recipe" \
+      "a parent is not on main: stop, the branch holds unmerged work" "$(merge_only resolved)"
+check "and reports it with a failing status" "1" "$(merge_only resolved >/dev/null; echo $?)"
 git checkout -q main; git merge -q --no-edit -s ours resolved~1 >/dev/null
 git update-ref refs/remotes/origin/main main
-check "a hand resolution is named by file" "f " "$(merge_only resolved)"
+check "a hand resolution is named by file" "f" "$(merge_only resolved | head -1 | awk '{print $1}')"
 
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "75" "$ran"
+check "every assertion ran" "78" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]

@@ -14,8 +14,11 @@
 set -uo pipefail
 
 REAL="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/skills/git-workflow/scripts/pr-merge.sh"
-STUB_DIR="$(mktemp -d)"
-trap 'rm -rf "$STUB_DIR"' EXIT
+STUB_ROOT="$(mktemp -d)"
+trap 'rm -rf "$STUB_ROOT"' EXIT
+# A space in the path: the waiter line must stay a runnable command.
+STUB_DIR="$STUB_ROOT/with space"
+mkdir -p "$STUB_DIR"
 
 SCRIPT="$STUB_DIR/pr-merge.sh"
 cp "$REAL" "$SCRIPT"
@@ -115,7 +118,7 @@ says "reports queued" "559 queued (--merge, strategy set by the queue)" "$out"
 # The next step after a queued entry is waiting for it. Without a named waiter
 # the caller hand-wrote a poll on `gh pr view --json isInMergeQueue`, a field
 # that exists only in GraphQL.
-says "names the waiter" "wait with: $STUB_DIR/pr-status.sh -R o/r 559 --watch" "$out"
+says "names the waiter" "wait with: $(printf '%q' "$STUB_DIR/pr-status.sh") -R o/r 559 --watch" "$out"
 
 echo "case 2: queue repo, nothing enqueued, auto-merge attached — FAILS, exit 2"
 make_status true; make_gh; reset
