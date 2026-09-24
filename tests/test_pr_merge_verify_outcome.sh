@@ -112,6 +112,10 @@ make_pr graphql.json OPEN true -
 out=$(run); rc=$?
 check "exit code" "0" "$rc"
 says "reports queued" "559 queued (--merge, strategy set by the queue)" "$out"
+# The next step after a queued entry is waiting for it. Without a named waiter
+# the caller hand-wrote a poll on `gh pr view --json isInMergeQueue`, a field
+# that exists only in GraphQL.
+says "names the waiter" "wait with: $STUB_DIR/pr-status.sh -R o/r 559 --watch" "$out"
 
 echo "case 2: queue repo, nothing enqueued, auto-merge attached — FAILS, exit 2"
 make_status true; make_gh; reset
@@ -141,6 +145,7 @@ make_pr graphql.json MERGED false -
 out=$(run); rc=$?
 check "exit code" "0" "$rc"
 says "reports merged" "559 merged (--merge)" "$out"
+says_not "no waiter once merged" "wait with:" "$out"
 
 # The same swallowed-call shape without a queue: exit 0 from gh, PR still open.
 echo "case 5: no queue, PR still OPEN — must not claim merged"
