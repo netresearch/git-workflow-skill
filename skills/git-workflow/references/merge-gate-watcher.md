@@ -418,10 +418,10 @@ fi
 errors=0
 ```
 
-A fallback can corrupt the **value** a correct guard then accepts. `curl -s -w '%{http_code}'` already prints `000` on a connection failure, so `code=$(curl -s -o /dev/null -w '%{http_code}' "$URL" || echo 000)` yields `000000` on that path; a guard written as the negation of failure (`[ "$code" != "000" ]`) passes it, and the watcher reports a terminal state on its first tick (observed 2026-09-07: `TERMINAL: 000000`, a false "the site is up" before its certificate existed). A tool that already emits a sentinel on failure needs no `|| echo` fallback, and the failure case must be matched **positively and first**:
+A fallback can corrupt the **value** a correct guard then accepts. `curl -s -w '%{http_code}'` already prints `000` on a connection failure, so `code=$(curl -s -o /dev/null -w '%{http_code}' "$URL" || echo 000)` yields `000000` on that path; a guard written as the negation of failure (`[ "$code" != "000" ]`) passes it, and the watcher reports a terminal state on its first tick (observed 2026-09-07: `TERMINAL: 000000`, a false "the site is up" before its certificate existed). A tool that already emits a sentinel on failure needs no `|| echo` fallback, and the failure case must be matched **positively and first**. Bound the request as well: without `--max-time` a stalled connection never reaches the check (a timed-out request also prints `000`):
 
 ```bash
-code=$(curl -s -o /dev/null -w '%{http_code}' "$URL")
+code=$(curl -s --connect-timeout 10 --max-time 30 -o /dev/null -w '%{http_code}' "$URL")
 case "$code" in
   000|"") echo "unreadable: '$code'"; sleep 30; continue ;;
 esac
@@ -493,7 +493,7 @@ branch is often auto-deleted). The discipline is cheaper than the recovery:
 
 ## A queued PR can silently leave the merge queue
 
-A PR queued via `gh pr merge --auto` on a merge-queue repo can drop back out with no visible event: `isInMergeQueue` flips to `false`, `mergeStateStatus` reads `CLEAN`, and nothing merges. Verify the real queue state via GraphQL (`state` / `merged` / `isInMergeQueue` / `mergeStateStatus`) — a status read that only looks at `mergeStateStatus` reports a dropped PR as merge-ready. Confirm the drop on the PR timeline first — a `removed_from_merge_queue` event with no `merged` after it (query in `pull-request-workflow.md`, "Verify a 'dropped' queue entry via the issue timeline before re-arming") — because re-queuing a PR whose queue run is still in flight cancels that run (see below). Then re-arm once (`gh pr merge --disable-auto`, then `--auto`, which forces the queue to re-evaluate); if it drops again, diagnose the queue's required contexts instead of re-arming repeatedly.
+A PR queued via `gh pr merge --auto` on a merge-queue repo can drop back out with no visible event: `isInMergeQueue` flips to `false`, `mergeStateStatus` reads `CLEAN`, and nothing merges. Verify the real queue state via GraphQL (`state` / `merged` / `isInMergeQueue` / `mergeStateStatus`) — a status read that only looks at `mergeStateStatus` reports a dropped PR as merge-ready. Confirm the drop on the PR timeline first — the latest queue event is `removed_from_merge_queue`, with no `added_to_merge_queue` or `merged` after it (query in `pull-request-workflow.md`, "Verify a 'dropped' queue entry via the issue timeline before re-arming") — because re-queuing a PR whose queue run is still in flight cancels that run (see below). Then re-arm once (`gh pr merge --disable-auto`, then `--auto`, which forces the queue to re-evaluate); if it drops again, diagnose the queue's required contexts instead of re-arming repeatedly.
 
 ### The dequeue reason is on the `gh-readonly-queue` branch, never on the PR
 
@@ -546,7 +546,7 @@ Re-enqueueing after such a drop is not reliable. On the same PR GitHub re-enqueu
 
 Re-adding a PR to the merge queue **cancels the queue run in progress**, so a retry loop prevents the very merge it is meant to cause. Observed 2026-08-06 on netresearch/t3x-nr-llm#616: a loop tried to re-queue the PR about every two minutes, 128 attempts, and the timeline records six `added_to_merge_queue` events. The first queue run completed the required E2E workflow green; in the next two the E2E run shows `cancelled` — once two seconds before the matching `removed_from_merge_queue` — and the PR merged on the fourth queue run, which was left to finish.
 
-The loop's trigger was a false ejection: the GraphQL `mergeQueue.entries` list reads **transiently empty** for an entry that is still queued. Requiring two consecutive empty reads did not fix it; the signal is wrong, not noisy. Let one queue attempt run to completion, and re-queue only after the timeline shows `removed_from_merge_queue` without a following `merged`, never because the entry is missing from the queue list. When a required check on the queue branch never reports, diff required against reported contexts, and check whether something you are doing is cancelling the run.
+The loop's trigger was a false ejection: the GraphQL `mergeQueue.entries` list reads **transiently empty** for an entry that is still queued. Requiring two consecutive empty reads did not fix it; the signal is wrong, not noisy. Let one queue attempt run to completion, and re-queue only when the latest queue event on the timeline is `removed_from_merge_queue`, with no `added_to_merge_queue` or `merged` after it, never because the entry is missing from the queue list. When a required check on the queue branch never reports, diff required against reported contexts, and check whether something you are doing is cancelling the run.
 
 ### Watching a queued PR: ask git
 

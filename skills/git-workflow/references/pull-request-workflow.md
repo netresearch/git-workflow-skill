@@ -381,10 +381,11 @@ A **404** from the POST is a status code, not a diagnosis. It reads like
 "Copilot cannot be requested on this repository", and that is a claim about the
 repository nobody measured: on 2026-09-18 a 404 there turned out to be the
 account-wide wall, already recorded in the marker by an earlier session. One
-observation does not make a 404 the quota tell either. Read the marker (or run
-`pr-status.sh`) **before** requesting; after an accepted request, wait for the
-delivered row and read its body — it says whether the cause was the quota or an
-outage.
+observation does not make a 404 the quota tell either. Run `pr-status.sh` (or
+read the marker **and its age** — it lapses after `PR_STATUS_QUOTA_TTL_HOURS`,
+6 by default, and the file itself can outlive that) **before** requesting; after
+an accepted request, wait for the delivered row and read its body — it says
+whether the cause was the quota or an outage.
 Never write the marker by hand while a request is still in flight.
 
 ### Putting the self-review on the record (#203)
@@ -1850,7 +1851,7 @@ gh pr close 123
 
 ### A stacked PR loses its approvals the moment its base merges
 
-Stacking — PR B opened against PR A's branch so B can build on text or code that exists only there — is the right shape when B has no anchor without A. Merging A does not retarget B: GitHub retargets B to `main` only when A's **branch is deleted** — by the repository's `delete_branch_on_merge` setting (`gh api repos/$OWNER/$REPO --jq .delete_branch_on_merge`) or by hand — and even then the child can be closed instead (see [Stacked PRs: retarget before you merge](#stacked-prs-retarget-before-you-merge---delete-branch-only-at-the-end)). With the setting off, B stays on A's stale branch until you rebase it onto `main` and run `gh pr edit B --base main` yourself; say that in B's body rather than promising automation. Whichever way the retarget happens, it also **dismisses every review on B**, because the base changed:
+Stacking — PR B opened against PR A's branch so B can build on text or code that exists only there — is the right shape when B has no anchor without A. In such a hand-built stack (GitHub-native stacks behave differently, see [GitHub-native stacked PRs](#github-native-stacked-prs-merge-the-tip-not-each-pr-in-turn)), merging A does not retarget B: GitHub retargets B to `main` only when A's **branch is deleted** — by the repository's `delete_branch_on_merge` setting (`gh api repos/$OWNER/$REPO --jq .delete_branch_on_merge`) or by hand — and even then the child can be closed instead (see [Stacked PRs: retarget before you merge](#stacked-prs-retarget-before-you-merge---delete-branch-only-at-the-end)). With the setting off, B stays on A's stale branch until you rebase it onto `main` and run `gh pr edit B --base main` yourself; say that in B's body rather than promising automation. Whichever way the retarget happens, it also **dismisses every review on B**, because the base changed:
 
 ```
 reviews : github-actions=DISMISSED   decision=REVIEW_REQUIRED
@@ -2916,7 +2917,8 @@ gh api repos/{owner}/{repo}/issues/NUMBER/timeline --paginate \
   --jq '.[]? | select(.event | IN("added_to_merge_queue", "removed_from_merge_queue",
                                   "merged", "closed")) | "\(.created_at) \(.event)"'
 # removed_from_merge_queue immediately followed by merged  -> it landed; do nothing.
-# removed_from_merge_queue with NO merged event            -> real silent drop; re-arm.
+# removed_from_merge_queue is the LATEST queue event
+#   (no added_to_merge_queue or merged after it)             -> real silent drop; re-arm.
 ```
 
 ### "Never merge Dependabot/Renovate by hand" presumes a deps workflow exists
