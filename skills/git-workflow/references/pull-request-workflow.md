@@ -161,6 +161,16 @@ Two properties decide whether waiting for CodeRabbit is worth anything:
   and `pr-status.sh` still says `reviews: NONE on current head` — identical to
   never having run.
 
+- **It skips drafts, and its check still passes.** Unless the repository's
+  `.coderabbit.yaml` sets `reviews.auto_review.drafts: true`, a draft PR gets no
+  review, its check still reports `pass`, and the summary comment
+  says `Draft PR not reviewed`. On a draft that green check is not evidence of a
+  review. `gh pr ready` starts the review, and its verdict overwrites that same
+  comment in place, so nothing new appears in the comment list — read it by commit
+  range as below instead of sending `@coderabbitai review`, which answers
+  `Already reviewed the last commit` when the review has already run and still
+  uses up one of the hourly allowance.
+
 So `reviews[]` alone cannot distinguish *refused*, *never triggered* and
 *reviewed, nothing found*. This is the delivery-side twin of the request-side
 trap below — an empty `requested_reviewers` has three producers of its own and
@@ -366,6 +376,15 @@ prescribes — an errored Copilot row on the head is the same wall, said out
 loud, and `pr-status.sh` reports it as `copilot_quota_hit`. Once the wall is
 established by either route, stop requesting everywhere and go to the
 self-review path above.
+
+A **404** from the POST is a status code, not a diagnosis. It reads like
+"Copilot cannot be requested on this repository", and that is a claim about the
+repository nobody measured: on 2026-09-18 a 404 there turned out to be the
+account-wide wall, already recorded in the marker by an earlier session. One
+observation does not make a 404 the quota tell either. Read the marker (or run
+`pr-status.sh`) **before** requesting; after an accepted request, wait for the delivered
+row and read its body — it says whether the cause was the quota or an outage.
+Never write the marker by hand while a request is still in flight.
 
 ### Putting the self-review on the record (#203)
 
@@ -1517,8 +1536,15 @@ existed to preserve. Discovering this at merge time means the work was mis-shape
 the start.
 
 ```bash
-gh api "repos/$OWNER/$REPO" --jq '{allow_merge_commit, allow_rebase_merge, allow_squash_merge}'
+gh api "repos/$OWNER/$REPO" --jq '{allow_merge_commit, allow_rebase_merge, allow_squash_merge, merge_commit_title}'
 ```
+
+Read the settings, never the history. A `(#N)` suffix on a subject on `main` does not
+mean the repo squashes: with `merge_commit_title: PR_TITLE` a plain merge commit is
+titled `<PR title> (#N)`, with `MERGE_MESSAGE` it is `Merge pull request #N from …`.
+On `netresearch/typo3-testing-skill` (`allow_squash_merge: false`) every
+`chore(release): vX.Y.Z (#N)` subject is a two-parent merge commit. The parent count
+(`git log --merges`) is what tells a merge from a squash, not the subject.
 
 Run it **before** you build the merge, not at step "merge". If merge commits are
 disabled but a true merge is required, the options are: enable `allow_merge_commit`
@@ -1822,7 +1848,7 @@ gh pr close 123
 
 ### A stacked PR loses its approvals the moment its base merges
 
-Stacking — PR B opened against PR A's branch so B can build on text or code that exists only there — is the right shape when B has no anchor without A. GitHub retargets B to `main` automatically when A merges, which is the point of the pattern. What it also does is **dismiss every review on B**, because the base changed:
+Stacking — PR B opened against PR A's branch so B can build on text or code that exists only there — is the right shape when B has no anchor without A. Merging A does not retarget B: GitHub retargets B to `main` only when A's **branch is deleted** — by the repository's `delete_branch_on_merge` setting (`gh api repos/$OWNER/$REPO --jq .delete_branch_on_merge`) or by hand — and even then the child can be closed instead (see [Stacked PRs: retarget before you merge](#stacked-prs-retarget-before-you-merge---delete-branch-only-at-the-end)). With the setting off, B stays on A's stale branch until you rebase it onto `main` and run `gh pr edit B --base main` yourself; say that in B's body rather than promising automation. Whichever way the retarget happens, it also **dismisses every review on B**, because the base changed:
 
 ```
 reviews : github-actions=DISMISSED   decision=REVIEW_REQUIRED
