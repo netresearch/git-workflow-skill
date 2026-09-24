@@ -1080,6 +1080,42 @@ commits into one — there the PR state is the only honest answer. A branch whos
 PR is `CLOSED` (not merged) holds work somebody deliberately dropped: that is a
 judgment call for a human, not a mechanical delete.
 
+**A branch whose only extra commit is a merge of `main` into it.** `git branch
+-d` refuses it, and `git cherry` cannot help: it skips merge commits, so a
+hand-written conflict resolution inside the merge is invisible to it (measured
+with git 2.55). Prove what the merge adds instead:
+
+```bash
+merge_only() { # merge_only <branch>: what does its merge of main add?
+  local B="$1" _ p1 p2 auto
+  read -r _ p1 p2 <<<"$(git rev-list --parents -n1 "$B")"   # merge, parent 1, parent 2
+  if ! git merge-base --is-ancestor "$p1" origin/main \
+     || ! git merge-base --is-ancestor "$p2" origin/main; then
+    echo "a parent is not on main: stop, the branch holds unmerged work"
+    return 1
+  fi
+  # First line of merge-tree is the tree id; on a conflict it exits 1 and lists
+  # the conflicted paths after it — read the first line only.
+  auto=$(git merge-tree --write-tree "$p1" "$p2" | head -1)
+  if [ "$auto" = "$(git rev-parse "$B^{tree}")" ]; then
+    echo "pure automatic merge: nothing but main"
+  else
+    git diff --stat "$auto" "$B^{tree}"   # exactly what the hand resolution added
+  fi
+}
+merge_only "$B"
+```
+
+The ancestry check must stop the recipe: a branch with an unmerged commit
+before its merge of `main` has a first parent that is not on `main`, and its
+tree comparison would still read "nothing but main". Equal trees mean the
+branch holds nothing `main` lacks. Different trees name
+the files the resolution touched; when those are only conflict resolutions in
+files whose final state reached `main` another way — the feature landed through
+a collector PR — `branch -D` loses nothing of value. (Observed 2026-09-24 on
+netresearch/t3x-nr-llm: two branches of closed PRs whose content had landed via
+a collector PR; the trees differed only in `CHANGELOG.md` and the ADR index.)
+
 ### Sync the Base Before Branching (Stale-Base Trap)
 
 A per-branch worktree layout makes it easy to branch from a checkout that is
