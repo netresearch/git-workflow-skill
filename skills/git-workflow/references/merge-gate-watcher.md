@@ -544,7 +544,7 @@ Re-enqueueing after such a drop is not reliable. On the same PR GitHub re-enqueu
 
 ### Re-queuing cancels the run already in flight
 
-Re-adding a PR to the merge queue **cancels the queue run in progress**, so a retry loop prevents the very merge it is meant to cause. Observed 2026-08-07 on netresearch/t3x-nr-llm#616: a loop re-queued about every two minutes, 128 times. One queue run had completed the required `e2e / E2E` job green; every run after it shows `cancelled`, in lockstep with the re-queues, and `e2e / E2E` was the one required check that never reported — 22 of 23 were green the whole time.
+Re-adding a PR to the merge queue **cancels the queue run in progress**, so a retry loop prevents the very merge it is meant to cause. Observed 2026-08-06 on netresearch/t3x-nr-llm#616: a loop tried to re-queue the PR about every two minutes, 128 attempts, and the timeline records six `added_to_merge_queue` events. The first queue run completed the required E2E workflow green; in the next two the E2E run shows `cancelled` — once two seconds before the matching `removed_from_merge_queue` — and the PR merged on the fourth queue run, which was left to finish.
 
 The loop's trigger was a false ejection: the GraphQL `mergeQueue.entries` list reads **transiently empty** for an entry that is still queued. Requiring two consecutive empty reads did not fix it; the signal is wrong, not noisy. Let one queue attempt run to completion, and re-queue only after the timeline shows `removed_from_merge_queue` without a following `merged`, never because the entry is missing from the queue list. When a required check on the queue branch never reports, diff required against reported contexts, and check whether something you are doing is cancelling the run.
 

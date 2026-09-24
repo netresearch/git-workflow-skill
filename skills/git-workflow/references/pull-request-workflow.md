@@ -140,7 +140,7 @@ force-push discarded all three runs and no review ever arrived. The PRs sat
 
 #### CodeRabbit answers when it declines, and does not catch up afterwards
 
-Two properties decide whether waiting for CodeRabbit is worth anything:
+These properties decide whether waiting for CodeRabbit is worth anything:
 
 - **It reviews on events, not on request backlog.** Its own wording: *"CodeRabbit
   is an incremental review system and does not re-review already reviewed
@@ -163,13 +163,13 @@ Two properties decide whether waiting for CodeRabbit is worth anything:
 
 - **It skips drafts, and its check still passes.** Unless the repository's
   `.coderabbit.yaml` sets `reviews.auto_review.drafts: true`, a draft PR gets no
-  review, its check still reports `pass`, and the summary comment
-  says `Draft PR not reviewed`. On a draft that green check is not evidence of a
+  review, its check still reports `pass`, and the summary comment says
+  `Draft PR not reviewed`. On a draft that green check is not evidence of a
   review. `gh pr ready` starts the review, and its verdict overwrites that same
-  comment in place, so nothing new appears in the comment list — read it by commit
-  range as below instead of sending `@coderabbitai review`, which answers
+  comment in place, so nothing new appears in the comment list — read it by
+  commit range as below instead of sending `@coderabbitai review`, which answers
   `Already reviewed the last commit` when the review has already run and still
-  uses up one of the hourly allowance.
+  counts against the hourly allowance.
 
 So `reviews[]` alone cannot distinguish *refused*, *never triggered* and
 *reviewed, nothing found*. This is the delivery-side twin of the request-side
@@ -382,8 +382,9 @@ A **404** from the POST is a status code, not a diagnosis. It reads like
 repository nobody measured: on 2026-09-18 a 404 there turned out to be the
 account-wide wall, already recorded in the marker by an earlier session. One
 observation does not make a 404 the quota tell either. Read the marker (or run
-`pr-status.sh`) **before** requesting; after an accepted request, wait for the delivered
-row and read its body — it says whether the cause was the quota or an outage.
+`pr-status.sh`) **before** requesting; after an accepted request, wait for the
+delivered row and read its body — it says whether the cause was the quota or an
+outage.
 Never write the marker by hand while a request is still in flight.
 
 ### Putting the self-review on the record (#203)
@@ -1539,12 +1540,13 @@ the start.
 gh api "repos/$OWNER/$REPO" --jq '{allow_merge_commit, allow_rebase_merge, allow_squash_merge, merge_commit_title}'
 ```
 
-Read the settings, never the history. A `(#N)` suffix on a subject on `main` does not
-mean the repo squashes: with `merge_commit_title: PR_TITLE` a plain merge commit is
-titled `<PR title> (#N)`, with `MERGE_MESSAGE` it is `Merge pull request #N from …`.
-On `netresearch/typo3-testing-skill` (`allow_squash_merge: false`) every
-`chore(release): vX.Y.Z (#N)` subject is a two-parent merge commit. The parent count
-(`git log --merges`) is what tells a merge from a squash, not the subject.
+Read the settings, never the history. A `(#N)` suffix on a subject on `main`
+does not mean the repo squashes: with `merge_commit_title: PR_TITLE` a plain
+merge commit is titled `<PR title> (#N)`, with `MERGE_MESSAGE` it is
+`Merge pull request #N from …`. On `netresearch/typo3-testing-skill`
+(`allow_squash_merge: false`) every `chore(release): vX.Y.Z (#N)` subject is a
+two-parent merge commit. The parent count (`git log --merges`) is what tells a
+merge from a squash, not the subject.
 
 Run it **before** you build the merge, not at step "merge". If merge commits are
 disabled but a true merge is required, the options are: enable `allow_merge_commit`
