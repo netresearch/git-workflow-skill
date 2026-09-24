@@ -1304,9 +1304,9 @@ evaluate() {
 
 # Classic branch protection, read into PROT / PROT_STATE / PROT_ERR. Called
 # directly, never in $( ), so the three values survive. "not protected" is the
-# 404 GitHub answers for a branch without classic protection; every other
-# failure (403 without admin rights, a 404 for another reason, a network
-# error) is "failed" and keeps the message.
+# 404 "Branch not protected" GitHub answers for a branch without classic
+# protection; every other failure (the plain 404 "Not Found" a caller without
+# admin rights gets, a 403, a network error) is "failed" and keeps the message.
 PROT='null'; PROT_STATE='not requested'; PROT_ERR=''
 read_protection() {
   local enc="$1" perr raw

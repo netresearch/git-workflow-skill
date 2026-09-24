@@ -37,11 +37,12 @@ for a in "\$@"; do
     repos/*/rules/branches/*)     echo rules >>"$STUB_DIR/calls"; cat "$STUB_DIR/rules.json"; exit 0 ;;
     repos/*/branches/*/protection)
       echo protection >>"$STUB_DIR/calls"
-      # The two failure bodies gh prints, verbatim: an unprotected branch, and
-      # a caller without admin rights.
+      # The two failure lines gh prints, verbatim as read on 2026-09-24: an
+      # unprotected branch, and a caller without admin rights on the
+      # repository (also a 404, which must not read as "not protected").
       case "\$(cat "$STUB_DIR/protection.json")" in
         NOTPROTECTED) echo "gh: Branch not protected (HTTP 404)" >&2; exit 1 ;;
-        FAIL)         echo "gh: Resource not accessible by integration (HTTP 403)" >&2; exit 1 ;;
+        FAIL)         echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
       esac
       cat "$STUB_DIR/protection.json"; exit 0 ;;
     repos/*/compare/*)            echo "compare \$a" >>"$STUB_DIR/calls"; f="$STUB_DIR/compare.json" ;;
@@ -63,7 +64,8 @@ chmod +x "$STUB_DIR/gh"
 # $5 = app id that reported `security / Composer Audit` on the head
 # Optional knobs, from the environment so the five positional cases above stay
 # as they were:
-#   PROT             classic protection body (JSON), NOTPROTECTED (default) or FAIL
+#   PROT             classic protection body (JSON), NOTPROTECTED (default) or
+#                    FAIL (the 404 a caller without admin rights gets)
 #   STRICT_RULESET   false makes ruleset 20441891 non-strict (default true)
 #   CODE_OWNER       true sets require_code_owner_review on the pull_request rule
 #   ROLLUP_FILLER    extra green rollup contexts; at 100 or more the rollup is
@@ -338,11 +340,11 @@ check "no classic candidate" "0" \
 check_grep "text shows no status checks" "status checks none" "$(run_text)"
 
 # --- case 9: classic protection read fails, or the branch is unprotected -----
-echo "case 9: the classic protection read fails (403) or finds no protection (404)"
+echo "case 9: the classic protection read fails (404 without admin) or finds no protection"
 PROT=FAIL build BLOCKED no false 0 15368
 out="$(run_json)"
 check "classic protection not fetched" "failed" "$(jq -r .next.evidence.classic_protection.fetched <<<"$out")"
-check_grep "the error is kept" "Resource not accessible by integration (HTTP 403)" \
+check_grep "the error is kept" "Not Found (HTTP 404)" \
       "$(jq -r .next.evidence.classic_protection.error <<<"$out")"
 check_grep "the failed read is a candidate" "classic branch protection of main could not be read" \
       "$(jq -r '.next.evidence.candidates[]' <<<"$out")"
