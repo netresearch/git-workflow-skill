@@ -14,7 +14,10 @@
 # call for the effective branch rules (which is the only place rulesets show
 # up). A review-blocked PR costs a third, admin-only call for classic branch
 # protection, whose review gates (require_last_push_approval, approval count,
-# code-owner reviews) no other endpoint exposes.
+# code-owner reviews) no other endpoint exposes. Only a PR that ends the ladder
+# at `investigate` pays for up to three more REST reads (check-runs,
+# check-suites, and the compare API when a strict status-check rule exists),
+# which feed the evidence block printed under that NEXT line.
 #
 # Usage:
 #   pr-status.sh                      # PR for the current branch
@@ -90,6 +93,9 @@
 #
 # `checks` is {total,pass,fail,pending,skip,...} and `next` is
 # {action,why,cmd} — the same two things the prose rendering leads with.
+# On `investigate` only, `next.evidence` carries what the extra reads found
+# (rules, required contexts per reporting app, failed suites outside the
+# rollup, pull_request rule parameters, candidates); it is never a verdict.
 #
 # Before writing a jq filter against any of these, consider whether --watch
 # already answers the question; it usually does, and a hand-rolled poll loop is
@@ -1267,9 +1273,146 @@ evaluate() {
                  + " — then for each action_required id:"
                  + " gh api -X POST repos/\($s.repo)/actions/runs/ID/approve."
                  + " If none await approval, close+reopen the PR to re-fire the events")}
+         # The end of the ladder: nothing this script decides on explains the
+         # state. The sentence says so and claims nothing more; snapshot()
+         # attaches next.evidence with what it could read, so the reader sees
+         # what was ruled out instead of guessing a cause (t3x-nr-image-optimize#201).
          else
-           {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review — check branch protection manually"}
+           {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review. The cause is NOT determined — the evidence below lists what was read and the remaining candidates, none of them a verdict; check branch protection manually"}
          end)
+  '
+}
+
+# ------------------------------------------------------- investigate --------
+# `investigate` used to be one sentence, and the reader then guessed a cause
+# and reported it as fact (t3x-nr-image-optimize#201: BLOCKED, 72 checks pass,
+# 0 fail, 0 threads, APPROVED). This gathers what can be read about the rest
+# and lists it: every effective rule, each required context with the app that
+# reported it, failed check suites the GraphQL rollup does not show, and the
+# pull_request rule parameters. It never names a cause. A parameter this
+# script cannot evaluate is listed as set and not evaluable, nothing more.
+#
+# Called only on the investigate path, so the common path costs nothing. A
+# failed read is carried as not fetched rather than folded into an empty list:
+# "could not read the check-runs" must not print as "nothing is missing".
+investigate_evidence() {
+  local g="$1" r="$2" prot="$3" enc="$4" head_oid="$5"
+  # Trimmed to the fields used below as they are read: a full check-run carries
+  # its output text, and 89 of them overflowed the argument list of jq.
+  local cr='null' cs='null' cmp='null' raw cr_ok=false cs_ok=false cmp_state='"not needed"'
+  if raw=$(gh api --paginate "repos/$REPO/commits/$head_oid/check-runs?per_page=100" 2>/dev/null) \
+     && cr=$(jq -sc '[.[].check_runs[]? | {name, status, conclusion, started_at,
+                                               app: {id: .app.id}, check_suite: {id: .check_suite.id}}]' <<<"$raw" 2>/dev/null); then cr_ok=true; else cr='null'; fi
+  if raw=$(gh api --paginate "repos/$REPO/commits/$head_oid/check-suites?per_page=100" 2>/dev/null) \
+     && cs=$(jq -sc '[.[].check_suites[]? | {id, conclusion, app: {id: .app.id, slug: .app.slug}}]' <<<"$raw" 2>/dev/null); then cs_ok=true; else cs='null'; fi
+  # By sha, not by branch name: the GraphQL read does not carry the head
+  # owner, and a fork branch name would be looked up in the wrong repository.
+  if jq -e '[.[]? | select(.type == "required_status_checks")
+             | .parameters.strict_required_status_checks_policy // false] | any' <<<"$r" >/dev/null 2>&1; then
+    if raw=$(gh api "repos/$REPO/compare/$enc...$head_oid" 2>/dev/null) \
+       && cmp=$(jq -c '{behind_by, ahead_by}' <<<"$raw" 2>/dev/null); then cmp_state='"read"'
+    else cmp='null'; cmp_state='"failed"'; fi
+  fi
+  jq -n --argjson g "$g" --argjson r "$r" --argjson prot "$prot" \
+        --argjson cr "$cr" --argjson cs "$cs" --argjson cmp "$cmp" \
+        --argjson cr_ok "$cr_ok" --argjson cs_ok "$cs_ok" --argjson cmp_state "$cmp_state" '
+    # No apostrophes anywhere in this program: it is one single-quoted shell
+    # string, and one would end it.
+    ($g.data.repository.pullRequest) as $p
+    | ($p.commits.nodes[0].commit.oid) as $head
+    | ($p.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []) as $rollup
+    | ([$rollup[] | (.name // .context)]) as $rollup_names
+    | ([$r[]? | select(.type == "required_status_checks")]) as $rsc
+    | ([$rsc[] | (.parameters.strict_required_status_checks_policy // false) as $strict
+        | {ruleset_id, strict: $strict}
+          + (if $strict then {behind_by: (if $cmp == null then null else $cmp.behind_by end)}
+             else {} end)]) as $status_rules
+    # Classic protection names an app only as a positive app_id; anything else
+    # is shown as any source rather than interpreted.
+    | ([$rsc[] | .ruleset_id as $id | .parameters.required_status_checks[]?
+        | {context, integration_id: (.integration_id // null), source: "ruleset \($id)"}]
+       + (if ($prot | type) == "object"
+          then [($prot.required_status_checks.checks // [])[]
+                | {context, integration_id: (if ((.app_id // 0) > 0) then .app_id else null end),
+                   source: "classic protection"}]
+          else [] end)) as $reqs
+    | ([$reqs[] | . as $q
+        | (if $cr_ok then [$cr[] | select(.name == $q.context)] else null end) as $runs
+        | (if $runs == null then null
+           elif $q.integration_id == null then $runs
+           else [$runs[] | select(.app.id == $q.integration_id)] end) as $matching
+        | (if ($matching // []) | length == 0 then null
+           else ($matching | max_by([(if .status != "completed" then 1 else 0 end), (.started_at // "")])) end) as $latest
+        | ([$rollup[] | select(.context == $q.context) | .state] | first) as $status_state
+        | {context: $q.context, source: $q.source,
+           required_integration_id: ($q.integration_id // "any"),
+           reported_by_apps: (if $runs == null then null else ($runs | map(.app.id) | unique) end),
+           state: (if $runs == null then "unknown, check-runs not fetched"
+                   elif $latest != null
+                     then (if $latest.status == "completed" then $latest.conclusion else $latest.status end)
+                   elif ($runs | length) > 0 then "reported only by another app"
+                   elif $status_state != null then "commit status \($status_state | ascii_downcase)"
+                   else "missing" end)}
+        | .flag = (if .state == "unknown, check-runs not fetched" then "unknown"
+                   elif .state == "missing" then "missing"
+                   elif .state == "reported only by another app" then "integration-mismatch"
+                   elif (.state == "success" or .state == "skipped" or .state == "neutral"
+                         or .state == "commit status success") then null
+                   else "not-passing" end)]) as $contexts
+    | (if ($cs_ok and $cr_ok) then
+         [$cs[] | select(.conclusion as $c
+                         | ["failure", "cancelled", "timed_out", "action_required"] | index($c))
+          | .id as $sid
+          | {suite_id: .id, app: (.app.slug // null), app_id: (.app.id // null), conclusion,
+             check_runs: [$cr[] | select(.check_suite.id == $sid) | .name]}
+          | .outside_rollup = [.check_runs[] | select(. as $n | ($rollup_names | index($n)) == null)]
+          | select((.check_runs | length) == 0 or (.outside_rollup | length) > 0)]
+       else null end) as $hidden
+    | ([$p.reviews.nodes[]? | select(.commit.oid == $head)
+        | select(.author.login != $p.author.login) | select(.state == "APPROVED")
+        | .author.login] | unique) as $approvers
+    | ([$r[]? | select(.type == "pull_request") | .parameters as $pp
+        | {ruleset_id,
+           required_approving_review_count: ($pp.required_approving_review_count // 0),
+           approvals_on_head: ($approvers | length), approvers: $approvers,
+           require_last_push_approval: ($pp.require_last_push_approval // false),
+           require_extra_approval_for_unattributed_changes: ($pp.require_extra_approval_for_unattributed_changes // false),
+           require_code_owner_review: ($pp.require_code_owner_review // false),
+           required_review_thread_resolution: ($pp.required_review_thread_resolution // false),
+           dismiss_stale_reviews_on_push: ($pp.dismiss_stale_reviews_on_push // false)}]) as $pr_rules
+    | ([ ($status_rules[] | select(.strict)
+          | if .behind_by == null
+            then "ruleset \(.ruleset_id) requires the branch to be up to date (strict) and whether the head is behind \($p.baseRefName) could not be read"
+            elif .behind_by > 0
+            then "ruleset \(.ruleset_id) requires the branch to be up to date (strict) and the head is \(.behind_by) commit(s) behind \($p.baseRefName)"
+            else empty end),
+         # A read that failed is itself an open item, named once, so an empty
+         # candidate list can only mean every read succeeded.
+         (if $cr_ok then empty else "the check-runs of the head could not be read — which app reported each required context, and its state, is unknown" end),
+         (if $cs_ok then empty else "the check suites of the head could not be read — failed suites outside the rollup are unknown" end),
+         ($contexts[] | select(.flag != null and .flag != "unknown")
+          | "required context \(.context) (\(.source)): \(.flag), state \(.state), required app \(.required_integration_id), reported by \(if .reported_by_apps == null then "unknown" elif (.reported_by_apps | length) == 0 then "nobody" else (.reported_by_apps | map(tostring) | join(",")) end)"),
+         ($hidden // [] | .[]
+          | "check suite \(.suite_id) (\(.app // "unknown app")) concluded \(.conclusion) and is absent from the GraphQL rollup: \(if (.outside_rollup | length) > 0 then (.outside_rollup | join(", ")) else "no check-run listed" end) — whether it gates the merge is not determined"),
+         ($pr_rules[]
+          | (if .approvals_on_head < .required_approving_review_count
+             then "ruleset \(.ruleset_id) requires \(.required_approving_review_count) approving review(s); \(.approvals_on_head) on the head as counted by this script"
+             else empty end),
+            (if .require_last_push_approval then "ruleset \(.ruleset_id) sets require_last_push_approval — rule set, not evaluable by this script" else empty end),
+            (if .require_extra_approval_for_unattributed_changes then "ruleset \(.ruleset_id) sets require_extra_approval_for_unattributed_changes — rule set, not evaluable by this script" else empty end),
+            (if .require_code_owner_review then "ruleset \(.ruleset_id) sets require_code_owner_review — rule set, not evaluable by this script" else empty end))
+       ]) as $candidates
+    | {cause_determined: false,
+       fetched: {check_runs: $cr_ok, check_suites: $cs_ok, compare: $cmp_state},
+       rules: [$r[]? | {type, ruleset_id}],
+       status_check_rules: $status_rules,
+       required_contexts: $contexts,
+       failed_suites_outside_rollup: $hidden,
+       pull_request_rules: $pr_rules,
+       candidates: $candidates,
+       summary: (if ($candidates | length) > 0
+                 then "\($candidates | length) candidate(s) listed; the cause is not determined and none of them is a verdict"
+                 else "no candidate found in the data this script reads; the cause is not determined and lies outside it" end)}
   '
 }
 
@@ -1302,7 +1445,21 @@ render() {
     (if .next.note   then "  note  : \(.next.note)"   else empty end),
     (if .next.cmd    then "  cmd   : \(.next.cmd)"    else empty end),
     (if .next.threads then (.next.threads[]|"  thread \(.threadId) (comment \(.commentId)) by \(.author) on \(.path)") else empty end),
-    (if .next.urls then (.next.urls[]|"  \(.)") else empty end)
+    (if .next.urls then (.next.urls[]|"  \(.)") else empty end),
+    (if .next.evidence then (.next.evidence as $e
+      | "",
+        "EVIDENCE — cause NOT determined; candidates, not a verdict",
+        "  rules       : \(if ($e.rules|length) > 0 then ($e.rules|map("\(.type)(\(.ruleset_id))")|join(", ")) else "none" end)",
+        ($e.status_check_rules[] | "  status rule : ruleset \(.ruleset_id) strict=\(.strict)\(if .strict then " behind_by=\(.behind_by // "unreadable")" else "" end)"),
+        (if $e.fetched.check_runs | not then "  contexts    : check-runs could not be read — per-context state unknown" else empty end),
+        ($e.required_contexts[] | "  \(if .flag == null then "ok  " else "FLAG" end)        : \(.context) — required app \(.required_integration_id), reported by \(if .reported_by_apps == null then "unknown" elif (.reported_by_apps|length) == 0 then "nobody" else (.reported_by_apps|map(tostring)|join(",")) end), \(.state)\(if .flag != null then " [\(.flag)]" else "" end) (\(.source))"),
+        (if $e.failed_suites_outside_rollup == null then "  suites      : check suites could not be read"
+         elif ($e.failed_suites_outside_rollup|length) == 0 then "  suites      : no failed check suite outside the rollup"
+         else ($e.failed_suites_outside_rollup[] | "  suite       : \(.suite_id) (\(.app // "unknown app")) \(.conclusion), outside the rollup: \(.outside_rollup|join(", "))") end),
+        ($e.pull_request_rules[] | "  pr rule     : ruleset \(.ruleset_id) approvals \(.approvals_on_head)/\(.required_approving_review_count)\(if (.approvers|length) > 0 then " (\(.approvers|join(", ")))" else "" end), last_push_approval=\(.require_last_push_approval), extra_approval_for_unattributed_changes=\(.require_extra_approval_for_unattributed_changes), code_owner_review=\(.require_code_owner_review), thread_resolution=\(.required_review_thread_resolution)"),
+        ($e.candidates[] | "  candidate   : \(.)"),
+        "  summary     : \($e.summary)")
+     else empty end)
   '
 }
 
@@ -1378,6 +1535,18 @@ snapshot() {
     forget_quota_hit
   elif [ "$(jq -r '.copilot_quota_hit // false' <<<"$out")" = "true" ]; then
     remember_quota_hit
+  fi
+  # The extra reads happen only here, on the one rung that explains nothing.
+  # If building the evidence fails, the verdict still stands, and the why says
+  # the evidence is absent rather than pointing at a block that is not there.
+  if [ "$(jq -r '.next.action' <<<"$out")" = "investigate" ]; then
+    local ev
+    if ev=$(investigate_evidence "$g" "$r" "$prot" "$enc" "$(jq -r '.headOid' <<<"$out")") \
+       && [ -n "$ev" ]; then
+      out=$(jq -c --argjson ev "$ev" '.next.evidence = $ev' <<<"$out")
+    else
+      out=$(jq -c '.next.why += " (the evidence block could not be built; cause on stderr above)"' <<<"$out")
+    fi
   fi
   printf '%s\n' "$out"
 }
