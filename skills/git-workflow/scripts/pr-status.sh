@@ -279,13 +279,12 @@ collect_raw() {
       # A merge queue set up through classic branch protection has no ruleset,
       # so the rules endpoint never lists it, queue_active read false, and
       # pr-merge.sh passed --delete-branch into a queue that refuses it
-      # (glpi-docker-compose-stack#41). mergeQueue without a branch argument is
-      # the queue of the default branch; it rides along here at no extra call.
+      # (glpi-docker-compose-stack#41). The mergeQueue field of the pull request
+      # is the queue of its base branch; it rides along here at no extra call.
       # No apostrophes in these comments: the query is a single-quoted string.
-      defaultBranchRef{ name }
-      mergeQueue{ id }
       pullRequest(number:$pr){
         number title state isDraft mergeable mergeStateStatus reviewDecision
+        mergeQueue{ id }
         mergeQueueEntry{ state position estimatedTimeToMerge }
         author{login __typename}
         baseRefName headRefName headRefOid isCrossRepository
@@ -759,13 +758,11 @@ evaluate() {
                           (if $repo.squashMergeAllowed then "squash" else empty end) ]),
         auto_merge_allowed: $repo.autoMergeAllowed,
         # A queue shows either as a merge_queue rule or, when it was set up
-        # through classic protection, only as the mergeQueue of the repository —
-        # which describes the default branch, so it counts only when this PR
-        # targets that branch.
+        # through classic protection, only as the mergeQueue of the pull
+        # request, which GitHub resolves for its base branch.
         queue_active: (($p.mergeStateStatus == "BLOCKED" or $p.mergeStateStatus == "CLEAN")
                        and ((($ruletypes | index("merge_queue")) != null)
-                            or ($repo.mergeQueue != null
-                                and $p.baseRefName == ($repo.defaultBranchRef.name // null)))),
+                            or ($p.mergeQueue != null))),
         # queue_active describes the REPO — a queue exists and this PR would go
         # through it. queue_entry describes THIS PR: non-null only while it is
         # actually sitting in the queue. Without the second one, an enqueued PR

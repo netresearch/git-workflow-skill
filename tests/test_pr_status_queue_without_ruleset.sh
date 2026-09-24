@@ -5,10 +5,10 @@
 # --delete-branch into a queue that refuses it: "Cannot use `-d` or
 # `--delete-branch` when merge queue enabled" (glpi-docker-compose-stack#41).
 #
-# The repository's mergeQueue field answers directly. Without a branch argument
-# it is the default branch's queue, so it may only count for a PR that targets
-# the default branch. Both directions are asserted, and the rule-based path must
-# keep working on its own.
+# The mergeQueue field of the pull request answers directly: GitHub resolves it
+# for the PR's base branch, so a classic queue on a release branch is seen as
+# well. Both directions are asserted, and the rule-based path must keep working
+# on its own.
 #
 # Runs against a stubbed `gh`, so it needs no network and no repository.
 
@@ -32,7 +32,7 @@ cat "$STUB_DIR/graphql.json"
 STUB
 chmod +x "$STUB_DIR/gh"
 
-# case <name> <rules-json> <mergeQueue: yes|no> <base> <expected queue_active>
+# case <name> <rules-json> <PR mergeQueue: yes|no> <base> <expected queue_active>
 case_() {
   local name="$1" rules="$2" mq="$3" base="$4" want="$5" got
   printf '%s\n' "$rules" > "$STUB_DIR/rules.json"
@@ -44,10 +44,9 @@ json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": True, "squashMergeAllowed": False,
     "autoMergeAllowed": True,
-    "defaultBranchRef": {"name": "main"},
-    "mergeQueue": {"id": "MQ_x"} if mq == "yes" else None,
     "pullRequest": {
         "number": 41, "title": "t", "state": "OPEN", "isDraft": False,
+        "mergeQueue": {"id": "MQ_x"} if mq == "yes" else None,
         "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "reviewDecision": "APPROVED",
         "mergeQueueEntry": None,
         "author": {"login": "someone", "__typename": "User"},
@@ -67,7 +66,7 @@ json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
     }}}}, open(path, "w"))
 PY
   got="$(PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 41 --json | jq -r '.queue_active')"
-  if [ "$got" = "$want" ]; then
+  if [[ "$got" == "$want" ]]; then
     echo "  ok   $name"
   else
     echo "  FAIL $name: queue_active=$got, expected $want"; fail=1
@@ -81,8 +80,9 @@ case_ "classic-protection queue on the default branch is seen" '[]' yes main tru
 case_ "no ruleset and no queue reads false" '[]' no main false
 case_ "a merge_queue rule alone still counts" \
       '[{"type":"merge_queue","parameters":{}}]' no main true
-# mergeQueue describes the default branch; a PR into another branch must not
-# inherit it.
-case_ "the default branch's queue does not apply to another base" '[]' yes release/1.x false
+# A classic queue protecting a release branch: the PR into it goes through it.
+case_ "classic-protection queue on a non-default base is seen" '[]' yes release/1.x true
+# No queue on the PR's base, whatever other branches have.
+case_ "no queue on this base reads false" '[]' no release/1.x false
 
 exit "$fail"
