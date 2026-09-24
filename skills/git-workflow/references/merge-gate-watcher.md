@@ -142,6 +142,15 @@ gh pr view $PR --repo $R --json reviews \
 
 Treat `unable to review` as **no review** and re-request; if the re-request returns the same notice the quota is still exhausted, and merging means merging unreviewed. Check the repo's recent merged PRs the same way before concluding that a bot review is the local norm — a quota outage can span every PR in a window, so "the last three merged PRs also show COMMENTED" is not evidence they were reviewed.
 
+**Your own thread replies are review rows too.** Replying to a review thread creates a `COMMENTED` review under *your* login, on the current head. A wait-for-review watcher that fires on "any review with a `submitted_at`" therefore announces a review after your third reply while the only bot review still sits on the previous head (observed 2026-09-01: three replies, three `COMMENTED` rows by the PR author, "review arrived" reported). Filter on the bot's login **and** the head SHA; the REST rows carry `user.login` and `commit_id`:
+
+```bash
+H=$(gh pr view $PR --repo $R --json headRefOid --jq .headRefOid)
+gh api "repos/$R/pulls/$PR/reviews" --paginate \
+  | jq -r --arg h "$H" '.[] | select(.user.login == "copilot-pull-request-reviewer[bot]" and .commit_id == $h)
+                             | "\(.state) \(.submitted_at)"'
+```
+
 Once you know the quota is exhausted, mind *when* `--watch` returns: `pr-status.sh --watch` (and any read whose `NEXT` is `request-review`) fires on that review-state event **immediately, even while CI is still running** — the event is independent of check completion, so it returns before the gate can be `CLEAN`. Do not merge on that first return. After deciding to proceed unreviewed, re-arm with `--watch --ignore-action request-review` — it holds through the quota-dead review state and returns once the checks settle (`SETTLED: NEXT is still the ignored action`, exit 0) or something else becomes actionable — and merge only at `mergeState=CLEAN`; only `CLEAN` passes the merge gate — `BLOCKED` means checks or threads are outstanding and `UNSTABLE` means a non-required check is still pending (seen 2026-08-12: a docs PR cycled `BLOCKED → UNSTABLE → CLEAN` across three re-arms while the bot stayed quota-dead).
 
 **On a docs/prose PR the loop does not decay — it must be actively terminated.** The bot re-reads the whole changed file each round and keeps surfacing a *new cosmetic* nit (wording, an illustrative example value, a spelling), so pushing a fix just triggers another round almost indefinitely. To converge: once a finding is purely cosmetic and defensible, **reply on the thread and resolve it *without* a new commit** — no push means no re-review means no new nit. Reserve fresh pushes for substantive findings; batch several real fixes into one push rather than one-per-thread.
@@ -384,6 +393,8 @@ gh api "repos/$R/actions/runs?head_sha=$SHA&per_page=50" \
 
 The guard on the first line is not decoration. An **empty** `$SHA` drops the filter silently and the API answers with the unfiltered list — 4506 runs on one repository measured this way, against 0 for a syntactically valid unknown SHA and 0 for outright garbage. A watcher whose SHA lookup failed then extracts some unrelated run's state and reports it as the watched commit's; the extraction is not empty, so the value guard below cannot catch it.
 
+A **shortened** SHA fails the other way. `head_sha=` resolves only the full 40-character SHA, so an abbreviated one (`5ddd65df8`) is just another unknown value: every tick returns an empty list, and a loop that reads "no runs" as "still running" spins through its whole budget in silence. Take the SHA from `git rev-parse` or `headRefOid`, never from a short form typed for readability.
+
 `repos/$R/actions/runs?per_page=20` piped into a client-side `select(.head_sha==$s)` has the same window defect as `gh run list`, with one difference that makes it worse in a loop: **it works on the first tick.** The commit is recent, so it sits inside the window; twenty minutes later unrelated runs have pushed it out and every subsequent tick sees nothing. A watcher built that way reports progress, then goes quiet, and quiet is indistinguishable from "still running" — it will sit out its full budget without ever emitting. (Observed 2026-08-21; the first tick listed five runs, later ticks listed none.)
 
 ### The emptiness guard must test the extracted value, not the response
@@ -405,6 +416,15 @@ if [ -z "$state" ]; then
   sleep 45; continue
 fi
 errors=0
+```
+
+A fallback can corrupt the **value** a correct guard then accepts. `curl -s -w '%{http_code}'` already prints `000` on a connection failure, so `code=$(curl -s -o /dev/null -w '%{http_code}' "$URL" || echo 000)` yields `000000` on that path; a guard written as the negation of failure (`[ "$code" != "000" ]`) passes it, and the watcher reports a terminal state on its first tick (observed 2026-09-07: `TERMINAL: 000000`, a false "the site is up" before its certificate existed). A tool that already emits a sentinel on failure needs no `|| echo` fallback, and the failure case must be matched **positively and first**. Bound the request as well: without `--max-time` a stalled connection never reaches the check (a timed-out request also prints `000`):
+
+```bash
+code=$(curl -s --connect-timeout 10 --max-time 30 -o /dev/null -w '%{http_code}' "$URL")
+case "$code" in
+  000|"") echo "unreadable: '$code'"; sleep 30; continue ;;
+esac
 ```
 
 ### "Every run has finished" is true before any run exists — and a second query cannot repair it
@@ -473,7 +493,7 @@ branch is often auto-deleted). The discipline is cheaper than the recovery:
 
 ## A queued PR can silently leave the merge queue
 
-A PR queued via `gh pr merge --auto` on a merge-queue repo can drop back out with no visible event: `isInMergeQueue` flips to `false`, `mergeStateStatus` reads `CLEAN`, and nothing merges. Verify the real queue state via GraphQL (`state` / `merged` / `isInMergeQueue` / `mergeStateStatus`) — a status read that only looks at `mergeStateStatus` reports a dropped PR as merge-ready. Re-arm once (`gh pr merge --disable-auto`, then `--auto`, which forces the queue to re-evaluate); if it drops again, diagnose the queue's required contexts instead of re-arming repeatedly.
+A PR queued via `gh pr merge --auto` on a merge-queue repo can drop back out with no visible event: `isInMergeQueue` flips to `false`, `mergeStateStatus` reads `CLEAN`, and nothing merges. Verify the real queue state via GraphQL (`state` / `merged` / `isInMergeQueue` / `mergeStateStatus`) — a status read that only looks at `mergeStateStatus` reports a dropped PR as merge-ready. Confirm the drop on the PR timeline first — the latest queue event is `removed_from_merge_queue`, with no `added_to_merge_queue` or `merged` after it (query in `pull-request-workflow.md`, "Verify a 'dropped' queue entry via the issue timeline before re-arming") — because re-queuing a PR whose queue run is still in flight cancels that run (see below). Then re-arm once (`gh pr merge --disable-auto`, then `--auto`, which forces the queue to re-evaluate); if it drops again, diagnose the queue's required contexts instead of re-arming repeatedly.
 
 ### The dequeue reason is on the `gh-readonly-queue` branch, never on the PR
 
@@ -521,6 +541,12 @@ gh api "repos/$R/actions/runs?status=in_progress" --jq '.total_count'           
 Observed 2026-09-22 on netresearch/t3x-nr-llm#957: from 22:20Z the CI run's 39 jobs stayed `queued` for over an hour, while short workflows on the same queue branch finished and other repositories in the organisation also had only queued runs. githubstatus.com reported Actions operational, and billing was not the cause.
 
 Re-enqueueing after such a drop is not reliable. On the same PR GitHub re-enqueued it once on its own (auto-merge was still armed) and once did not — although that run later finished green, after the timeout had already dropped the entry. Once runners move again, re-queue by hand: `gh pr merge <n>`, or `pr-merge.sh`.
+
+### Re-queuing cancels the run already in flight
+
+Re-adding a PR to the merge queue **cancels the queue run in progress**, so a retry loop prevents the very merge it is meant to cause. Observed 2026-08-06 on netresearch/t3x-nr-llm#616: a loop tried to re-queue the PR about every two minutes, 128 attempts, and the timeline records six `added_to_merge_queue` events. The first queue run completed the required E2E workflow green; in the next two the E2E run shows `cancelled` — once two seconds before the matching `removed_from_merge_queue` — and the PR merged on the fourth queue run, which was left to finish.
+
+The loop's trigger was a false ejection: the GraphQL `mergeQueue.entries` list reads **transiently empty** for an entry that is still queued. Requiring two consecutive empty reads did not fix it; the signal is wrong, not noisy. Let one queue attempt run to completion, and re-queue only when the latest queue event on the timeline is `removed_from_merge_queue`, with no `added_to_merge_queue` or `merged` after it, never because the entry is missing from the queue list. When a required check on the queue branch never reports, diff required against reported contexts, and check whether something you are doing is cancelling the run.
 
 ### Watching a queued PR: ask git
 
