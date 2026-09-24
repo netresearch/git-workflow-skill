@@ -1080,6 +1080,31 @@ commits into one — there the PR state is the only honest answer. A branch whos
 PR is `CLOSED` (not merged) holds work somebody deliberately dropped: that is a
 judgment call for a human, not a mechanical delete.
 
+**A branch whose only extra commit is a merge of `main` into it.** `git branch
+-d` refuses it, and `git cherry` cannot help: it skips merge commits, so a
+hand-written conflict resolution inside the merge is invisible to it (measured
+with git 2.55). Prove what the merge adds instead:
+
+```bash
+read -r _ p1 p2 <<<"$(git rev-list --parents -n1 "$B")"   # merge, parent 1, parent 2
+if git merge-base --is-ancestor "$p1" origin/main \
+   && git merge-base --is-ancestor "$p2" origin/main; then
+  echo "both parents are on main"
+fi
+# First line of merge-tree is the tree id; on a conflict it exits 1 and lists
+# the conflicted paths after it — read the first line only.
+auto=$(git merge-tree --write-tree "$p1" "$p2" | head -1)
+[ "$auto" = "$(git rev-parse "$B^{tree}")" ] && echo "pure automatic merge: nothing but main"
+git diff --stat "$auto" "$B^{tree}"                # else: exactly what the hand resolution added
+```
+
+Equal trees mean the branch holds nothing `main` lacks. Different trees name
+the files the resolution touched; when those are only conflict resolutions in
+files whose final state reached `main` another way — the feature landed through
+a collector PR — `branch -D` loses nothing of value. (Observed 2026-09-24 on
+netresearch/t3x-nr-llm: two branches of closed PRs whose content had landed via
+a collector PR; the trees differed only in `CHANGELOG.md` and the ADR index.)
+
 ### Sync the Base Before Branching (Stale-Base Trap)
 
 A per-branch worktree layout makes it easy to branch from a checkout that is

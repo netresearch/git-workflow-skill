@@ -511,9 +511,50 @@ check "and sits at origin's tip" "$origin5_tip" "$(git -C "$proj5/main" rev-pars
 check "no prunable entries in the new layout" "0" \
       "$(git -C "$proj5/.bare" worktree list | grep -c prunable || true)"
 
+# --------------------------------------------------------------------------
+printf '\n== merge-only branch: what does the merge of main add?\n'
+# --------------------------------------------------------------------------
+# The recipe from "A branch whose only extra commit is a merge of main into
+# it", run verbatim on two branches: one whose merge is automatic, one whose
+# merge carries a hand-written conflict resolution.
+m="$TMP/p6"; mkdir -p "$m"; cd "$m" || exit 1; git init -q .
+printf 'a\n' > f; echo x > g; git add -A; git commit -qm base
+git checkout -q -b clean;    echo feat > g;           git commit -qam feat-clean
+git checkout -q -b resolved main; printf 'a\nfeat\n' > f; git commit -qam feat-resolved
+git checkout -q main;        printf 'a\nmain\n' > f;  git commit -qam main1
+git checkout -q clean;       git merge -q --no-edit main
+git checkout -q resolved
+git merge -q --no-edit main >/dev/null 2>&1 || true   # conflicts, by design
+printf 'a\nfeat\nmain\nresolved-by-hand\n' > f; git add f; git commit -qm "Merge main into resolved"
+# Both branches' own commits reach main another way: a collector merge.
+git checkout -q main; git merge -q --no-edit clean
+git update-ref refs/remotes/origin/main main
+
+merge_only() { # merge_only <branch> -> the recipe's verdict, one line
+  local B="$1" auto _ p1 p2
+  read -r _ p1 p2 <<<"$(git rev-list --parents -n1 "$B")"
+  if ! git merge-base --is-ancestor "$p1" origin/main \
+     || ! git merge-base --is-ancestor "$p2" origin/main; then
+    echo "a parent is not on main"; return
+  fi
+  auto=$(git merge-tree --write-tree "$p1" "$p2" | head -1)
+  if [ "$auto" = "$(git rev-parse "$B^{tree}")" ]; then echo "pure automatic merge"
+  else git diff --name-only "$auto" "$B^{tree}" | tr '\n' ' '; fi
+}
+
+check "git branch -d refuses the resolved branch" "refused" \
+      "$(git branch -d resolved >/dev/null 2>&1 && echo deleted || echo refused)"
+check "git cherry does not list the merge commit" \
+      "$(git rev-parse resolved~1)" "$(git cherry origin/main resolved | awk '{print $2}' | tr -d '\n')"
+check "an automatic merge is recognised as nothing but main" "pure automatic merge" \
+      "$(merge_only clean)"
+git checkout -q main; git merge -q --no-edit -s ours resolved~1 >/dev/null
+git update-ref refs/remotes/origin/main main
+check "a hand resolution is named by file" "f " "$(merge_only resolved)"
+
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "71" "$ran"
+check "every assertion ran" "75" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]
