@@ -855,8 +855,9 @@ introduces -- that is where the next round's findings come from.
 ### A PR body describes the branch it had, not the branch it has
 
 A body written months ago documents a state the branch has since left. Every
-rebase, revert and upstream merge invalidates part of it, and nothing in the
-tooling notices. Before publishing an update, re-derive each factual claim from
+rebase, revert and upstream merge invalidates part of it, and the tooling
+notices at most that the body is older than the head, never which part went
+stale. Before publishing an update, re-derive each factual claim from
 `git diff <target>...HEAD` — image tags, memory limits, thresholds, and above
 all the New/Changed column: a job listed as **New** that the target already has
 hides whatever your version alters about it.
@@ -887,6 +888,12 @@ had been measured — of different corpora, weeks apart in reading order and
 minutes apart in writing — which is exactly why the disagreement is worth
 catching. Two figures for one quantity means at least one is answering a
 question you are no longer asking.
+
+`pr-status.sh` prints a `body` line when the head commit was committed after
+the body was last edited (or written, if nobody edited it); `--json` carries the
+comparison as `body_freshness`. It is a reminder, not a check: it compares two
+timestamps, so a rebase that changed nothing the body says also trips it, and it
+never changes the `NEXT:` line or the merge gate.
 
 **A state change invalidates the body as surely as a push, and is easier to
 miss.** A push makes you re-read the body because you just wrote the change;
