@@ -1272,6 +1272,8 @@ Default to "fits" for comment- or docstring-only suggestions; reserve "out of sc
 
 When you do defer a finding, "filed as follow-up" is a claim of action: file the issue in the same turn and quote its URL in the summary, or ask explicitly whether to file — never write "will file" / "tracked separately" without the link in the same paragraph.
 
+A scope word in a comment has a weaker and a stronger reading, and the stronger one is the expensive mistake. "Concentrate on", "focus on", "less on" and "edge case" can mean *shorten or move down* or *remove*; when removing would delete documentation or behaviour that still exists, apply the weaker reading or ask the author (or the user) first, and name the reading you chose in the thread reply before resolving the thread. On TYPO3-Documentation/TYPO3CMS-Guide-HowToDocument#571 (2026-09-27) the reviewer wrote "I would concentrate on linking the core changelog, everything else is real edge cases"; the response deleted the documentation of three forms that are still supported — links into other manuals, the local `#anchor` form and custom link text — and the user had to ask whether the feature documentation was gone.
+
 ### A suggestion against verbatim material is a suggestion to falsify it
 
 Reviewers read a diff, not its provenance. When a comment proposes tidying something
