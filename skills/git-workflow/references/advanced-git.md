@@ -1058,9 +1058,9 @@ pruned. `-d` takes no target to compare against, so the fix is the ancestry
 test against the fetched `origin/main` followed by `-D`, as above; the recipe
 under ["Merged and clean" is not the whole test](#merged-and-clean-is-not-the-whole-test--check-the-worktrees-role)
 works for the other reason — it moves `main` with `merge --ff-only` first.
-Ancestry holds only for merge-commit merges: a branch reported as kept may
-still have shipped as a squash or rebase, which the next section settles by PR
-state or `git cherry`.
+Ancestry holds only for merge-commit and fast-forward merges: a branch
+reported as kept may still have shipped as a squash or rebase, which the next
+section settles by PR state or `git cherry`.
 
 (Observed 2026-09-26 in netresearch/typo3-testing-skill and
 netresearch/concourse-ci-skill: `branch -d` refused a freshly merged branch in
