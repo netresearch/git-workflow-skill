@@ -1092,5 +1092,31 @@
         "Check the code for correctness, readability and performance, and list all findings by severity."
       ]
     }
+  },
+  {
+    "name": "branch_d_not_fully_merged_after_forge_merge_bare_layout",
+    "prompt": "The project uses a bare repo (.bare) plus one worktree per branch. My PR was merged on GitHub with a merge commit and GitHub deleted the remote branch. I removed the worktree and ran git -C .bare fetch --prune origin, then git -C .bare branch -d feature-x, and it says: error: the branch 'feature-x' is not fully merged. Can I just use -D?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(local main[^.]{0,80}(never|not|does not|doesn.t) (move|moved|updated|advance)|(stale|outdated)[^.]{0,20} (local )?main|upstream[^.]{0,60}(pruned|gone|deleted|removed))"
+      },
+      {
+        "type": "content",
+        "pattern": "merge-base --is-ancestor[^.]{0,60}origin/main"
+      },
+      {
+        "type": "content",
+        "pattern": "(only (after|once|if|when)[^.]{0,80}(is-ancestor|ancestry|check)|is-ancestor[^\\n]{0,80}&&[^\\n]{0,40}branch -D|not (blindly|without)[^.]{0,40}(check|is-ancestor))"
+      }
+    ],
+    "samples": {
+      "passing": "The branch is merged; -d is comparing against the wrong thing. It checks the upstream, which fetch --prune removed, and then HEAD, and HEAD in .bare is a stale local main that fetch never moves. Verify against the fetched remote instead: git -C .bare fetch --prune origin, then git -C .bare merge-base --is-ancestor feature-x origin/main && git -C .bare branch -D feature-x. Use -D only after that check succeeds; if it fails, the PR may have been squash-merged, so check the PR state before deleting.",
+      "failing": [
+        "Yes, the branch was merged on GitHub, so just run git branch -D feature-x.",
+        "The error means feature-x has commits that are not on main. Push them and open a new PR before deleting anything.",
+        "Run git -C .bare fetch --prune origin and then retry git branch -d feature-x; the fetch updates main."
+      ]
+    }
   }
 ]

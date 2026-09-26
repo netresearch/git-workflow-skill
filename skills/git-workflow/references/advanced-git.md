@@ -1038,9 +1038,35 @@ Two habits make the blast radius survivable when the list is wrong anyway:
 # 1. See what would go, before anything goes.
 git -C /projects/<repo>/.bare worktree list
 
-# 2. Prefer plain -d over -D: it refuses to delete an unmerged branch.
-git -C /projects/<repo>/main branch -d "$wt" || echo "unmerged, kept: $wt"
+# 2. Delete only what is provably on origin/main; keep everything else.
+git -C /projects/<repo>/.bare fetch --prune origin    # before the loop
+git -C /projects/<repo>/.bare merge-base --is-ancestor "$wt" origin/main \
+  && git -C /projects/<repo>/.bare branch -D "$wt" \
+  || echo "not on origin/main, kept: $wt"
 ```
+
+**Plain `branch -d` is the wrong guard in this layout.** It checks the branch
+against its upstream, and when that ref is gone, against `HEAD`. After a forge
+merge with auto-delete, `fetch --prune` removes the upstream
+(`origin/<branch>`), and `HEAD` in `.bare` — or in an un-pulled `main/` — is a
+local `main` that no fetch ever moves. So a branch merged on the forge fails
+with `error: the branch '<branch>' is not fully merged`, although
+`merge-base --is-ancestor <branch> origin/main` succeeds. Before the prune, the
+same `-d` succeeds with a warning, because the surviving `origin/<branch>`
+contains the tip; that is why the failure appears only once something has
+pruned. `-d` takes no target to compare against, so the fix is the ancestry
+test against the fetched `origin/main` followed by `-D`, as above; the recipe
+under ["Merged and clean" is not the whole test](#merged-and-clean-is-not-the-whole-test--check-the-worktrees-role)
+works for the other reason — it moves `main` with `merge --ff-only` first.
+Ancestry holds only for merge-commit and fast-forward merges: a branch
+reported as kept may still have shipped as a squash or rebase, which the next
+section settles by PR state or `git cherry`.
+
+(Observed 2026-09-26 in netresearch/typo3-testing-skill and
+netresearch/concourse-ci-skill: `branch -d` refused a freshly merged branch in
+each, while `merge-base --is-ancestor` against `origin/main` held. Reproduced
+on git 2.55.0 in a throwaway bare clone with a `--no-ff` merge and a deleted
+remote branch.)
 
 ### "Is This Branch Safe to Delete?" Is Not an Ancestry Question
 
