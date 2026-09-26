@@ -1103,7 +1103,10 @@ backticks and fences inside the comments, and check it parses before sending:
   "event": "REQUEST_CHANGES",
   "body": "Summary, one logical line per paragraph.",
   "comments": [
-    { "path": "docs/guide.md", "line": 385, "side": "RIGHT", "body": "..." }
+    { "path": "docs/guide.md", "line": 385, "side": "RIGHT", "body": "..." },
+    { "path": "docs/guide.md", "start_line": 400, "start_side": "RIGHT",
+      "line": 403, "side": "RIGHT",
+      "body": "Why.\n\n```suggestion\nreplacement for lines 400 to 403\n```" }
   ]
 }
 ```
@@ -1118,6 +1121,14 @@ python3 -c "import json,sys; json.load(open(sys.argv[1]))" review.json &&
   for the new version. Take it from that exact revision
   (`gh api "repos/$R/contents/<path>?ref=<head SHA>" --jq .content | base64 -d | grep -n '<unique line>'`)
   rather than counting through a hunk by hand.
+- **A multi-line comment adds `start_line` and `start_side`**, the first line
+  of the range and its side; `line` is then its last. GitHub's reference lists
+  `start_side` for multi-line comments; a range posted without it on
+  netresearch/concourse-ci-skill#76 was stored with `start_side: "RIGHT"`, but
+  set it explicitly rather than rely on that. A `suggestion` block in that
+  comment's body replaces exactly the lines `start_line..line`, and unlike a
+  `suggestion` block in the review body (see above) it is committable. Leave
+  `start_line` and `start_side` out for a single-line comment.
 - **`event` is `APPROVE`, `REQUEST_CHANGES` or `COMMENT`.** GitHub refuses the
   first two on a PR you authored, so check `author.login` against
   `gh api user --jq .login` first.
@@ -1126,11 +1137,17 @@ python3 -c "import json,sys; json.load(open(sys.argv[1]))" review.json &&
   `line: null` for all four comments of a correctly anchored review, while
   `pulls/$PR/comments` returned 385, 397, 301 and 405 for the same four
   (netresearch/docker-development-skill#97, 2026-09-27). A read-back through
-  the review-scoped endpoint reports a working review as unanchored.
+  the review-scoped endpoint reports a working review as unanchored. The same
+  holds for ranges: on netresearch/concourse-ci-skill#76 (review 5327789206,
+  2026-09-27) it returned `start_line`, `side` and `start_side` as `null` too,
+  with only `position` set, while `pulls/$PR/comments` returned
+  `start_line: 1040, line: 1043` for the multi-line comment.
 
 ```bash
+# $ID is the review id the POST printed
 gh api "repos/$R/pulls/$PR/comments" --paginate \
-  --jq '.[] | "\(.line) \(.path) \(.html_url)"'
+  --jq ".[] | select(.pull_request_review_id == $ID)
+        | \"\(.start_line) \(.line) \(.path) \(.html_url)\""
 ```
 
 ## Review Thread Resolution (SHA Citation Required)
