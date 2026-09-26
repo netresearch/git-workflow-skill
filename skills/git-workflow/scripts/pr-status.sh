@@ -83,6 +83,7 @@
 #   base head headOid cross_repository
 #   checks checks_settled threads unresolved_threads
 #   unanswered_comments unanswered_human unanswered_by unanswered_urls
+#   body_freshness
 #   reviewDecision reviews_on_head has_review_on_head coderabbit_on_head
 #   has_copilot_review_on_head copilot_latest_on_head_ok copilot_review_errored
 #   copilot_error_count copilot_quota_hit copilot_quota_exhausted
@@ -102,6 +103,12 @@
 # `next.stale_contexts` lists each required context reported only by a
 # superseded workflow run: {context, workflow, reported_in, newest_run}, the
 # two runs as {run_id, run_number, event, created_at, url}.
+#
+# `body_freshness` is {edited_at, edited, head_committed_at, older_than_head}:
+# the last edit of the PR body (its creation time when never edited, then
+# `edited` is false) against the committer date of the head commit. It is
+# information only and never changes `next`; the prose rendering prints a
+# `body` line when `older_than_head` is true.
 #
 # Before writing a jq filter against any of these, consider whether --watch
 # already answers the question; it usually does, and a hand-rolled poll loop is
@@ -300,6 +307,10 @@ collect_raw() {
         mergeQueueEntry{ state position estimatedTimeToMerge }
         author{login __typename}
         baseRefName headRefName headRefOid isCrossRepository
+        # When the body was last written, against committedDate of the head
+        # below: see body_freshness. lastEditedAt is null for a body nobody
+        # edited, and createdAt is then when it was written.
+        createdAt lastEditedAt
         # The last page, not the first: a Self-review attestation (see the
         # header) is posted at the end of a conversation, and an old page
         # would go blind on exactly the PRs long enough to need one.
@@ -314,7 +325,7 @@ collect_raw() {
         # no red check, nothing in the rollup. Without this the tool can only
         # say "investigate".
         allCommits: commits(first:100){ nodes{ commit{ oid signature{ isValid } } } }
-        commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state
+        commits(last:1){ nodes{ commit{ oid committedDate statusCheckRollup{ state
           contexts(first:100){ pageInfo{ hasNextPage } nodes{
             __typename
             # checkSuite.workflowRun names the Actions run each row came from.
@@ -806,6 +817,21 @@ evaluate() {
         unanswered_human: ($unanswered_human|length),
         unanswered_by: ([$unanswered_comments[]|.author.login]|unique),
         unanswered_urls: ([$unanswered_comments[]|.url]),
+        # After a review round the body often still explains the approach the
+        # fix replaced, and nothing on the report pointed at it. Information
+        # only: the NEXT ladder and the merge gate never read this. It compares
+        # timestamps and cannot tell whether the body is still true; a head
+        # committed after the last edit is the moment to re-read it. The
+        # committer date, not the push time, which GraphQL no longer gives.
+        # Both values are UTC ISO-8601, so the string comparison orders them,
+        # as the comments comparison above does. null when either is missing.
+        body_freshness: (($p.lastEditedAt // $p.createdAt // null) as $edited
+                         | ($p.commits.nodes[0].commit.committedDate // null) as $committed
+                         | {edited_at: $edited,
+                            edited: ($p.lastEditedAt != null),
+                            head_committed_at: $committed,
+                            older_than_head: (if $edited == null or $committed == null then null
+                                              else ($committed > $edited) end)}),
         threads: [$unresolved[]|{threadId: .id,
                                  commentId: .comments.nodes[0].databaseId,
                                  author: .comments.nodes[0].author.login,
@@ -1608,6 +1634,9 @@ render() {
     "  threads     : \(.unresolved_threads) unresolved",
     (if .unanswered_comments > 0 then
        "  comments    : \(.unanswered_comments) unanswered (\(.unanswered_by|join(", ")))\(if .unanswered_human == 0 then " — bots only, not gating" else "" end)"
+     else empty end),
+    (if .body_freshness.older_than_head == true then
+       "  body        : \(if .body_freshness.edited then "last edited" else "written" end) \(.body_freshness.edited_at), head committed \(.body_freshness.head_committed_at) — re-read the body against the diff"
      else empty end),
     "  merge       : methods=[\(.merge_methods|join(","))] auto=\(.auto_merge_allowed) queue=\(.queue_active)",
     (if .queue_entry then

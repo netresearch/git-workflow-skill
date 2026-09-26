@@ -388,6 +388,23 @@ an accepted request, wait for the delivered row and read its body — it says
 whether the cause was the quota or an outage.
 Never write the marker by hand while a request is still in flight.
 
+A 404 has a second producer that has nothing to do with Copilot: the account
+has no triage or write permission on the base repository, which is the normal
+case for a fork contributor to an upstream project. GitHub answers a
+`POST .../pulls/N/requested_reviewers` it will not accept from that account
+with `404 Not Found`, for a human reviewer as much as for a bot. Check the
+permission first:
+
+```bash
+gh api repos/OWNER/REPO --jq .permissions
+```
+
+Measured on 2026-09-26 on TYPO3-Documentation/TYPO3CMS-Guide-HowToDocument:
+`{"admin":false,"maintain":false,"pull":true,"push":false,"triage":false}`, and
+the POST requesting a human reviewer returned `404 Not Found`. Without
+`triage`, do not request; a reply in the review thread already notifies the
+reviewer.
+
 ### Putting the self-review on the record (#203)
 
 "Review it yourself and say so in the PR" used to end outside the tooling: the
@@ -838,8 +855,9 @@ introduces -- that is where the next round's findings come from.
 ### A PR body describes the branch it had, not the branch it has
 
 A body written months ago documents a state the branch has since left. Every
-rebase, revert and upstream merge invalidates part of it, and nothing in the
-tooling notices. Before publishing an update, re-derive each factual claim from
+rebase, revert and upstream merge invalidates part of it, and the tooling
+notices at most that the body is older than the head, never which part went
+stale. Before publishing an update, re-derive each factual claim from
 `git diff <target>...HEAD` — image tags, memory limits, thresholds, and above
 all the New/Changed column: a job listed as **New** that the target already has
 hides whatever your version alters about it.
@@ -870,6 +888,12 @@ had been measured — of different corpora, weeks apart in reading order and
 minutes apart in writing — which is exactly why the disagreement is worth
 catching. Two figures for one quantity means at least one is answering a
 question you are no longer asking.
+
+`pr-status.sh` prints a `body` line when the head commit was committed after
+the body was last edited (or written, if nobody edited it); `--json` carries the
+comparison as `body_freshness`. It is a reminder, not a check: it compares two
+timestamps, so a rebase that changed nothing the body says also trips it, and it
+never changes the `NEXT:` line or the merge gate.
 
 **A state change invalidates the body as surely as a push, and is easier to
 miss.** A push makes you re-read the body because you just wrote the change;
@@ -1271,6 +1295,8 @@ When several reviewers (or parallel review agents) return a list of findings, do
 Default to "fits" for comment- or docstring-only suggestions; reserve "out of scope" for real surgery (interface changes, cross-file refactors, unrelated pre-existing bugs). In one 12-finding round, batching hid two one-line doc-comment additions among genuinely out-of-scope refactors — the reviewer asked "none of them fit?" and the re-examination cost an extra round-trip.
 
 When you do defer a finding, "filed as follow-up" is a claim of action: file the issue in the same turn and quote its URL in the summary, or ask explicitly whether to file — never write "will file" / "tracked separately" without the link in the same paragraph.
+
+A scope word in a comment has a weaker and a stronger reading, and the stronger one is the expensive mistake. "Concentrate on", "focus on", "less on" and "edge case" can mean *shorten or move down* or *remove*; when removing would delete documentation or behaviour that still exists, apply the weaker reading or ask the author (or the user) first, and name the reading you chose in the thread reply before resolving the thread. On TYPO3-Documentation/TYPO3CMS-Guide-HowToDocument#571 (2026-09-26) the reviewer wrote "I would concentrate on linking the core changelog, everything else is real edge cases"; the response deleted the documentation of three forms that are still supported — links into other manuals, the local `#anchor` form and custom link text — and the user had to ask whether the feature documentation was gone.
 
 ### A suggestion against verbatim material is a suggestion to falsify it
 
