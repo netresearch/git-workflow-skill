@@ -1067,6 +1067,48 @@ before posting (observed: a reported `:185` pointed at a context `}`; the
 finding's code sat at 184). A wrong anchor lands the comment on an unrelated
 line or fails the review submission outright.
 
+### Posting a review with inline comments, and reading it back
+
+One `POST` submits the verdict and every inline comment together. Build the
+body as a JSON file with the Write tool, so no heredoc quoting touches the
+backticks and fences inside the comments, and check it parses before sending:
+
+```json
+{
+  "commit_id": "<head SHA>",
+  "event": "REQUEST_CHANGES",
+  "body": "Summary, one logical line per paragraph.",
+  "comments": [
+    { "path": "docs/guide.md", "line": 385, "side": "RIGHT", "body": "..." }
+  ]
+}
+```
+
+```bash
+python3 -c "import json,sys; json.load(open(sys.argv[1]))" review.json &&
+  gh api -X POST "repos/$R/pulls/$PR/reviews" --input review.json \
+    --jq '.id, .state, .html_url'
+```
+
+- **`line` is the line number in the file at `commit_id`**, with `side: "RIGHT"`
+  for the new version. Take it from that exact revision
+  (`gh api "repos/$R/contents/<path>?ref=<head SHA>" --jq .content | base64 -d | grep -n '<unique line>'`)
+  rather than counting through a hunk by hand.
+- **`event` is `APPROVE`, `REQUEST_CHANGES` or `COMMENT`.** GitHub refuses the
+  first two on a PR you authored, so check `author.login` against
+  `gh api user --jq .login` first.
+- **Read the anchors back from `pulls/$PR/comments`, not from
+  `pulls/$PR/reviews/<id>/comments`.** The review-scoped endpoint returned
+  `line: null` for all four comments of a correctly anchored review, while
+  `pulls/$PR/comments` returned 385, 397, 301 and 405 for the same four
+  (netresearch/docker-development-skill#97, 2026-09-27). A read-back through
+  the review-scoped endpoint reports a working review as unanchored.
+
+```bash
+gh api "repos/$R/pulls/$PR/comments" --paginate \
+  --jq '.[] | "\(.line) \(.path) \(.html_url)"'
+```
+
 ## Review Thread Resolution (SHA Citation Required)
 
 **Never reply with "Addressed" or "Fixed" without citing the resolving commit SHA.** Review threads are resolved on GitHub's side, not by agent assertion.
