@@ -98,7 +98,10 @@
 # On `investigate` only, `next.evidence` carries what the extra reads found
 # (ruleset rules, classic branch protection, required contexts per reporting
 # app, failed suites outside the rollup, pull_request rule parameters,
-# candidates); it is never a verdict.
+# candidates); it is never a verdict. On `fix-required-context`,
+# `next.stale_contexts` lists each required context reported only by a
+# superseded workflow run: {context, workflow, reported_in, newest_run}, the
+# two runs as {run_id, run_number, event, created_at, url}.
 #
 # Before writing a jq filter against any of these, consider whether --watch
 # already answers the question; it usually does, and a hand-rolled poll loop is
@@ -148,7 +151,7 @@ REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
 # are deliberately not in here. tests/test_pr_status_draft_watch.sh pins the
 # two lists against every action literal this script can emit — a new action
 # must land in one of them.
-ACTIONABLE="fix-ci triage-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs"
+ACTIONABLE="fix-ci triage-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs fix-required-context"
 
 die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
 
@@ -314,7 +317,13 @@ collect_raw() {
         commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state
           contexts(first:100){ pageInfo{ hasNextPage } nodes{
             __typename
-            ... on CheckRun{ name conclusion status detailsUrl startedAt }
+            # checkSuite.workflowRun names the Actions run each row came from.
+            # It is what tells a required context reported only by an OLDER
+            # run of a workflow apart from one the newest run reported; see
+            # $stale_required below. Null for a check run of any other app.
+            ... on CheckRun{ name conclusion status detailsUrl startedAt
+              checkSuite{ status workflowRun{ databaseId runNumber event createdAt url
+                workflow{ databaseId name } } } }
             ... on StatusContext{ context state targetUrl }
           } } } } } }
       }
@@ -405,6 +414,46 @@ evaluate() {
     # reported is invisible on the PR page — the rollup only lists what ran —
     # so this reads as BLOCKED with everything green.
     | ([$required[] | select(. as $c | ($checks | map(.name) | index($c)) == null)]) as $undispatched
+    # A required context whose only check-run comes from an OLDER run of its
+    # workflow, while the NEWEST run of that workflow on this head carries no
+    # check-run of that name. The rollup keeps the old row, so the context
+    # counts as reported here, but GitHub shows it as Expected and keeps the
+    # PR BLOCKED. Observed on netresearch/t3x-nr-image-optimize#207: workflow
+    # Checks ran as #212 (with security / Composer Audit) and as #213 for the
+    # ready_for_review action, where the calling job was skipped by an if:
+    # and the context never appeared. Re-running the job inside #212 did not
+    # clear the block; removing the context from the ruleset did.
+    # INFERENCE, not documented by GitHub: a required Actions context is
+    # evaluated against the newest run of the workflow that produces it.
+    # Deliberately conservative, because a false cause is worse than the
+    # honest investigate below:
+    #   - newer means a higher runNumber in the same workflow (monotonic per
+    #     workflow; createdAt ties within a second);
+    #   - the same event only: a push run and a pull_request run of one SHA
+    #     legitimately carry different jobs;
+    #   - the newest run must be COMPLETED, since a running one may still
+    #     register the job;
+    #   - a rollup truncated at 100 proves no absence, so nothing is flagged.
+    # Read from the rollup before the per-name dedupe, which would drop the
+    # rows that show two runs; it costs no call. Only the rung directly above
+    # investigate reads it.
+    | ($p.commits.nodes[0].commit.statusCheckRollup.contexts) as $rollup_conn
+    | ([$rollup_conn.nodes[]?
+        | select(.__typename == "CheckRun" and (.checkSuite.workflowRun.workflow.databaseId // null) != null)
+        | {name, suite_status: .checkSuite.status, run: .checkSuite.workflowRun}]) as $wf_rows
+    | (if ($rollup_conn.pageInfo.hasNextPage // false) then []
+       else [$required[] as $c
+             | ([$wf_rows[] | select(.name == $c)] | max_by(.run.runNumber)) as $src
+             | select($src != null)
+             | ([$wf_rows[] | select(.run.workflow.databaseId == $src.run.workflow.databaseId
+                                     and .run.event == $src.run.event)]
+                | max_by(.run.runNumber)) as $latest
+             | select($latest.run.runNumber > $src.run.runNumber
+                      and $latest.suite_status == "COMPLETED")
+             | {context: $c, workflow: $src.run.workflow.name,
+                reported_in: ($src.run | {run_id: .databaseId, run_number: .runNumber, event, created_at: .createdAt, url}),
+                newest_run: ($latest.run | {run_id: .databaseId, run_number: .runNumber, event, created_at: .createdAt, url})}]
+       end) as $stale_required
     | ([$r[]? | .type] | unique) as $ruletypes
     | (($ruletypes | index("copilot_code_review")) != null) as $needs_copilot
     | ($p.author.login) as $author
@@ -1276,6 +1325,29 @@ evaluate() {
                  + " — then for each action_required id:"
                  + " gh api -X POST repos/\($s.repo)/actions/runs/ID/approve."
                  + " If none await approval, close+reopen the PR to re-fire the events")}
+         # A required context satisfied only by a superseded run of its
+         # workflow (see $stale_required). Directly above investigate, so it
+         # replaces that verdict only when nothing else explains the state.
+         # The re-trigger is inferred, not measured: what was measured is
+         # that re-running the job inside the old run does not help, and that
+         # dropping the context from the ruleset does. No single quotes in
+         # this rung: the jq program is a single-quoted shell string.
+         elif (($stale_required|length) > 0) then
+           {action:"fix-required-context",
+            why:("\($stale_required|length) required context(s) reported only by a SUPERSEDED workflow run — "
+                 + ([$stale_required[]
+                     | "\(.context): only in \(.workflow) run #\(.reported_in.run_number) (\(.reported_in.event)),"
+                       + " while the newest run #\(.newest_run.run_number) (\(.newest_run.event)) of that workflow"
+                       + " on this head has no check run of that name"] | join("; "))
+                 + ". GitHub shows such a context as Expected and keeps the PR BLOCKED (inferred: it"
+                 + " evaluates the newest run of the workflow, not the newest check run of that name)."
+                 + " Re-running the job inside the old run does not clear it. Get a newer run that"
+                 + " contains the job: close and reopen the PR, or push a new commit (inferred, not"
+                 + " verified). Durable fix: require a check every run of the workflow reports (an"
+                 + " aggregate gate job) instead of a job that is skipped on some events"),
+            stale_contexts:$stale_required,
+            # No single quotes: same trap as the fix-signatures cmd above.
+            cmd:"gh pr close \($s.number) --repo \($s.repo) && gh pr reopen \($s.number) --repo \($s.repo)"}
          # The end of the ladder: nothing this script decides on explains the
          # state. The sentence says so and claims nothing more; snapshot()
          # attaches next.evidence with what it could read, so the reader sees
@@ -1546,6 +1618,9 @@ render() {
     (if .next.method then "  method: \(.next.method)" else empty end),
     (if .next.note   then "  note  : \(.next.note)"   else empty end),
     (if .next.cmd    then "  cmd   : \(.next.cmd)"    else empty end),
+    (if .next.stale_contexts then (.next.stale_contexts[]
+       | "  stale ctx   : \(.context) — \(.workflow) run #\(.reported_in.run_number) \(.reported_in.url // "")"
+         + " superseded by run #\(.newest_run.run_number) \(.newest_run.url // "")") else empty end),
     (if .next.threads then (.next.threads[]|"  thread \(.threadId) (comment \(.commentId)) by \(.author) on \(.path)") else empty end),
     (if .next.urls then (.next.urls[]|"  \(.)") else empty end),
     (if .next.evidence then (.next.evidence as $e
