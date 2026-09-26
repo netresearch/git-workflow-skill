@@ -49,7 +49,7 @@ why a capability that exists still does not get used.
 | Surface | When it enters context | Budget |
 |---|---|---|
 | `description` in the frontmatter | always, in the skill listing | combined description text truncated at **1536 characters**; the listing itself is capped at ~1% of the context window |
-| `SKILL.md` body | when the skill is invoked | published guidance is **under 500 lines**; the gate here enforces **500 words over the whole file** (see below) |
+| `SKILL.md` body | when the skill is invoked | **500 body lines**, frontmatter excluded; the gate warns past 300 (see below) |
 | `references/*.md` | when the model chooses to read one | none, they cost nothing until read |
 
 What follows from that:
@@ -63,24 +63,23 @@ What follows from that:
 - **Scripts belong in the body.** They are executed, never loaded, so listing one
   costs a line and buys the only chance the model has of knowing it is there.
 
-### The enforced budget is not the documented one
+### The enforced budget
 
-The `validate-skill` pre-commit hook comes from `netresearch/skill-repo-skill`,
-and it counts **500 words over the whole file**, frontmatter included. The
-published guidance is *"Keep `SKILL.md` under 500 lines"*. Words are a much
-tighter budget than lines, and charging the frontmatter to it means the
-`description` -- the one surface that decides whether the skill is used at all
--- competes with the instructions for the same allowance.
+The `validate-skill` pre-commit hook and the CI `validate.yml` workflow both
+come from `netresearch/skill-repo-skill`. Since its v1.36.0 they count the
+lines of the `SKILL.md` **body**, frontmatter excluded: past 300 lines is a
+warning, past 500 an error. That matches the published guidance, *"Keep
+`SKILL.md` under 500 lines"*.
 
-The practical consequence is visible in this repository's history: it sat at
-499 of 500 and left a script out of `SKILL.md` rather than spend fourteen words
-on it. Note also that `Build/Scripts/validate-skill.sh` here is a COPY that
-nothing runs -- editing it changes no gate.
+Earlier versions counted 500 words over the whole file, frontmatter included.
+This repository sat at 499 of those 500 words and left a script out of
+`SKILL.md` rather than spend fourteen words on it. Note also that
+`Build/Scripts/validate-skill.sh` here is a COPY that nothing runs -- editing
+it changes no gate.
 
-Until the upstream check is corrected, budget in words and count the
-frontmatter. When the body is tight, move detail into an existing reference and
-keep the capability: a reader who cannot see that a script exists will not run
-it.
+When the body grows past the warning, move detail into an existing reference
+and keep the capability: a reader who cannot see that a script exists will not
+run it.
 
 ### One level of references, and each one says when to read it
 
