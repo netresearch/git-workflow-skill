@@ -388,6 +388,23 @@ an accepted request, wait for the delivered row and read its body — it says
 whether the cause was the quota or an outage.
 Never write the marker by hand while a request is still in flight.
 
+A 404 has a second producer that has nothing to do with Copilot: the account
+has no triage or write permission on the base repository, which is the normal
+case for a fork contributor to an upstream project. GitHub answers a
+`POST .../pulls/N/requested_reviewers` it will not accept from that account
+with `404 Not Found`, for a human reviewer as much as for a bot. Check the
+permission first:
+
+```bash
+gh api repos/OWNER/REPO --jq .permissions
+```
+
+Measured on 2026-09-27 on TYPO3-Documentation/TYPO3CMS-Guide-HowToDocument:
+`{"admin":false,"maintain":false,"pull":true,"push":false,"triage":false}`, and
+the POST requesting a human reviewer returned `404 Not Found`. Without
+`triage`, do not request; a reply in the review thread already notifies the
+reviewer.
+
 ### Putting the self-review on the record (#203)
 
 "Review it yourself and say so in the PR" used to end outside the tooling: the
