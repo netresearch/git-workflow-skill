@@ -127,6 +127,18 @@ done < <(awk '
     END { if (id != "" && type == "command") print id "\t" pat }
 ' "$CHECKPOINTS")
 
+# A checkpoint assesses the repository, not the machine it is checked out on.
+# The reflog is local state: it is not cloned and differs per checkout, so a
+# checkpoint reading it reports on whoever ran the assessment (GW-29 did, and
+# was removed). Comments may still name it.
+echo
+echo "checkpoints.yaml: no checkpoint reads local machine state"
+if grep -vE '^[[:space:]]*#' "$CHECKPOINTS" | grep -qiE 'reflog'; then
+    report "a checkpoint reads the reflog — local machine state, not repository content"
+else
+    echo "  ok   no checkpoint reads the reflog"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
     echo "All command patterns are runnable"
