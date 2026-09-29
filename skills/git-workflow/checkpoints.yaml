@@ -496,37 +496,17 @@ llm_reviews:
       For each, check for workflow_dispatch trigger.
       Flag missing workflow_dispatch as warning.
 
-  # === BARE-WORKTREE LAYOUT ===
-  - id: GW-29
-    domain: git-workflow
-    severity: warning
-    desc: "Bare-worktree layout: never switch branches in an existing worktree — use `git worktree add`"
-    prompt: |
-      Detect bare-worktree layout: a `.bare/` directory at the repo root
-      AND at least one sibling worktree directory (e.g. `main/`, `feat-*/`).
-      Standard discovery: `ls -d .bare/ 2>/dev/null && git -C .bare worktree list`.
-
-      If the layout is in use, verify the working pattern:
-      1. Recent reflog of any worktree should NOT show in-place branch switch
-         events such as `checkout: moving from <a> to <b>` or
-         `switch: moving from <a> to <b>` (these are recorded by `git checkout`
-         and `git switch`, including the `-b`/`-c` create-and-switch variants).
-      2. New branches should appear as new worktree directories, registered via
-         `git worktree add <path> -b <branch>`.
-
-      Use `git reflog show HEAD -n 50` inside each worktree to inspect entries.
-      Note: the reflog records the resulting move, not the CLI flags — so
-      `checkout -b feat/x` and `switch feat/x` both surface as
-      `checkout:`/`switch: moving from … to …` lines.
-
-      Pass when no in-place branch switching is found in the last ~50 reflog
-      entries across worktrees. Warn when in-place switch events exist —
-      they violate the convention and produce branches that are confusing to
-      reason about (working tree vs branch tip diverge for the original
-      worktree's intended branch).
-
-      Skip cleanly (pass) when the repo is a regular clone (`.git/` is a
-      directory, no `.bare/` sibling) — the convention does not apply.
+  # GW-29 was removed: it judged the bare-worktree convention ("never switch
+  # branches inside an existing worktree") by reading the reflog of the local
+  # worktrees. A reflog is machine state, not repository content — it is not
+  # cloned, differs per checkout, and says nothing about the assessed
+  # repository; a fresh clone or CI checkout starts a new one, and the `.bare/` it looked
+  # for sits outside the repository root that an assessment is given. Turning it
+  # into a precondition would be worse: a failed precondition skips the whole
+  # skill. The rule itself is intact in references/advanced-git.md
+  # ("Bare-Worktree Project Layout"), and references/claude-code-hooks.md
+  # (Recipe 7) guards the reference `main/` worktree at the moment of the
+  # command. Do not reuse the id.
 
   # === STAGING BRANCH COMPOSER.LOCK MERGE STRATEGY ===
   # mechanical-counterpart: none (the commands gather the staging lockfile; the

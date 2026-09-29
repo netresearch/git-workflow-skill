@@ -127,6 +127,32 @@ done < <(awk '
     END { if (id != "" && type == "command") print id "\t" pat }
 ' "$CHECKPOINTS")
 
+# A checkpoint assesses the repository, not the machine it is checked out on.
+# The reflog is local state: it is not cloned and differs per checkout, so a
+# checkpoint reading it reports on whoever ran the assessment (GW-29 did, and
+# was removed). Comments may still name it.
+echo
+echo "checkpoints.yaml: no checkpoint reads local machine state"
+# Drop comment lines, but keep every line of a block scalar (`key: |` / `key: >`):
+# inside one, a line starting with `#` is content, not a comment.
+active_yaml() {
+    awk '
+        { match($0, /^[[:space:]]*/); indent = RLENGTH }
+        inblock && ($0 ~ /^[[:space:]]*$/ || indent > blockindent) { print; next }
+        { inblock = 0 }
+        /^[[:space:]]*#/ { next }
+        /:[[:space:]]*[|>][-+0-9]*[[:space:]]*$/ { inblock = 1; blockindent = indent }
+        { print }
+    ' "$1"
+}
+# A here-string, not a pipe: under pipefail, `grep -q` exiting on the first
+# match kills the writer with SIGPIPE and the pipeline reports "no match".
+if grep -qiE 'reflog' <<< "$(active_yaml "$CHECKPOINTS")"; then
+    report "a checkpoint reads the reflog — local machine state, not repository content"
+else
+    echo "  ok   no checkpoint reads the reflog"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
     echo "All command patterns are runnable"
