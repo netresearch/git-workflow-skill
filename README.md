@@ -238,6 +238,21 @@ git commit --amend --no-edit
 - **enterprise-readiness-skill**: Git workflow is part of CI/CD maturity
 - **security-audit-skill**: Git hooks for security checks
 
+## Governance and policies
+
+This repository follows the organisation-wide policies of Netresearch:
+
+- [Governance](https://github.com/netresearch/.github/blob/main/GOVERNANCE.md): roles, how changes are decided and how disputes are settled.
+- [Roadmap](https://github.com/netresearch/.github/blob/main/ROADMAP.md): planned and excluded work for the coming year.
+- [Handling of dependency and code analysis findings](https://github.com/netresearch/.github/blob/main/SECURITY.md#handling-of-dependency-and-code-analysis-findings): which findings block a pull request, remediation times and how exceptions are recorded.
+- [Secret management](https://github.com/netresearch/.github/blob/main/SECURITY.md#secret-management): where CI and release secrets are stored, who can access them and when they are rotated.
+- [Access roster](https://github.com/netresearch/.github/blob/main/docs/access-roster.md): the accounts that hold admin, maintain and write access to this repository.
+
+Checks that run on pull requests in this repository:
+
+- On every pull request: Skill Validation (`lint.yml`), Eval Validation (`eval-validate.yml`), Skill Tests (`tests.yml`) and Hook Script Tests (`hook-tests.yml`).
+- On pull requests to `main`, additionally: CodeQL for GitHub Actions and Python with the `security-extended` queries (`codeql.yml`); Betterleaks secret scanning, zizmor workflow analysis, dependency review (fails on high or critical vulnerabilities), Composer Audit and Opengrep SAST (fails on findings of severity WARNING or higher), all from `security.yml`; Harness Verification (`harness-verify.yml`) and Template Drift (`check-template-drift.yml`).
+
 ## License
 
 This project uses split licensing:
