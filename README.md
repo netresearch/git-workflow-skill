@@ -248,6 +248,8 @@ This repository follows the organisation-wide policies of Netresearch:
 - [Secret management](https://github.com/netresearch/.github/blob/main/SECURITY.md#secret-management): where CI and release secrets are stored, who can access them and when they are rotated.
 - [Access roster](https://github.com/netresearch/.github/blob/main/docs/access-roster.md): the accounts that hold admin, maintain and write access to this repository.
 
+What this repository does to be secure, and what it does not promise, is set out in the [security assurance case](docs/SECURITY-ASSURANCE.md).
+
 Checks that run on pull requests in this repository:
 
 - On every pull request: Skill Validation (`lint.yml`), Eval Validation (`eval-validate.yml`), Skill Tests (`tests.yml`) and Hook Script Tests (`hook-tests.yml`).

@@ -131,3 +131,4 @@ No build system scripts defined in composer.json. Basic operations:
 - [GitHub Releases](skills/git-workflow/references/github-releases.md)
 - [Code Quality Tools](skills/git-workflow/references/code-quality-tools.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Security assurance case](docs/SECURITY-ASSURANCE.md)
