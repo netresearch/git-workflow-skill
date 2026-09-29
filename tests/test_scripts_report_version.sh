@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: every script answers --version, and answers for ITSELF.
 #
 # #209 measured two installations on one machine declaring the same version

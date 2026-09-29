@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 """Cases for scripts/validate_git_command.py.
 
 Run: python3 tests/test_validate_git_command.py

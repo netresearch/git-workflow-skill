@@ -37,6 +37,10 @@
 # gate is shut and nothing was attempted, 2 an error — usage, lookup, the merge
 # call itself failed, or it exited 0 while nothing merged and nothing entered
 # the queue. 1 is retryable later; 2 needs a human.
+
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
+
 set -uo pipefail
 
 # --version answers "which copy am I running" without diffing installations.

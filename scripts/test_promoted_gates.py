@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 """Tests for the gates promoted from a harness-local hook (2026-08-15).
 
 Run with: python3 -m unittest discover -s scripts -p 'test_*.py'

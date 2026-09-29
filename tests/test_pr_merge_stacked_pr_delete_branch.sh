@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # A branch that another open pull request uses as its BASE must survive the
 # merge. Deleting it closes that pull request, and a closed pull request's base
 # cannot be retargeted — recovery means pushing the branch back, reopening,

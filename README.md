@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<!-- SPDX-FileCopyrightText: Netresearch DTT GmbH -->
+
 # Git Workflow Skill
 
 Expert patterns for Git version control workflows including branching strategies, commit conventions, collaborative workflows, and CI/CD integration.

@@ -1,4 +1,6 @@
 ---
+# SPDX-License-Identifier: CC-BY-SA-4.0
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 name: pr-finish
 description: "Drive a PR to merge — rebase, fix CI, resolve review comments, update title/description, merge when green"
 ---

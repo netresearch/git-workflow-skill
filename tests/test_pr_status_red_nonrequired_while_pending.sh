@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test for #249: a red NON-required check must not end a --watch
 # while a REQUIRED check is still running.
 #

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 """PreToolUse gate: refuse a git write inside a reference `main/` worktree.
 
 In the bare-repo layout (`<project>/.bare` + one directory per branch), `main/`

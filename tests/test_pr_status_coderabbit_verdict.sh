@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: pr-status.sh reads CodeRabbit's verdict for the CURRENT head
 # out of its single, in-place-edited issue comment — and reports it without
 # letting it open the merge gate.

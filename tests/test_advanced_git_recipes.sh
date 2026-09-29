@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Executable form of the recipes in references/advanced-git.md:
 #   - "A long rebase needs a reference merge to resolve against"
 #   - "A merge resolved in favour of the branch silently reverts upstream work"

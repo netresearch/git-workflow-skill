@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: a required context reported only by a SUPERSEDED run of its
 # workflow is named as the cause, instead of ending the ladder at investigate.
 #

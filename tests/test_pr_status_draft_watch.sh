@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test for #228: --watch must be usable on a draft PR.
 #
 # Before the fix, `draft` sat near the top of the NEXT ladder and always

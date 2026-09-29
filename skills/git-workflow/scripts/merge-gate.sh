@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # PreToolUse gate for `gh pr merge`. Reads the Claude Code hook payload on stdin
 # and emits a deny if the target PR has unresolved review threads or a non-CLEAN
 # merge state — the exact gap that caused repeated mis-merges/mis-diagnoses.

@@ -24,6 +24,9 @@
 # Exit status is 0 whenever the repository could be read. Absence of a file is a
 # finding, not an error — "no CONTRIBUTING" is the answer to the question asked.
 
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
+
 set -uo pipefail
 
 # --version answers "which copy am I running" without diffing installations.

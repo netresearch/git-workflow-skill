@@ -24,6 +24,10 @@
 # and exclude[]. If the file is present but `yq` is unavailable the guard FAILS
 # CLOSED (exit 2) rather than silently under-enforcing. Without a config file the
 # baked-in defaults below apply.
+
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
+
 set -euo pipefail
 
 # --version answers "which copy am I running" without diffing installations.

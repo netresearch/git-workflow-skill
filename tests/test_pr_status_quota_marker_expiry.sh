@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test for #255: the recorded Copilot quota wall must expire, and a
 # delivered Copilot review must clear it.
 #

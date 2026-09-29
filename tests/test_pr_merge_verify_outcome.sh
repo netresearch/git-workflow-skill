@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: pr-merge.sh must not report an outcome it did not observe.
 #
 # `gh pr merge <n> --merge` on a merge-queue repository prints its usual success

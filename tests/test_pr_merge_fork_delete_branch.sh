@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # A fork pull request keeps its head branch: `--delete-branch` tidies OUR
 # branch, and on a cross-repository PR that branch belongs to the contributor.
 # `gh` deletes it without complaint when the token has push rights through

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: workflow runs on a fork head that await maintainer approval
 # are reported, and they outrank the review rung.
 #

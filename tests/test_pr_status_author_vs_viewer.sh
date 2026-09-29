@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: the self-review attestation is an assertion BY THE AUTHOR, so
 # it is unavailable to anyone else — not only to a bot (#280), but to any
 # operator finishing a pull request they did not author. pr-merge.sh

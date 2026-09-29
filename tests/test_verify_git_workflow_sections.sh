@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: verify-git-workflow.sh must run every section.
 #
 # Two defects made most of the script unreachable, both silent:

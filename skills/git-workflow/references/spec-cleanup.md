@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<!-- SPDX-FileCopyrightText: Netresearch DTT GmbH -->
+
 # Spec-Cleanup — Keep Intermediate Planning Artifacts Out of the Base Branch
 
 Dev-time planning artifacts — superpowers specs/plans (`docs/superpowers/**`),

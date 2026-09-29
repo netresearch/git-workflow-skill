@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: a FAILED Copilot review must not count as a review.
 #
 # Copilot answers a failed review as an ordinary COMMENTED row ("Copilot

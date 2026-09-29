@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression tests for signing-preflight.sh — the mechanical counterpart to the
 # signing prose in references/. Every case here is a bug that shipped, or a
 # measured claim the docs make and would otherwise never be re-measured:
