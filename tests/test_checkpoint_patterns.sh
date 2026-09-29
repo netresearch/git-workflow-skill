@@ -133,7 +133,21 @@ done < <(awk '
 # was removed). Comments may still name it.
 echo
 echo "checkpoints.yaml: no checkpoint reads local machine state"
-if grep -vE '^[[:space:]]*#' "$CHECKPOINTS" | grep -qiE 'reflog'; then
+# Drop comment lines, but keep every line of a block scalar (`key: |` / `key: >`):
+# inside one, a line starting with `#` is content, not a comment.
+active_yaml() {
+    awk '
+        { match($0, /^[[:space:]]*/); indent = RLENGTH }
+        inblock && ($0 ~ /^[[:space:]]*$/ || indent > blockindent) { print; next }
+        { inblock = 0 }
+        /^[[:space:]]*#/ { next }
+        /:[[:space:]]*[|>][-+0-9]*[[:space:]]*$/ { inblock = 1; blockindent = indent }
+        { print }
+    ' "$1"
+}
+# A here-string, not a pipe: under pipefail, `grep -q` exiting on the first
+# match kills the writer with SIGPIPE and the pipeline reports "no match".
+if grep -qiE 'reflog' <<< "$(active_yaml "$CHECKPOINTS")"; then
     report "a checkpoint reads the reflog — local machine state, not repository content"
 else
     echo "  ok   no checkpoint reads the reflog"
