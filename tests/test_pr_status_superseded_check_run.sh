@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: a superseded check-run must not keep the gate shut.
 #
 # One head can carry several check-runs of the same name. A close/reopen, a

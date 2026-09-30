@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 """Cases for reference-worktree-gate.py, run against a throwaway layout.
 
 The negative cases carry the rule: a gate that also blocks `git -C <path>` or a

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # --self-reviewed (#203): pr-merge may clear exactly one refusal — a
 # request-review whose refusing branch stamped reason=bot-review-unsatisfiable
 # — by posting the on-the-record `Self-review: <head-sha>` attestation as the

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 set -euo pipefail
 
 # Validate .claude-plugin/plugin.json version matches semver tags at HEAD.

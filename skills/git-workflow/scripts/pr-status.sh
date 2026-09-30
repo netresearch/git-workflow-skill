@@ -117,6 +117,10 @@
 #
 # tests/test_pr_status_json_contract.sh fails when this list and the emitted
 # object drift apart, in either direction.
+
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
+
 set -uo pipefail
 
 # --version answers "which copy am I running" without diffing installations.

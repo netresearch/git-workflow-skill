@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<!-- SPDX-FileCopyrightText: Netresearch DTT GmbH -->
+
 # Claude Code Hooks for Workflow Enforcement
 
 Ready-to-drop `settings.json` hook recipes that enforce the critical rules from `SKILL.md` at tool-invocation time. These run in the Claude Code harness, not in git — they catch violations before the command executes.

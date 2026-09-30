@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 """
 PreToolUse hook to validate git commands for best practices.
 Checks conventional commits, branch naming, and common mistakes.

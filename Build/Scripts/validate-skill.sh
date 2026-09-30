@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # validate-skill.sh - Validate Netresearch skill repository structure
 # Usage: ./validate-skill.sh [repo-root-path]
 #

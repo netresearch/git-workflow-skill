@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: when the NEXT ladder ends at `investigate`, pr-status.sh
 # lists the evidence it can read instead of one sentence — and still names no
 # cause.

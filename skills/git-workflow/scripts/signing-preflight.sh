@@ -30,6 +30,9 @@
 #   2  INCONCLUSIVE — --config-only cannot answer from the config alone
 #   3  USAGE        — not a git repository / bad arguments
 
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
+
 set -uo pipefail
 
 # --version answers "which copy am I running" without diffing installations.

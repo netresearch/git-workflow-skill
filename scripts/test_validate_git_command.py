@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 """Tests for the PreToolUse command validator.
 
 Run with: python3 -m unittest discover -s scripts -p 'test_*.py'

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # tests/test_checkpoint_patterns.sh — every `type: command` checkpoint must be
 # executable by the assessment runner.
 #

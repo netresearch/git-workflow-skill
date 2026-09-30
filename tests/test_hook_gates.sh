@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # tests/test_hook_gates.sh — the three shipped gates that had no test:
 # merge-gate.sh, conflict-marker-gate.py and spec-cleanup-guard.sh.
 #

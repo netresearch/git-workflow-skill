@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # A merge queue set up through classic branch protection has no ruleset, so the
 # rules endpoint never lists it. queue_active used to come from the rule types
 # alone, read false for such a repository, and pr-merge.sh then passed

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<!-- SPDX-FileCopyrightText: Netresearch DTT GmbH -->
+
 # Pull Request Workflow
 
 Covers the PR lifecycle for Netresearch repos: branch and tooling checks

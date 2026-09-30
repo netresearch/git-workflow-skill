@@ -1,2 +1,4 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 "$(dirname "$0")/../Scripts/validate-skill.sh" "$(git rev-parse --show-toplevel)"

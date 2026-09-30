@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # After a review round the PR body often still describes the state before it:
 # the fix replaced the approach the body explains, and nothing pointed at it.
 # pr-status.sh now prints a `body` line when the head commit is newer than the

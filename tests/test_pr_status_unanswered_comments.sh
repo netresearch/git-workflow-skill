@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: prose written under a pull request must not be invisible.
 #
 # A reviewer who comments under the PR rather than on a line of the diff
