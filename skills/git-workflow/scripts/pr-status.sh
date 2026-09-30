@@ -80,6 +80,7 @@
 #
 #   state mergeable mergeState draft number title repo author author_is_bot
 #   viewer viewer_is_author attestation_available viewer_commits viewer_committed
+#   authorship_complete commits_read commits_total
 #   base head headOid cross_repository
 #   checks checks_settled threads unresolved_threads
 #   unanswered_comments unanswered_human unanswered_by unanswered_urls
@@ -327,8 +328,9 @@ collect_raw() {
         # authors: who wrote each commit, so a non-author who pushed fixes is
         # not told to approve what they wrote themselves (retro-skill#164);
         # parents: a merge commit brings the base in and holds no code of theirs.
-        allCommits: commits(first:100){ nodes{ commit{ oid signature{ isValid }
-          parents{ totalCount } authors(first:10){ nodes{ user{ login } } } } } }
+        # totalCount on both says whether the first page held everything.
+        allCommits: commits(first:100){ totalCount nodes{ commit{ oid signature{ isValid }
+          parents{ totalCount } authors(first:10){ totalCount nodes{ user{ login } } } } } }
         commits(last:1){ nodes{ commit{ oid committedDate statusCheckRollup{ state
           contexts(first:100){ pageInfo{ hasNextPage } nodes{
             __typename
@@ -509,6 +511,13 @@ evaluate() {
         | select((.parents.totalCount // 1) < 2)
         | select([.authors.nodes[]?.user.login // empty] | index($viewer))] | length) as $viewer_commits
     | ($viewer != "" and ($viewer_is_author | not) and $viewer_commits > 0) as $viewer_committed
+    # The query reads one page: 100 commits, 10 authors each. Past that, whether
+    # the viewer wrote a commit is unknown, and unknown must not read as "no".
+    | ($p.allCommits.nodes // [] | length) as $commits_read
+    | ($p.allCommits.totalCount // $commits_read) as $commits_total
+    | ($commits_total <= $commits_read
+       and all($p.allCommits.nodes[]?.commit;
+               (.authors.totalCount // 0) <= (.authors.nodes // [] | length))) as $authorship_complete
     # Self-review attestation (#203). An EXPLICIT operator assertion, not an
     # observation: a PR comment BY THE AUTHOR whose body carries a line
     # `Self-review: <sha>` prefix-matching the current head. This is the
@@ -829,6 +838,9 @@ evaluate() {
         attestation_available: $attestation_available,
         viewer_commits: $viewer_commits,
         viewer_committed: $viewer_committed,
+        authorship_complete: $authorship_complete,
+        commits_read: $commits_read,
+        commits_total: $commits_total,
         requested_reviewers: [$p.reviewRequests.nodes[]?.requestedReviewer|(.login // .slug)],
         unresolved_threads: ($unresolved|length),
         unanswered_comments: ($unanswered_comments|length),
@@ -953,11 +965,19 @@ evaluate() {
     # approving code you wrote attests to no second reader, and an agent
     # harness may deny it as self-approval (retro-skill#164). The review has to
     # come from someone else, or the merge from the person who owns it.
-    | (" You wrote \($s.viewer_commits) of the commits on this branch, so an approval from you"
-       + " would approve your own code: it attests to no second reader, and an agent harness may"
-       + " refuse it as self-approval. The review has to come from someone who wrote none of"
-       + " them — or the merge from an explicit instruction by whoever owns that decision, with"
-       + " the review you did do posted on the PR as a comment") as $co_author_why
+    | (if $s.viewer_committed
+       then " You wrote \($s.viewer_commits) of the commits on this branch, so an approval from you"
+            + " would approve your own code: it attests to no second reader, and an agent harness may"
+            + " refuse it as self-approval. The review has to come from someone who wrote none of"
+            + " them — or the merge from an explicit instruction by whoever owns that decision, with"
+            + " the review you did do posted on the PR as a comment"
+       else " Only one page of authorship was read (\($s.commits_read) of \($s.commits_total) commits,"
+            + " at most 10 authors each), so whether you wrote any of them is unknown. Check the"
+            + " whole branch first; approve as yourself only if you wrote none of its commits"
+       end) as $co_author_why
+    # Only a non-author is offered --approve, so only a non-author can lose it.
+    | (($s.attestation_available | not)
+       and ($s.viewer_committed or ($s.authorship_complete | not))) as $approve_withheld
     # One quota sentence for every branch that would otherwise hand back a
     # re-request command. Where the evidence came from is stated rather than
     # assumed: on a PR that carries no Copilot row at all, saying the error
@@ -987,7 +1007,7 @@ evaluate() {
                + ", so the self-review attestation is not available on it: that attestation is an"
                + " assertion by the author, and pr-merge.sh --self-reviewed refuses every other"
                + " authenticated user."
-               + (if $s.viewer_committed then $co_author_why
+               + (if $approve_withheld then $co_author_why
                   else " Review the diff and approve it as yourself instead — an"
                      + " approval on this head satisfies the gate, and pr-merge.sh then merges without"
                      + " any flag: gh pr review \($s.number) --repo \($s.repo) --approve" end)
@@ -1242,11 +1262,12 @@ evaluate() {
               # "a review you write yourself" is two different commands
               # depending on who authored the pull request: the attestation is
               # the author to post, and pr-merge.sh --self-reviewed refuses
-              # anyone else, so a non-author gets the ordinary approval instead.
+              # anyone else, so a non-author gets the ordinary approval instead —
+              # unless they wrote commits here, or that is unknown ($approve_withheld).
               {action:"request-review", why:("copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate"
-                    + (if $s.viewer_committed then "." + $co_author_why
+                    + (if $approve_withheld then "." + $co_author_why
                        else ", and a review you write yourself satisfies it: " end)
-                    + (if $s.viewer_committed then ""
+                    + (if $approve_withheld then ""
                        elif $s.attestation_available then "pr-merge.sh --self-reviewed"
                        else "gh pr review \($s.number) --repo \($s.repo) --approve, because the attestation belongs to the author (\($author)) and pr-merge.sh --self-reviewed refuses every other authenticated user"
                        end)
