@@ -574,7 +574,8 @@ Three things about the merge differ from an ordinary pull request:
    branch, an approval from you approves your own code: it attests to no second
    reader, and an agent harness may deny it as self-approval (retro-skill#164,
    three of four commits by the viewer, `--approve` refused). `pr-status.sh`
-   then counts your commits (`viewer_commits`) and stops offering `--approve`.
+   then counts your commits (`viewer_commits`; merge commits that only bring
+   the base in do not count) and stops offering `--approve`.
    The review has to come from someone who wrote none of them, or the merge from
    an explicit instruction by whoever owns that decision; post the review you
    did do on the PR as a comment, saying which commits are yours.

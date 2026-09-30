@@ -65,6 +65,7 @@ author = os.environ.get("AUTHOR", "someone")
 viewer = os.environ.get("VIEWER", "someone")
 typename = os.environ.get("AUTHOR_TYPENAME", "User")
 # Comma-separated logins, one commit each; default: the author wrote the only one.
+# A `:merge` suffix makes that commit a merge commit (two parents).
 committers = [c for c in os.environ.get("COMMITTERS", author).split(",") if c]
 json.dump({"data": {
     "viewer": {"login": viewer},
@@ -88,7 +89,8 @@ json.dump({"data": {
                      "startedAt": "2026-01-01T00:00:00Z"}]}}}}]},
             "allCommits": {"nodes": [
                 {"commit": {"oid": f"{n:012x}", "signature": {"isValid": True},
-                            "authors": {"nodes": [{"user": {"login": c}}]}}}
+                            "parents": {"totalCount": 2 if c.endswith(":merge") else 1},
+                            "authors": {"nodes": [{"user": {"login": c.split(":")[0]}}]}}}
                 for n, c in enumerate(committers)]},
         }}}}, open(out, "w"))
 PY
@@ -137,6 +139,14 @@ AUTHOR=juan VIEWER=cybot COMMITTERS=juan,cybot make_stub; rm -f "$MARKER"
 out=$(status)
 check_absent   "approve withdrawn"     "gh pr review 1 --repo o/r --approve" "$out"
 check_contains "own commits counted"   "You wrote 1 of the commits"          "$out"
+
+# "Update branch", or `main` merged in by hand, writes a merge commit in the
+# viewer's name without any code of theirs; approving is still a second read.
+echo "case: viewer only merged the base in -> approve stays"
+AUTHOR=juan VIEWER=cybot COMMITTERS=juan,cybot:merge make_stub; arm_marker
+out=$(status)
+check_contains "approve named"         "gh pr review 1 --repo o/r --approve" "$out"
+check_absent   "no co-author claim"    "You wrote"                           "$out"
 
 # An older gh, or any stubbed response without a viewer, must keep the previous
 # behaviour rather than silently withdrawing the attestation advice.

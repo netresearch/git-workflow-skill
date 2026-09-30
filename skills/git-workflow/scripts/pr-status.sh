@@ -325,9 +325,10 @@ collect_raw() {
         # no red check, nothing in the rollup. Without this the tool can only
         # say "investigate".
         # authors: who wrote each commit, so a non-author who pushed fixes is
-        # not told to approve what they wrote themselves (retro-skill#164).
+        # not told to approve what they wrote themselves (retro-skill#164);
+        # parents: a merge commit brings the base in and holds no code of theirs.
         allCommits: commits(first:100){ nodes{ commit{ oid signature{ isValid }
-          authors(first:10){ nodes{ user{ login } } } } } }
+          parents{ totalCount } authors(first:10){ nodes{ user{ login } } } } } }
         commits(last:1){ nodes{ commit{ oid committedDate statusCheckRollup{ state
           contexts(first:100){ pageInfo{ hasNextPage } nodes{
             __typename
@@ -502,7 +503,10 @@ evaluate() {
     # netresearch/retro-skill#164, author juanazadian, viewer CybotTM with three
     # of four commits, where the advice "--approve" was denied as self-approval
     # and the operator was left without a named path.
+    # Merge commits do not count: "Update branch", or the base merged in by
+    # hand, is written in the name of the viewer and carries none of their code.
     | ([$p.allCommits.nodes[]?.commit
+        | select((.parents.totalCount // 1) < 2)
         | select([.authors.nodes[]?.user.login // empty] | index($viewer))] | length) as $viewer_commits
     | ($viewer != "" and ($viewer_is_author | not) and $viewer_commits > 0) as $viewer_committed
     # Self-review attestation (#203). An EXPLICIT operator assertion, not an
