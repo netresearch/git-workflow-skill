@@ -253,7 +253,7 @@ What this repository does to be secure, and what it does not promise, is set out
 Checks that run on pull requests in this repository:
 
 - On every pull request: Skill Validation (`lint.yml`), Eval Validation (`eval-validate.yml`), Skill Tests (`tests.yml`) and Hook Script Tests (`hook-tests.yml`).
-- On pull requests to `main`, additionally: CodeQL for GitHub Actions and Python with the `security-extended` queries (`codeql.yml`); Betterleaks secret scanning, zizmor workflow analysis, dependency review (fails on high or critical vulnerabilities), Composer Audit and Opengrep SAST (`--severity WARNING`: fails on findings of WARNING-level rules only; ERROR-level rules are not reported, see netresearch/typo3-ci-workflows#268), all from `security.yml`; Harness Verification (`harness-verify.yml`) and Template Drift (`check-template-drift.yml`).
+- On pull requests to `main`, additionally: CodeQL for GitHub Actions and Python with the `security-extended` queries (`codeql.yml`); Betterleaks secret scanning, zizmor workflow analysis, dependency review (fails on high or critical vulnerabilities), Composer Audit and Opengrep SAST (failure threshold: [organisation SAST rule](https://github.com/netresearch/.github/blob/main/SECURITY.md#static-analysis-sast)), all from `security.yml`; Harness Verification (`harness-verify.yml`) and Template Drift (`check-template-drift.yml`).
 
 ## License
 
