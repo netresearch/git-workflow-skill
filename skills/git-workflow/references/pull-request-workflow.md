@@ -569,8 +569,18 @@ Three things about the merge differ from an ordinary pull request:
 2. **`--self-reviewed` is not available to you.** The attestation is an
    assertion by the author, and on a takeover you are not the author. The path
    is the one the bot-authored case above names: read the diff, `gh pr review
-   <n> --approve` as yourself, then `pr-merge.sh` with no flag. Say in the
-   approval which commits are your own and therefore had no second reader.
+   <n> --approve` as yourself, then `pr-merge.sh` with no flag — **as long as
+   you pushed none of the commits.** Once you have fixed the takeover on its
+   branch, an approval from you approves your own code: it attests to no second
+   reader, and an agent harness may deny it as self-approval (retro-skill#164,
+   three of four commits by the viewer, `--approve` refused). `pr-status.sh`
+   then counts your commits (`viewer_commits`; merge commits that only bring
+   the base in do not count) and stops offering `--approve`. It also withholds
+   it when a branch has more commits, or a commit more authors, than one query
+   page reads (`authorship_complete: false`): unknown is not "none of yours".
+   The review has to come from someone who wrote none of them, or the merge from
+   an explicit instruction by whoever owns that decision; post the review you
+   did do on the PR as a comment, saying which commits are yours.
 3. **Your own comments used to keep `address-comments` shut.** The rung
    measures against the *author*, the contributor has often stopped answering,
    and every comment you write is newer than their last word — so the counter

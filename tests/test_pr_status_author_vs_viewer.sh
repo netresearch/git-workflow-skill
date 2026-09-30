@@ -64,6 +64,11 @@ head = "deadbeefcafe"
 author = os.environ.get("AUTHOR", "someone")
 viewer = os.environ.get("VIEWER", "someone")
 typename = os.environ.get("AUTHOR_TYPENAME", "User")
+# Comma-separated logins, one commit each; default: the author wrote the only one.
+# A `:merge` suffix makes that commit a merge commit (two parents).
+committers = [c for c in os.environ.get("COMMITTERS", author).split(",") if c]
+# Commits on the branch beyond those returned: the first page is all the query reads.
+total_commits = len(committers) + int(os.environ.get("MORE_COMMITS", "0"))
 json.dump({"data": {
     "viewer": {"login": viewer},
     "repository": {
@@ -84,8 +89,12 @@ json.dump({"data": {
                     {"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS",
                      "status": "COMPLETED", "detailsUrl": "u",
                      "startedAt": "2026-01-01T00:00:00Z"}]}}}}]},
-            "allCommits": {"nodes": [{"commit": {"oid": head,
-                                                 "signature": {"isValid": True}}}]},
+            "allCommits": {"totalCount": total_commits, "nodes": [
+                {"commit": {"oid": f"{n:012x}", "signature": {"isValid": True},
+                            "parents": {"totalCount": 2 if c.endswith(":merge") else 1},
+                            "authors": {"totalCount": 1,
+                                        "nodes": [{"user": {"login": c.split(":")[0]}}]}}}
+                for n, c in enumerate(committers)]},
         }}}}, open(out, "w"))
 PY
 }
@@ -116,6 +125,47 @@ out=$(status)
 check_contains "approve named"       "gh pr review 1 --repo o/r --approve" "$out"
 check_contains "bot reason retained" "never reads a diff"                  "$out"
 check_absent   "attestation absent"  "To proceed on a documented self-review" "$out"
+
+# retro-skill#164: a non-author who pushed fixes onto the branch. Approving
+# would approve their own commits, and a harness denied exactly that.
+echo "case: viewer is NOT the author but wrote commits -> no --approve"
+AUTHOR=juan VIEWER=cybot COMMITTERS=juan,cybot,cybot make_stub; arm_marker
+out=$(status)
+check_absent   "approve withdrawn"     "--approve"                          "$out"
+check_contains "own commits counted"   "You wrote 2 of the commits"         "$out"
+check_contains "other reviewer named"  "someone who wrote none of them"     "$out"
+check_absent   "attestation absent"    "To proceed on a documented self-review" "$out"
+
+# The same without the quota wall: the generic copilot_code_review branch.
+echo "case: co-authoring viewer, no quota wall -> no --approve either"
+AUTHOR=juan VIEWER=cybot COMMITTERS=juan,cybot make_stub; rm -f "$MARKER"
+out=$(status)
+check_absent   "approve withdrawn"     "gh pr review 1 --repo o/r --approve" "$out"
+check_contains "own commits counted"   "You wrote 1 of the commits"          "$out"
+
+# "Update branch", or `main` merged in by hand, writes a merge commit in the
+# viewer's name without any code of theirs; approving is still a second read.
+echo "case: viewer only merged the base in -> approve stays"
+AUTHOR=juan VIEWER=cybot COMMITTERS=juan,cybot:merge make_stub; arm_marker
+out=$(status)
+check_contains "approve named"         "gh pr review 1 --repo o/r --approve" "$out"
+check_absent   "no co-author claim"    "You wrote"                           "$out"
+
+# More commits than one page holds: whether the viewer wrote one of the rest is
+# unknown, and unknown must not read as "no" (CodeRabbit on #374).
+echo "case: authorship truncated -> no --approve, the gap is named"
+AUTHOR=juan VIEWER=cybot COMMITTERS=juan MORE_COMMITS=150 make_stub; arm_marker
+out=$(status)
+check_absent   "approve withheld"      "gh pr review 1 --repo o/r --approve" "$out"
+check_contains "gap named"             "151 commits"                         "$out"
+
+# The author may post the attestation however long the branch is: the
+# authorship guard is about non-authors only.
+echo "case: author with a truncated branch -> attestation advice stands"
+AUTHOR=someone VIEWER=someone COMMITTERS=someone MORE_COMMITS=150 make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "attestation named"     "pr-merge.sh --self-reviewed"         "$out"
+check_absent   "no gap note"           "Only one page of authorship"         "$out"
 
 # An older gh, or any stubbed response without a viewer, must keep the previous
 # behaviour rather than silently withdrawing the attestation advice.
