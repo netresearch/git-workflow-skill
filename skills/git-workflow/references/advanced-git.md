@@ -674,6 +674,37 @@ with no ref left to recover it from. `submodule foreach --recursive` is what
 sees it; `--quiet` suppresses the `Entering '<path>'` lines so that empty output
 means an empty stash rather than a header.
 
+#### Files a container wrote as root: removal half-succeeds
+
+A test or build container that runs as root leaves root-owned files in the
+worktree — a framework cache such as `var/cache/`, build output, a `.Build/`
+tree. `git worktree remove` then fails partway:
+
+```
+error: failed to delete '/path/to/project/fix-controller': Permission denied
+```
+
+The failure is not clean. Git has already deleted the worktree's administrative
+entry, so `git worktree list` no longer shows it and `git -C <dir> status` answers
+`fatal: not a git repository`, while the directory stays on disk with everything
+it could not delete — 25,863 files and 484 MB in the case this was measured on
+(git 2.55.0). A later sweep that enumerates worktrees through git never sees it
+again.
+
+Find the files that are not yours before the removal, delete them through a
+container, then remove the worktree:
+
+```bash
+find <worktree> ! -user "$(id -un)" -print | head         # anything listed blocks removal
+docker run --rm -v <worktree>/var:/v alpine rm -rf /v/cache   # the root-owned subtree only
+git worktree remove <worktree>
+```
+
+If the removal already half-succeeded, the leftover directory is no longer a
+worktree: once `find <dir> ! -user "$(id -un)"` prints nothing, delete it with
+`rm -rf`. The usual reads (unpushed commits, stashes, uncommitted changes) are
+no longer possible at that point, so run them before the first attempt.
+
 ### "Merged and clean" is not the whole test — check the worktree's role
 
 A cleanup sweep classifies worktrees by branch state: HEAD contained in
