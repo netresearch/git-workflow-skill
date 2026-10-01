@@ -248,6 +248,13 @@ QUOTA_MARKER="$QUOTA_DIR/copilot-quota-exhausted-$(date -u +%Y-%m)"
 # or leaves it gone (#255). remember_quota_hit() never rewrites an existing
 # marker, so the mtime stays the moment the wall was first proven.
 QUOTA_TTL_HOURS="${PR_STATUS_QUOTA_TTL_HOURS:-6}"
+# Bounded wait of --watch after a rate-limited read that does not wait for the
+# GraphQL reset (budget left, or the lookup failed). Settable for the tests,
+# which cannot afford a minute per case.
+RATE_LIMIT_WAIT="${PR_STATUS_RATE_LIMIT_WAIT:-60}"
+# A value that is not a positive integer would skip both clamps below and
+# reach sleep as is; it gets the default.
+[[ "$RATE_LIMIT_WAIT" =~ ^[1-9][0-9]*$ ]] || RATE_LIMIT_WAIT=60
 
 quota_marker_seen() {
   [ -f "$QUOTA_MARKER" ] || { echo false; return; }
@@ -1878,8 +1885,22 @@ while :; do
   # interval. The operator could not tell a quiet gate from a broken query and
   # killed a watch that was reporting nothing (observed during a GraphQL user
   # rate limit, netresearch/typo3-ci-workflows#250).
-  if ! s=$(snapshot) || [ -z "$s" ] || ! jq -e '.next.action' <<<"$s" >/dev/null 2>&1; then
-    if [ $(($(date +%s) - start)) -ge "$MAXWAIT" ]; then
+  # snapshot's stderr goes through a file so the failed read's cause, which
+  # collect() already re-emits, can be classified below without a second call.
+  # It is passed on to stderr unchanged, success or not.
+  snap_err=$(mktemp)
+  snap_ok=1
+  s=$(snapshot 2>"$snap_err") || snap_ok=0
+  cat "$snap_err" >&2
+  if [ "$snap_ok" = "0" ] || [ -z "$s" ] || ! jq -e '.next.action' <<<"$s" >/dev/null 2>&1; then
+    rate_limited=0
+    # The forms GitHub sends for a rate limit, and only those: a message that
+    # merely mentions a limit (a missing `rate_limit` scope, say) keeps the
+    # interval retry.
+    { grep -qE 'RATE_LIMIT' "$snap_err" || grep -qiE 'API rate limit|secondary rate limit' "$snap_err"; } && rate_limited=1
+    rm -f "$snap_err"
+    elapsed=$(($(date +%s) - start))
+    if [ "$elapsed" -ge "$MAXWAIT" ]; then
       echo "TIMEOUT after ${MAXWAIT}s — the gate stayed unreadable"
       exit 1
     fi
@@ -1888,10 +1909,47 @@ while :; do
     # this tool's own `pr-status:` diagnostics, and drops everything else. An
     # unprefixed line would be filtered out and leave the consumer in exactly
     # the silent state this branch exists to end.
+    if [ "$rate_limited" = "1" ]; then
+      # Retrying every interval into a rate limit keeps it engaged: three reads
+      # 20 s apart all failed with graphql_rate_limit while `rate_limit` showed
+      # budget left (2026-09-29). An exhausted budget (remaining 0) lifts at the
+      # GraphQL reset, so sleep to it in one go. Budget left means a secondary
+      # limit: the counter does not show it, its reset field is merely the end
+      # of the hourly window, and it usually lifts within a minute -- a bounded
+      # 60 s. So does a lookup that fails. Never shorter than the interval,
+      # never past --max-wait, measured after the lookup.
+      lookup=(gh api rate_limit --jq '.resources.graphql | "\(.remaining) \(.reset)"')
+      command -v timeout >/dev/null 2>&1 && lookup=(timeout 15 "${lookup[@]}")
+      remaining="" reset=""
+      read -r remaining reset < <("${lookup[@]}" 2>/dev/null || true) || true
+      now=$(date +%s)
+      elapsed=$((now - start))
+      if [ "$elapsed" -ge "$MAXWAIT" ]; then
+        echo "TIMEOUT after ${MAXWAIT}s — the gate stayed unreadable"
+        exit 1
+      fi
+      if [[ "$remaining" =~ ^[0-9]+$ ]] && [ "$remaining" -eq 0 ] \
+        && [[ "$reset" =~ ^[0-9]+$ ]] && [ "$reset" -gt "$now" ]; then
+        rl_wait=$((reset - now + 1))
+        rl_until="the GraphQL reset at $(jq -rn --argjson t "$reset" '$t | todate')"
+      elif [[ "$remaining" =~ ^[0-9]+$ ]] && [ "$remaining" -gt 0 ]; then
+        rl_wait=$RATE_LIMIT_WAIT
+        rl_until="a bounded ${rl_wait}s (GraphQL budget left: a secondary limit)"
+      else
+        rl_wait=$RATE_LIMIT_WAIT
+        rl_until="a bounded ${rl_wait}s (GraphQL budget unreadable or reset already past)"
+      fi
+      [ "$rl_wait" -lt "$INTERVAL" ] && rl_wait=$INTERVAL
+      [ "$rl_wait" -gt $((MAXWAIT - elapsed)) ] && rl_wait=$((MAXWAIT - elapsed))
+      echo "pr-status: UNREADABLE — GitHub rate limit on ${REPO}#${PR}; cause on stderr above. Waiting ${rl_wait}s for ${rl_until} instead of retrying every ${INTERVAL}s."
+      sleep "$rl_wait"
+      continue
+    fi
     echo "pr-status: UNREADABLE — cannot read the gate for ${REPO}#${PR}; cause on stderr above. Retrying in ${INTERVAL}s."
     sleep "$INTERVAL"
     continue
   fi
+  rm -f "$snap_err"
   act=$(jq -r '.next.action' <<<"$s")
   fails=$(jq -r '.checks.failing|join(",")' <<<"$s")
   # A red REQUIRED check is actionable the moment it appears. A red
