@@ -248,6 +248,10 @@ QUOTA_MARKER="$QUOTA_DIR/copilot-quota-exhausted-$(date -u +%Y-%m)"
 # or leaves it gone (#255). remember_quota_hit() never rewrites an existing
 # marker, so the mtime stays the moment the wall was first proven.
 QUOTA_TTL_HOURS="${PR_STATUS_QUOTA_TTL_HOURS:-6}"
+# Bounded wait of --watch after a rate-limited read that does not wait for the
+# GraphQL reset (budget left, or the lookup failed). Settable for the tests,
+# which cannot afford a minute per case.
+RATE_LIMIT_WAIT="${PR_STATUS_RATE_LIMIT_WAIT:-60}"
 
 quota_marker_seen() {
   [ -f "$QUOTA_MARKER" ] || { echo false; return; }
@@ -1923,10 +1927,10 @@ while :; do
         rl_wait=$((reset - now + 1))
         rl_until="the GraphQL reset at $(jq -rn --argjson t "$reset" '$t | todate')"
       elif [[ "$remaining" =~ ^[0-9]+$ ]] && [ "$remaining" -gt 0 ]; then
-        rl_wait=60
+        rl_wait=$RATE_LIMIT_WAIT
         rl_until="a bounded ${rl_wait}s (GraphQL budget left: a secondary limit)"
       else
-        rl_wait=60
+        rl_wait=$RATE_LIMIT_WAIT
         rl_until="a bounded ${rl_wait}s (GraphQL budget unreadable or reset already past)"
       fi
       [ "$rl_wait" -lt "$INTERVAL" ] && rl_wait=$INTERVAL
