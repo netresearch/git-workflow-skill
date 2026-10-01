@@ -1118,5 +1118,36 @@
         "Run git -C .bare fetch --prune origin and then retry git branch -d feature-x; the fetch updates main."
       ]
     }
+  },
+  {
+    "name": "noninteractive_rebase_fixup_and_signoff",
+    "prompt": "I am an agent with no interactive editor. On my branch (base origin/main) commit 3f2a9c1 has to be folded into its parent, and every commit needs a DCO sign-off: some lack one, one already has Signed-off-by followed by an Assisted-by trailer. Give me the exact commands.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "GIT_SEQUENCE_EDITOR"
+      },
+      {
+        "type": "content",
+        "pattern": "pick[^/]{0,6}3f2a9c1[^/]{0,4}/(fixup|f) "
+      },
+      {
+        "type": "content",
+        "pattern": "--exec .{0,200}--amend.{0,40}( -s|--signoff)"
+      },
+      {
+        "type": "content",
+        "pattern": "\\|\\| *git commit.{0,20}--amend"
+      }
+    ],
+    "samples": {
+      "passing": "No editor is available, so drive rebase -i through the editor variables and key the edit on the hash, because the todo line reads pick 3f2a9c1 # <subject>:\nGIT_SEQUENCE_EDITOR=\"sed -i -e 's/^pick \\(3f2a9c1\\)/fixup \\1/'\" git rebase -i origin/main\nThen add the sign-off with -s, skipping the commit that already carries one so it is not doubled:\ngit rebase --exec 'test -n \"$(git log -1 --format=\"%(trailers:key=Signed-off-by)\")\" || git commit -q --amend --no-edit -s' origin/main\nVerify with git log --format='%h %s%n%(trailers:key=Signed-off-by)' origin/main..HEAD: one sign-off per commit.",
+      "failing": [
+        "Run git rebase -i origin/main, change pick to fixup for 3f2a9c1 in the editor and save. Then run git rebase --exec 'git commit --amend --no-edit -s' origin/main.",
+        "GIT_SEQUENCE_EDITOR=\"sed -i -e 's/^pick 3f2a9c1 fix: typo/fixup 3f2a9c1/'\" git rebase -i origin/main, then git rebase --exec 'test -n \"$(git log -1 --format=%(trailers:key=Signed-off-by))\" || git commit -q --amend --no-edit -s' origin/main",
+        "GIT_SEQUENCE_EDITOR=\"sed -i -e 's/^pick \\(3f2a9c1\\)/fixup \\1/'\" git rebase -i origin/main, then git rebase --exec 'git commit --amend --no-edit -s' origin/main",
+        "Rebuild each commit with git commit-tree $tree -p $parent -m \"$msg\" and append Signed-off-by: Agent <agent@example.com> to every message."
+      ]
+    }
   }
 ]
