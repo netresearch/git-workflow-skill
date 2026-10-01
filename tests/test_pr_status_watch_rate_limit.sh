@@ -60,7 +60,7 @@ mkdir -p "$STUB_DIR/auth"
 cat > "$STUB_DIR/auth/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$(date +%s) $*" >> "$CALLS"
-echo 'gh: Bad credentials (HTTP 401)' >&2
+echo 'gh: HTTP 403: this token lacks the scope for rate_limit lookups' >&2
 exit 1
 STUB
 chmod +x "$STUB_DIR/auth/gh"
@@ -113,6 +113,15 @@ rc=0
 out=$(PR_STATUS_RATE_LIMIT_WAIT=2 PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 1 --watch --interval 1 --max-wait 10 2>/dev/null) || rc=$?
 check_contains "waits the bounded 2s"   "Waiting 2s" "$out"
 check "reads again after each wait"     "true" "$([ "$(grep -c ' api graphql' "$CALLS")" -ge 4 ] && echo true || echo false)"
+
+echo "case: an invalid PR_STATUS_RATE_LIMIT_WAIT falls back to 60 s, still capped"
+: > "$CALLS"
+REMAINING=4867; RESET=$(( $(date +%s) + 3000 )); export REMAINING RESET
+start=$(date +%s); rc=0
+out=$(PR_STATUS_RATE_LIMIT_WAIT=abc PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 1 --watch --interval 1 --max-wait 3 2>/dev/null) || rc=$?
+took=$(( $(date +%s) - start ))
+check "no raw value in the wait line"   "false" "$(case "$out" in *"Waiting abc"*) echo true ;; *) echo false ;; esac)"
+check "stays within --max-wait"         "true" "$([ "$took" -le 6 ] && echo true || echo false)"
 
 echo "case: rate_limit unreadable — bounded wait, capped at --max-wait"
 : > "$CALLS"

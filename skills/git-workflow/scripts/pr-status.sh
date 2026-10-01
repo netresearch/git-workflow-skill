@@ -252,6 +252,9 @@ QUOTA_TTL_HOURS="${PR_STATUS_QUOTA_TTL_HOURS:-6}"
 # GraphQL reset (budget left, or the lookup failed). Settable for the tests,
 # which cannot afford a minute per case.
 RATE_LIMIT_WAIT="${PR_STATUS_RATE_LIMIT_WAIT:-60}"
+# A value that is not a positive integer would skip both clamps below and
+# reach sleep as is; it gets the default.
+[[ "$RATE_LIMIT_WAIT" =~ ^[1-9][0-9]*$ ]] || RATE_LIMIT_WAIT=60
 
 quota_marker_seen() {
   [ -f "$QUOTA_MARKER" ] || { echo false; return; }
@@ -1891,7 +1894,10 @@ while :; do
   cat "$snap_err" >&2
   if [ "$snap_ok" = "0" ] || [ -z "$s" ] || ! jq -e '.next.action' <<<"$s" >/dev/null 2>&1; then
     rate_limited=0
-    grep -qiE 'RATE_LIMIT|rate limit|secondary rate' "$snap_err" && rate_limited=1
+    # The forms GitHub sends for a rate limit, and only those: a message that
+    # merely mentions a limit (a missing `rate_limit` scope, say) keeps the
+    # interval retry.
+    { grep -qE 'RATE_LIMIT' "$snap_err" || grep -qiE 'API rate limit|secondary rate limit' "$snap_err"; } && rate_limited=1
     rm -f "$snap_err"
     elapsed=$(($(date +%s) - start))
     if [ "$elapsed" -ge "$MAXWAIT" ]; then
