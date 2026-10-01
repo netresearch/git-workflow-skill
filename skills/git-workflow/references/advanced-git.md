@@ -85,6 +85,87 @@ git rebase -i abc1234^
 # x, exec   - run shell command
 ```
 
+### Driving `rebase -i` Without an Editor
+
+An agent has no terminal to type into, so `rebase -i` has to be driven through
+the two editor variables: `GIT_SEQUENCE_EDITOR` edits the todo list,
+`GIT_EDITOR` edits each commit message. Both receive the file to change as
+`$1`, and both are set for this one command only.
+
+**Key the todo edit on the hash, never on the subject.** The todo list recent
+git writes (2.55 measured) reads `pick <hash> # <subject>`, with a `#` marker
+before the subject that older examples do not show, and
+`rebase.instructionFormat` can replace the subject text altogether. A pattern
+spelled with the subject
+matches nothing, git replays every `pick` unchanged, and the rebase still
+reports success:
+
+```bash
+# ❌ Silently a no-op: the todo line is "pick abc1234 # fix: typo"
+GIT_SEQUENCE_EDITOR="sed -i -e 's/^pick abc1234 fix: typo/fixup abc1234/'" \
+  git rebase -i <base>
+
+# ✅ Keyed on the abbreviated hash, as it appears in the todo list
+GIT_SEQUENCE_EDITOR="sed -i -e 's/^pick \(abc1234\)/fixup \1/'" \
+  git rebase -i <base>
+
+# If the subject really is needed to pick the line, allow the marker:
+#   's/^pick \(abc1234\) \(# \)\?fix: typo/fixup \1/'
+```
+
+`sed -i -e` is GNU sed; BSD sed reads the argument after `-i` as a backup
+suffix, so write `sed -i '' -e …` there. Use the hash exactly as
+`git log --oneline <base>..HEAD` prints it; the todo list uses the same
+abbreviation.
+
+**Reword through a script.** `reword` opens `GIT_EDITOR` once per marked
+commit. Point it at a small script, by absolute path, that writes the new
+message into the file it is given:
+
+```bash
+printf 'fix: correct the typo in the help text\n' > /tmp/msg.txt
+printf '#!/bin/sh\ncp /tmp/msg.txt "$1"\n' > /tmp/reword.sh
+chmod +x /tmp/reword.sh
+
+GIT_SEQUENCE_EDITOR="sed -i -e 's/^pick \(abc1234\)/reword \1/'" \
+GIT_EDITOR=/tmp/reword.sh \
+  git rebase -i <base>
+```
+
+The message file replaces the whole message, trailers included, so it has to
+carry any trailers the commit should keep.
+
+**Add a missing DCO sign-off with `--exec`, never by hand.** `-s` takes the
+configured identity; a `Signed-off-by:` line typed into a message, or into a
+commit built with `git commit-tree`, is a certification nobody made — and an
+agent must not write its own sign-off at all. The re-sign remedy in
+`pull-request-workflow.md` § *Signing and DCO Failures* amends every commit;
+when some commits already carry a sign-off followed by other trailers, that
+doubles it (see `commit-conventions.md` § *Signed Commits + DCO Sign-Off*).
+Skip the ones that have it:
+
+```bash
+git rebase --exec 'test -n "$(git log -1 --format="%(trailers:key=Signed-off-by)")" || git commit -q --amend --no-edit -s' <base>
+```
+
+An empty commit in the range stops the rebase at the amend; add
+`--allow-empty` to the `git commit` there.
+
+**Verify before pushing.** Every commit shows exactly one sign-off, and when
+only messages changed, the tree is byte-identical to the old tip:
+
+```bash
+git log --format='%h %s%n%(trailers:key=Signed-off-by)' <base>..HEAD
+# per commit: one Signed-off-by line. Two identical lines = doubled sign-off;
+# none = the exec skipped or failed on that commit.
+
+git diff --quiet <old-tip> HEAD && echo "tree unchanged"
+# <old-tip>: the SHA noted before the rebase, or ORIG_HEAD right after it.
+# Any output from `git diff <old-tip> HEAD` means content changed too.
+
+git rev-list --count <base>..HEAD   # a fixup that took effect lowers this
+```
+
 ### Replaying Only the Tip Onto a Moved Base (`--onto`)
 
 Use when a long-lived branch is *N bootstrap commits + a few real commits*, and

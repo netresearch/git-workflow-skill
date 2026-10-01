@@ -7,6 +7,7 @@
 #   - "Verify a branch split by blob identity, not by reading the diffs"
 #   - "A worktree containing submodules needs --force"
 #   - "Consolidating a plain clone into the bare layout"
+#   - "Driving `rebase -i` Without an Editor"
 #
 # Three review rounds found the same defect class each time: a recipe that was
 # reasoned about at the edited line and never run end to end, from the cwd and
@@ -555,9 +556,58 @@ git checkout -q main; git merge -q --no-edit -s ours resolved~1 >/dev/null
 git update-ref refs/remotes/origin/main main
 check "a hand resolution is named by file" "f" "$(merge_only resolved | head -1 | awk '{print $1}')"
 
+# --------------------------------------------------------------------------
+printf '\n== driving rebase -i without an editor\n'
+# --------------------------------------------------------------------------
+n="$TMP/p7"; mkdir -p "$n"; cd "$n" || exit 1; git init -q .
+for i in 1 2 3; do echo "$i" > "f$i"; git add "f$i"; git commit -qm "feat: change $i"; done
+h2=$(git rev-parse --short HEAD~1); h3=$(git rev-parse --short HEAD); tip=$(git rev-parse HEAD)
+
+# The premise of the section: the todo line carries "# " before the subject.
+GIT_SEQUENCE_EDITOR="cp \"\$1\" '$TMP/todo.txt'; :" git rebase -i HEAD~2 >/dev/null 2>&1
+check "todo line reads 'pick <hash> # <subject>'" \
+      "pick $h3 # feat: change 3" "$(grep "^pick $h3" "$TMP/todo.txt")"
+
+GIT_SEQUENCE_EDITOR="sed -i -e 's/^pick $h3 feat: change 3/fixup $h3/'" \
+  git rebase -i HEAD~2 >/dev/null 2>&1
+check "a subject-keyed pattern is a silent no-op" "3" "$(git rev-list --count HEAD)"
+
+GIT_SEQUENCE_EDITOR="sed -i -e 's/^pick \($h3\)/fixup \1/'" \
+  git rebase -i HEAD~2 >/dev/null 2>&1
+check "a hash-keyed fixup takes effect" "2" "$(git rev-list --count HEAD)"
+try "and leaves the tree unchanged" git diff --quiet "$tip" HEAD
+
+# The fixup folded change 3 into change 2, which now sits at HEAD under a new hash.
+h2=$(git rev-parse --short HEAD)
+printf 'feat: reworded two\n' > "$TMP/msg.txt"
+# shellcheck disable=SC2016  # "$1" belongs to the generated script, not to this shell
+printf '#!/bin/sh\ncp %s "$1"\n' "$TMP/msg.txt" > "$TMP/reword.sh"; chmod +x "$TMP/reword.sh"
+GIT_SEQUENCE_EDITOR="sed -i -e 's/^pick \($h2\)/reword \1/'" GIT_EDITOR="$TMP/reword.sh" \
+  git rebase -i HEAD~1 >/dev/null 2>&1
+check "reword through GIT_EDITOR replaces the message" "feat: reworded two" "$(git log -1 --format=%s)"
+try "and leaves the tree unchanged" git diff --quiet "$tip" HEAD
+
+# Sign-off: one commit without, one with a sign-off followed by another trailer.
+echo 4 > f4; git add f4; git commit -qm "feat: unsigned"
+echo 5 > f5; git add f5
+printf 'feat: signed\n\nSigned-off-by: Test <t@example.com>\nAssisted-by: tool:model\n' | git commit -qF -
+signed=$(git rev-parse HEAD)
+sobs() { git rev-list --reverse HEAD~2..HEAD | while read -r c; do
+  git log -1 --format='%(trailers:key=Signed-off-by)' "$c" | grep -c .; done | tr '\n' ' '; }
+
+git rebase --exec 'git commit -q --amend --no-edit -s' HEAD~2 >/dev/null 2>&1
+check "the unguarded exec doubles a sign-off that other trailers follow" "1 2 " "$(sobs)"
+git checkout -q --detach "$signed"
+
+# shellcheck disable=SC2016  # the exec line is expanded per commit by the rebase, not here
+git rebase --exec 'test -n "$(git log -1 --format="%(trailers:key=Signed-off-by)")" || git commit -q --amend --no-edit -s' HEAD~2 >/dev/null 2>&1
+check "the guarded exec leaves exactly one sign-off per commit" "1 1 " "$(sobs)"
+try "and leaves the tree unchanged" git diff --quiet "$signed" HEAD
+check "ORIG_HEAD names the pre-rebase tip" "$signed" "$(git rev-parse ORIG_HEAD)"
+
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "78" "$ran"
+check "every assertion ran" "88" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]
