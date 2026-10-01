@@ -3155,6 +3155,8 @@ git rebase origin/main --exec 'git commit --amend --no-edit --signoff -S'
 git push --force-with-lease
 ```
 
+If some commits in the range already carry a sign-off followed by other trailers, `--signoff` adds a second one to each of them; the guarded form that skips those commits, and the check that counts sign-offs afterwards, are in `advanced-git.md` § *Driving `rebase -i` Without an Editor*.
+
 **Step 3 — If signatures still show `reason: unknown_key`, the SSH key is not registered as a *Signing Key* on GitHub.**
 Auth keys and signing keys are separate registrations. An authentication key cannot verify commits:
 
