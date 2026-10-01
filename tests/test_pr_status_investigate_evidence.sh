@@ -73,6 +73,8 @@ chmod +x "$STUB_DIR/gh"
 #   ROLLUP_FILLER    extra green rollup contexts; at 100 or more the rollup is
 #                    truncated and hasNextPage is true
 #   RUN_FILLER       extra green check-runs on the REST side only
+#   LAST_PUSH        true sets require_last_push_approval on the pull_request rule
+#   DECISION         reviewDecision of the pull request (default APPROVED)
 build() {
     python3 - "$STUB_DIR" "$HEAD" "$@" <<'PY'
 import sys, json, os
@@ -84,6 +86,8 @@ strict_b = env.get("STRICT_RULESET", "true") == "true"
 code_owner = env.get("CODE_OWNER", "false") == "true"
 rollup_filler = int(env.get("ROLLUP_FILLER", "0"))
 run_filler = int(env.get("RUN_FILLER", "0"))
+last_push = env.get("LAST_PUSH", "false") == "true"
+decision = env.get("DECISION", "APPROVED")
 GHA = 15368
 ruleset_a = ["ci / Code Style", "ci / Rector", "security / Composer Audit"]
 ruleset_b = ["All security checks", "DCO", "ci / All CI checks"]
@@ -102,7 +106,7 @@ rules = [
     {"type": "pull_request", "ruleset_id": 20547668, "parameters": {
         "required_approving_review_count": 1, "dismiss_stale_reviews_on_push": True,
         "required_reviewers": [], "require_code_owner_review": code_owner,
-        "require_last_push_approval": False, "required_review_thread_resolution": True,
+        "require_last_push_approval": last_push, "required_review_thread_resolution": True,
         "require_extra_approval_for_unattributed_changes": extra == "true",
         "allowed_merge_methods": ["merge"]}},
 ]
@@ -163,7 +167,7 @@ json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
     "pullRequest": {
         "number": 201, "title": "t", "state": "OPEN", "isDraft": False,
         "mergeable": "MERGEABLE", "mergeStateStatus": merge_state,
-        "reviewDecision": "APPROVED", "mergeQueueEntry": None,
+        "reviewDecision": decision, "mergeQueueEntry": None,
         "author": {"login": "someone", "__typename": "User"},
         "baseRefName": "main", "headRefName": "fix/phpstan-2.2.15-findings",
         "headRefOid": head, "isCrossRepository": False,
@@ -459,5 +463,23 @@ check_grep "watch settles on the ignored action" "SETTLED: NEXT is still the ign
 check "no check-runs, check-suites or compare call" "0" \
       "$(grep -cE '^(check-runs|check-suites|compare)' "$STUB_DIR/calls" || true)"
 check "no promise of an evidence block" "0" "$(grep -c 'evidence below' <<<"$text" || true)"
+
+# --- case 19: the ruleset form of require_last_push_approval -----------------
+# ldap-manager#690 (2026-09-30): an APPROVED review on the head, reviewDecision
+# REVIEW_REQUIRED, every check green, and NEXT said "cause NOT determined"
+# because only the classic form of the gate had a verdict. The ruleset form is a
+# parameter of the pull_request rule the rules endpoint already returns.
+echo "case 19: ruleset sets require_last_push_approval, APPROVED row, REVIEW_REQUIRED"
+LAST_PUSH=true DECISION=REVIEW_REQUIRED build BLOCKED no false 0 15368
+out="$(run_json)"
+check "next.action" "request-review" "$(jq -r .next.action <<<"$out")"
+check_grep "why names the ruleset and the gate" \
+      "ruleset 20547668 sets require_last_push_approval" "$(jq -r .next.why <<<"$out")"
+check_grep "why says who has to approve" "Someone OTHER than the last pusher" "$(jq -r .next.why <<<"$out")"
+echo "case 19b: the same state without the ruleset parameter stays undetermined"
+DECISION=REVIEW_REQUIRED build BLOCKED no false 0 15368
+out="$(run_json)"
+check "next.action is not the last-push verdict" "false" \
+      "$(jq -r '(.next.why // "") | contains("require_last_push_approval")' <<<"$out")"
 
 exit $fail

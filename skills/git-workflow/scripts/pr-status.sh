@@ -92,7 +92,7 @@
 #   requested_reviewers
 #   merge_methods auto_merge_allowed queue_active queue_entry
 #   rulesets rules_fetched required_contexts undispatched unsigned
-#   classic_protection awaiting_approval
+#   classic_protection last_push_rulesets awaiting_approval
 #   next
 #
 # `checks` is {total,pass,fail,pending,skip,...} and `next` is
@@ -755,6 +755,13 @@ evaluate() {
                                and ($checks|length) > 0)
                          else null end),
         rulesets: $ruletypes,
+        # Ids of the rulesets whose pull_request rule sets
+        # require_last_push_approval. Unlike the classic form this one is
+        # readable by every caller: it is a parameter of the rule the rules
+        # endpoint already returns, so it needs no admin token.
+        last_push_rulesets: ([$r[]? | select(.type == "pull_request"
+                                              and (.parameters.require_last_push_approval // false))
+                              | .ruleset_id]),
         # Review gates from CLASSIC branch protection, which the rules
         # endpoint never shows (require_last_push_approval, approval count,
         # code-owner reviews). Admin-only endpoint, fetched lazily and only
@@ -1163,14 +1170,22 @@ evaluate() {
          # (go-cron#399: this gate surfaced only after every other gate was
          # green, because it lives in the admin-only classic endpoint the
          # rules query cannot see). classic_protection is null for
-         # non-admin callers, so the branch never fires on guesswork.
-         elif ($s.classic_protection != null
-               and $s.classic_protection.last_push_approval
+         # non-admin callers, so the branch never fires on guesswork. The
+         # ruleset form of the same gate is a parameter of the pull_request
+         # rule and is always readable (ldap-manager#690, 2026-09-30: an
+         # APPROVED row, REVIEW_REQUIRED and "cause NOT determined" until the
+         # require_last_push_approval of the ruleset was switched off; the
+         # approver was the account that had pushed the rebased commits).
+         elif ((($s.classic_protection != null and $s.classic_protection.last_push_approval)
+                or ($s.last_push_rulesets | length) > 0)
                and $s.reviewDecision == "REVIEW_REQUIRED"
                and $s.has_review_on_head
                and ([$s.reviews_on_head[] | select(test("APPROVED"))] | length) > 0) then
            {action:"request-review",
-            why:("classic branch protection sets require_last_push_approval — the APPROVED on \($s.headOid[0:8]) does not count if the approver made the most recent push. Someone OTHER than the last pusher must approve; alternatively the author pushes again and a previous approver re-approves")}
+            why:(([(if ($s.classic_protection != null and $s.classic_protection.last_push_approval)
+                    then "classic branch protection" else empty end),
+                   ($s.last_push_rulesets[] | "ruleset \(.)")] | join(" and "))
+                 + " sets require_last_push_approval — the APPROVED on \($s.headOid[0:8]) does not count if the approver made the most recent push. Someone OTHER than the last pusher must approve; alternatively the author pushes again and a previous approver re-approves")}
          # `|` binds looser than `and`, so the negation needs its own parens:
          # `a and b|not` parses as `(a and b)|not` and inverts the whole test.
          # has_copilot_review_on_head must be false too: the error row stays on
