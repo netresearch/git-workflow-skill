@@ -479,7 +479,20 @@ check_grep "why says who has to approve" "Someone OTHER than the last pusher" "$
 echo "case 19b: the same state without the ruleset parameter stays undetermined"
 DECISION=REVIEW_REQUIRED build BLOCKED no false 0 15368
 out="$(run_json)"
-check "next.action is not the last-push verdict" "false" \
+check "next.action" "investigate" "$(jq -r .next.action <<<"$out")"
+check "evidence.cause_determined" "false" "$(jq -r .next.evidence.cause_determined <<<"$out")"
+check "no last-push verdict in why" "false" \
       "$(jq -r '(.next.why // "") | contains("require_last_push_approval")' <<<"$out")"
+echo "case 19c: classic protection and the ruleset both set it, plural verb"
+PROT='{"required_pull_request_reviews": {"required_approving_review_count": 1,
+         "dismiss_stale_reviews": true, "require_code_owner_reviews": false,
+         "require_last_push_approval": true,
+         "bypass_pull_request_allowances": {"users": [], "teams": [], "apps": []}}}' \
+  LAST_PUSH=true DECISION=REVIEW_REQUIRED build BLOCKED no false 0 15368
+out="$(run_json)"
+check "next.action" "request-review" "$(jq -r .next.action <<<"$out")"
+check_grep "both sources named, verb in the plural" \
+      "classic branch protection and ruleset 20547668 set require_last_push_approval" \
+      "$(jq -r .next.why <<<"$out")"
 
 exit $fail

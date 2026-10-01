@@ -1184,8 +1184,10 @@ evaluate() {
            {action:"request-review",
             why:(([(if ($s.classic_protection != null and $s.classic_protection.last_push_approval)
                     then "classic branch protection" else empty end),
-                   ($s.last_push_rulesets[] | "ruleset \(.)")] | join(" and "))
-                 + " sets require_last_push_approval — the APPROVED on \($s.headOid[0:8]) does not count if the approver made the most recent push. Someone OTHER than the last pusher must approve; alternatively the author pushes again and a previous approver re-approves")}
+                   ($s.last_push_rulesets[] | "ruleset \(.)")]) as $sources
+                 | ($sources | join(" and "))
+                   + (if ($sources | length) > 1 then " set" else " sets" end)
+                 + " require_last_push_approval — the APPROVED on \($s.headOid[0:8]) does not count if the approver made the most recent push. Someone OTHER than the last pusher must approve; alternatively the author pushes again and a previous approver re-approves")}
          # `|` binds looser than `and`, so the negation needs its own parens:
          # `a and b|not` parses as `(a and b)|not` and inverts the whole test.
          # has_copilot_review_on_head must be false too: the error row stays on
