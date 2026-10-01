@@ -574,7 +574,7 @@ Three rules follow, and they cost nothing:
 - **Poll REST, not GraphQL, for liveness.** `gh api repos/$R/pulls/$PR` and `gh api repos/$R/commits/$SHA/check-runs` answer state and checks from the cheaper budget.
 - **180 s, not 60 s.** A merge queue does not resolve in a minute; the faster interval buys nothing and is what drains the budget.
 
-Recovery is waiting: `gh api rate_limit --jq '.resources.graphql.reset'` is an epoch timestamp — sleep to it in **one** background command rather than retrying into the limit.
+Recovery is waiting: `gh api rate_limit --jq '.resources.graphql.reset'` is an epoch timestamp — sleep to it in **one** background command rather than retrying into the limit. `pr-status.sh --watch` does this itself: when a gate read fails on a rate limit it prints one `pr-status: UNREADABLE — GitHub rate limit …` line and sleeps to that reset (60 s when the reset is unreadable or already past, never past `--max-wait`) instead of retrying every interval.
 
 ### What still works while GraphQL is drained
 

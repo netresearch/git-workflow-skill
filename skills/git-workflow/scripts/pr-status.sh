@@ -1878,8 +1878,19 @@ while :; do
   # interval. The operator could not tell a quiet gate from a broken query and
   # killed a watch that was reporting nothing (observed during a GraphQL user
   # rate limit, netresearch/typo3-ci-workflows#250).
-  if ! s=$(snapshot) || [ -z "$s" ] || ! jq -e '.next.action' <<<"$s" >/dev/null 2>&1; then
-    if [ $(($(date +%s) - start)) -ge "$MAXWAIT" ]; then
+  # snapshot's stderr goes through a file so the failed read's cause, which
+  # collect() already re-emits, can be classified below without a second call.
+  # It is passed on to stderr unchanged, success or not.
+  snap_err=$(mktemp)
+  snap_ok=1
+  s=$(snapshot 2>"$snap_err") || snap_ok=0
+  cat "$snap_err" >&2
+  if [ "$snap_ok" = "0" ] || [ -z "$s" ] || ! jq -e '.next.action' <<<"$s" >/dev/null 2>&1; then
+    rate_limited=0
+    grep -qiE 'RATE_LIMIT|rate limit|secondary rate' "$snap_err" && rate_limited=1
+    rm -f "$snap_err"
+    elapsed=$(($(date +%s) - start))
+    if [ "$elapsed" -ge "$MAXWAIT" ]; then
       echo "TIMEOUT after ${MAXWAIT}s — the gate stayed unreadable"
       exit 1
     fi
@@ -1888,10 +1899,33 @@ while :; do
     # this tool's own `pr-status:` diagnostics, and drops everything else. An
     # unprefixed line would be filtered out and leave the consumer in exactly
     # the silent state this branch exists to end.
+    if [ "$rate_limited" = "1" ]; then
+      # Retrying every interval into a rate limit keeps it engaged: three reads
+      # 20 s apart all failed with graphql_rate_limit while `rate_limit` showed
+      # budget left (2026-09-29). Sleep to the GraphQL reset in one go. A reset
+      # that cannot be read, or lies in the past (a secondary limit does not
+      # show in the counter), gets a bounded 60 s. Never shorter than the
+      # interval, never past --max-wait.
+      reset=$(gh api rate_limit --jq '.resources.graphql.reset' 2>/dev/null) || reset=""
+      now=$(date +%s)
+      if [[ "$reset" =~ ^[0-9]+$ ]] && [ "$reset" -gt "$now" ]; then
+        rl_wait=$((reset - now + 1))
+        rl_until="the GraphQL reset at $(jq -rn --argjson t "$reset" '$t | todate')"
+      else
+        rl_wait=60
+        rl_until="a bounded ${rl_wait}s (GraphQL reset unreadable or already past)"
+      fi
+      [ "$rl_wait" -lt "$INTERVAL" ] && rl_wait=$INTERVAL
+      [ "$rl_wait" -gt $((MAXWAIT - elapsed)) ] && rl_wait=$((MAXWAIT - elapsed))
+      echo "pr-status: UNREADABLE — GitHub rate limit on ${REPO}#${PR}; cause on stderr above. Waiting ${rl_wait}s for ${rl_until} instead of retrying every ${INTERVAL}s."
+      sleep "$rl_wait"
+      continue
+    fi
     echo "pr-status: UNREADABLE — cannot read the gate for ${REPO}#${PR}; cause on stderr above. Retrying in ${INTERVAL}s."
     sleep "$INTERVAL"
     continue
   fi
+  rm -f "$snap_err"
   act=$(jq -r '.next.action' <<<"$s")
   fails=$(jq -r '.checks.failing|join(",")' <<<"$s")
   # A red REQUIRED check is actionable the moment it appears. A red
