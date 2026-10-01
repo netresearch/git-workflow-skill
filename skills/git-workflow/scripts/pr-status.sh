@@ -1902,18 +1902,32 @@ while :; do
     if [ "$rate_limited" = "1" ]; then
       # Retrying every interval into a rate limit keeps it engaged: three reads
       # 20 s apart all failed with graphql_rate_limit while `rate_limit` showed
-      # budget left (2026-09-29). Sleep to the GraphQL reset in one go. A reset
-      # that cannot be read, or lies in the past (a secondary limit does not
-      # show in the counter), gets a bounded 60 s. Never shorter than the
-      # interval, never past --max-wait.
-      reset=$(gh api rate_limit --jq '.resources.graphql.reset' 2>/dev/null) || reset=""
+      # budget left (2026-09-29). An exhausted budget (remaining 0) lifts at the
+      # GraphQL reset, so sleep to it in one go. Budget left means a secondary
+      # limit: the counter does not show it, its reset field is merely the end
+      # of the hourly window, and it usually lifts within a minute -- a bounded
+      # 60 s. So does a lookup that fails. Never shorter than the interval,
+      # never past --max-wait, measured after the lookup.
+      lookup=(gh api rate_limit --jq '.resources.graphql | "\(.remaining) \(.reset)"')
+      command -v timeout >/dev/null 2>&1 && lookup=(timeout 15 "${lookup[@]}")
+      remaining="" reset=""
+      read -r remaining reset < <("${lookup[@]}" 2>/dev/null || true) || true
       now=$(date +%s)
-      if [[ "$reset" =~ ^[0-9]+$ ]] && [ "$reset" -gt "$now" ]; then
+      elapsed=$((now - start))
+      if [ "$elapsed" -ge "$MAXWAIT" ]; then
+        echo "TIMEOUT after ${MAXWAIT}s — the gate stayed unreadable"
+        exit 1
+      fi
+      if [[ "$remaining" =~ ^[0-9]+$ ]] && [ "$remaining" -eq 0 ] \
+        && [[ "$reset" =~ ^[0-9]+$ ]] && [ "$reset" -gt "$now" ]; then
         rl_wait=$((reset - now + 1))
         rl_until="the GraphQL reset at $(jq -rn --argjson t "$reset" '$t | todate')"
+      elif [[ "$remaining" =~ ^[0-9]+$ ]] && [ "$remaining" -gt 0 ]; then
+        rl_wait=60
+        rl_until="a bounded ${rl_wait}s (GraphQL budget left: a secondary limit)"
       else
         rl_wait=60
-        rl_until="a bounded ${rl_wait}s (GraphQL reset unreadable or already past)"
+        rl_until="a bounded ${rl_wait}s (GraphQL budget unreadable or reset already past)"
       fi
       [ "$rl_wait" -lt "$INTERVAL" ] && rl_wait=$INTERVAL
       [ "$rl_wait" -gt $((MAXWAIT - elapsed)) ] && rl_wait=$((MAXWAIT - elapsed))
