@@ -565,6 +565,24 @@ git reflog expire --expire=now --all
 git gc --prune=now
 ```
 
+## Remote Operations
+
+### Git network commands hang: check the SSH multiplexing socket
+
+With `ControlMaster auto` / `ControlPersist` in `~/.ssh/config`, every git
+command to a host reuses one master connection. If that master dies without
+removing its socket (suspend, network change), `git push`, `fetch` and
+`ls-remote` hang without output instead of failing. Check and drop the master
+before suspecting the remote or the credentials:
+
+```bash
+ssh -O check git@<host>   # "Master running" or an error on a dead socket
+ssh -O exit git@<host>    # close it; the next git command opens a fresh one
+```
+
+Use the same user and host the remote URL uses, so the `ControlPath` matches.
+One such hang cost about 15 minutes of retries against a healthy GitLab.
+
 ## Worktrees
 
 ### Multiple Working Directories

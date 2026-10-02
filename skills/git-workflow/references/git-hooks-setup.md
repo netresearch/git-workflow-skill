@@ -196,6 +196,22 @@ against the repo root, before inspecting it.
   make the bypass the default; fix the hook environment or commit from the
   primary checkout when possible.
 
+### Dockerized hooks in a worktree (FAQ)
+
+- **Symptom C**: a hook wrapper that runs CaptainHook (or any checker) inside a
+  docker compose service fails in a secondary worktree, while the same commit
+  passes in the primary checkout. A fallback in the wrapper (e.g. "`composer
+  install` failed, try `composer update`") then rewrites `composer.lock` as a
+  side effect.
+- **Cause C**: the container mounts a fixed project path and works there. In a
+  worktree, `.git` is a pointer file whose `gitdir:` names a host path that is
+  not mounted, so every git call inside the container fails; the wrapper's
+  install step fails for the same reason and falls through to `update`.
+- **Fix**: commit from the checkout the container mounts. If a worktree is
+  unavoidable: `git checkout -- composer.lock` (or restore it from the branch),
+  run the hook's checks yourself inside the container, then use the controlled
+  bypass above and say so in the MR/PR.
+
 ### Distinguish "the hook is broken" from "the check failed"
 
 The bypass above is for a hook that cannot *run*. A hook that ran fine and
