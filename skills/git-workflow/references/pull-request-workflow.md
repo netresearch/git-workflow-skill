@@ -1106,6 +1106,24 @@ before posting (observed: a reported `:185` pointed at a context `}`; the
 finding's code sat at 184). A wrong anchor lands the comment on an unrelated
 line or fails the review submission outright.
 
+### A review you post makes claims too: check each against what measured it
+
+"Point review rounds at the claims" (above) is about the text of your own pull
+request; the same holds for a review of someone else's. A review states facts
+about the change ("converts to zero calls", "this format is used by versions X
+to Y", "the detector then reports a false finding"), and the author acts on
+them. Before the `POST`, list every factual sentence in the body and in each
+inline comment next to the command that measured it and the scope it was
+measured on: which versions, which files, which sample. A claim measured on a
+subset is written as that subset.
+
+The gap this closes is generalising from the part you measured to the whole.
+On netresearch/retro-skill#168 a review stated a version range that started
+at the wrong version, gave an output format measured on Codex 0.142.x as the
+format of every version back to 0.38, and described an impact that no run had
+shown. All three were corrected in a follow-up comment after the review had
+gone out; the list would have caught each one before it.
+
 ### Posting a review with inline comments, and reading it back
 
 One `POST` submits the verdict and every inline comment together. Build the
