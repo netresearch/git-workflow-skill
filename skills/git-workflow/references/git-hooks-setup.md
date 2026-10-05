@@ -195,23 +195,37 @@ against the repo root, before inspecting it.
   `/dev/null` — is portable to Windows) and `git push --no-verify`. Never
   make the bypass the default; fix the hook environment or commit from the
   primary checkout when possible.
-
-### Dockerized hooks in a worktree (FAQ)
-
 - **Symptom C**: a hook wrapper that runs CaptainHook (or any checker) inside a
   docker compose service fails in a secondary worktree, while the same commit
-  passes in the primary checkout. A fallback in the wrapper (e.g. "`composer
-  install` failed, try `composer update`") then rewrites `composer.lock` as a
-  side effect.
-- **Cause C**: the container mounts a fixed project path and works there. In a
-  worktree, `.git` is a pointer file whose `gitdir:` names a host path that is
-  not mounted, so every git call inside the container fails; the wrapper's
-  install step fails for the same reason and falls through to `update`.
-- **Fix**: commit from the checkout the container mounts. If a worktree is
-  unavoidable: check `git diff -- composer.lock` first — if it holds changes
-  you made on purpose, keep them (stash or copy) — then restore the file from
-  the index or the branch, run the hook's checks yourself inside the container,
-  then use the controlled bypass above and say so in the MR/PR.
+  passes in a plain clone. A fallback in the wrapper (e.g. "`composer install`
+  failed, try `composer update`") then rewrites `composer.lock` as a side
+  effect.
+- **Cause C**: the compose service mounts only the working-tree directory
+  (e.g. `.:/app`). In a worktree, `.git` is a pointer file whose `gitdir:`
+  names a path outside that mount (the main repo's `.git/worktrees/<name>`, or
+  `.bare/worktrees/<name>` in a bare layout), so every git call inside the
+  container fails with `fatal: not a git repository: …`. The wrapper's install
+  step fails for the same reason (compare the
+  [CaptainHook + git worktrees](#captainhook--git-worktrees-faq) FAQ) and falls
+  through to `update`.
+- **Fix C — make the git dir resolvable in the container**: mount
+  `$(git rev-parse --git-common-dir)` at the identical absolute path, or create
+  worktrees with relative links (`git worktree add --relative-paths`, or
+  `worktree.useRelativePaths=true`, git ≥ 2.48) and mount their common parent
+  directory. Relative links set the `extensions.relativeWorktrees` repository
+  extension in the shared config, so every git that touches the repository —
+  including the one in the container image — must be ≥ 2.48. Or commit from a
+  checkout whose `.git` is a directory (a plain clone; a bare layout has none,
+  so use the mount).
+- **If you must commit from this worktree anyway**: undo the wrapper's rewrite
+  first. A lock change you are committing is staged, so restore from the
+  **index**, not from the branch: `git restore -- composer.lock`
+  (`git diff -- composer.lock` shows what this discards;
+  `git diff --cached -- composer.lock` shows the staged change it keeps).
+  Unstaged lock edits cannot be separated from the rewrite — regenerate them
+  (re-run the intended `composer require` / `update <pkg>`) where the container
+  works. Then run the hook's checks yourself inside the container and use the
+  controlled bypass above, and say so in the MR/PR.
 
 ### Distinguish "the hook is broken" from "the check failed"
 

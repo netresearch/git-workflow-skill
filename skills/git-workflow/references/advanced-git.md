@@ -565,27 +565,6 @@ git reflog expire --expire=now --all
 git gc --prune=now
 ```
 
-## Remote Operations
-
-### Git network commands hang: check the SSH multiplexing socket
-
-With `ControlMaster auto` / `ControlPersist` in `~/.ssh/config`, every git
-command to a host reuses one master connection. If that master dies without
-removing its socket (suspend, network change), `git push`, `fetch` and
-`ls-remote` hang without output instead of failing. Check and drop the master
-before suspecting the remote or the credentials:
-
-```bash
-ssh -O check git@<host>   # "Master running" or an error on a dead socket
-ssh -O exit git@<host>    # close it; the next git command opens a fresh one
-```
-
-Address the same user, host and port as the remote URL, so `ssh` picks the same
-`ControlPath` git uses: with `%p` (or `%C`) in `ControlPath`, a remote on a
-non-default port needs `-p <port>` (or the same `Host` alias from `ssh_config`),
-otherwise `-O check` looks at another socket and reports nothing useful.
-One such hang cost about 15 minutes of retries against a healthy GitLab.
-
 ## Worktrees
 
 ### Multiple Working Directories
@@ -2020,6 +1999,36 @@ git filter-branch --force --index-filter \
   'git rm --cached --ignore-unmatch path/to/file' \
   --prune-empty --tag-name-filter cat -- --all
 ```
+
+### git push/fetch hangs without output: SSH multiplexing
+
+With `ControlMaster auto`, a `ControlPath` and `ControlPersist` in
+`~/.ssh/config`, every git command to a host reuses one backgrounded master
+connection. If that connection dies while the master process stays alive
+(suspend, Wi-Fi/VPN switch), `git push`, `fetch` and `ls-remote` hang without
+output: the master accepts the request and waits on a dead TCP connection.
+`ssh -O check` does **not** detect this — it only asks the local master process
+and still prints `Master running (pid=…)`. Drop the master and retry:
+
+```bash
+ssh -O exit git@<host>   # "Exit request sent."; the next git command opens a fresh connection
+# Confirm the mux is the cause: bypass it for one command
+GIT_SSH_COMMAND='ssh -o ControlPath=none' git ls-remote origin
+```
+
+A master whose *process* died leaves no hang: ssh finds the stale socket,
+unlinks it and connects directly. Without `ServerAliveInterval` the hang can
+last until the TCP retransmission timeout (about 15 minutes with Linux
+defaults); `ServerAliveInterval 30` (with the default `ServerAliveCountMax 3`)
+for that host lets the master notice a dead connection itself.
+
+Address the same user, host and port as the remote URL, so `ssh -O` picks the
+`ControlPath` git uses: with `%p` (or `%C`) in `ControlPath`, a remote on a
+non-default port needs `-p <port>` (or the same `Host` alias from `ssh_config`),
+otherwise `ssh -O` addresses a different socket and answers
+`No such file or directory`, which looks like "no master". If `core.sshCommand`
+or `GIT_SSH_COMMAND` adds options (`-F`, `-o ControlPath=…`), run `ssh -O` with
+the same ones.
 
 ### Recovery Operations
 
