@@ -326,7 +326,7 @@ collect_raw() {
         # The last page, not the first: a Self-review attestation (see the
         # header) is posted at the end of a conversation, and an old page
         # would go blind on exactly the PRs long enough to need one.
-        comments(last:100){ nodes{ author{login __typename} body url createdAt } }
+        comments(last:100){ nodes{ author{login __typename} body url createdAt lastEditedAt } }
         reviews(last:50){ nodes{ author{login} state commit{oid} body } }
         reviewRequests(first:20){ nodes{ requestedReviewer{
           ... on User{login} ... on Bot{login} ... on Team{slug} } } }
@@ -655,9 +655,25 @@ evaluate() {
     # It outranks a summary block that already names the head: a head refused
     # as rate limited and then requested again keeps that block until the new
     # review lands, and reading it would settle the watch over the review.
+    # Before even that reply exists, the request itself is the trace: on
+    # netresearch/git-workflow-skill#383 CodeRabbit posted no reply at all and
+    # answered 9 minutes later by editing the summary. A request counts until
+    # a CodeRabbit comment is written or edited after it, and only where
+    # CodeRabbit has commented on the PR before, so a repository without it
+    # does not wait for an answer that never comes. Only Bot accounts
+    # count as CodeRabbit here: a user whose login merely starts with
+    # coderabbitai must not be able to hold a watch.
     | ($p.commits.nodes[0].commit.committedDate // "") as $cr_head_at
-    | ([$cr_comments[] | select((.body // "") | test("Review triggered\\."))
-                       | select((.createdAt // "") > $cr_head_at)] | length > 0) as $cr_triggered
+    | ([$cr_comments[] | select((.author.__typename // "Bot") == "Bot")]) as $cr_bot
+    | ([$cr_bot[] | (.lastEditedAt // .createdAt // "")] | max // "") as $cr_last_word
+    | ([$cr_bot[] | select((.body // "") | test("Review triggered\\."))
+                  | select((.createdAt // "") > $cr_head_at)] | length > 0) as $cr_reply_open
+    | (($cr_bot | length) > 0 and
+       ([$p.comments.nodes[]? | select(.author.login | test("^coderabbitai"; "i") | not)
+                             | select((.body // "") | test("@coderabbitai (full )?review"))
+                             | select((.createdAt // "") > $cr_head_at)
+                             | select((.createdAt // "") > $cr_last_word)] | length > 0)) as $cr_request_open
+    | ($cr_reply_open or $cr_request_open) as $cr_triggered
     | (([$cr_bodies[] | select(test($p.headRefOid))] | last // "") | split("\n")) as $cr_lines
     | ([$cr_lines | to_entries[] | select(.value | test($p.headRefOid)) | .key] | first) as $cr_idx
     # The summary also comes in a shape that names the head it assessed as a

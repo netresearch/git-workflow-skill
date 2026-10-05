@@ -52,8 +52,18 @@ comments = [] if body == "NONE" else [{
     "author": {"login": "coderabbitai", "__typename": "Bot"},
     "body": body, "url": "u", "createdAt": "2026-01-02T00:00:00Z"}]
 if later:
-    comments.append({"author": {"login": "coderabbitai", "__typename": "Bot"},
+    # LATER_AS_USER=1: the later comment comes from a lookalike user account.
+    kind = "User" if os.environ.get("LATER_AS_USER") == "1" else "Bot"
+    comments.append({"author": {"login": "coderabbitai", "__typename": kind},
                      "body": later, "url": "u2", "createdAt": "2026-01-03T00:00:00Z"})
+# REQUEST_AT=<iso>: a human's `@coderabbitai review` at that time.
+# SUMMARY_EDITED_AT=<iso>: when the summary was last edited.
+if os.environ.get("REQUEST_AT"):
+    comments.append({"author": {"login": "someone", "__typename": "User"},
+                     "body": "@coderabbitai review", "url": "u3",
+                     "createdAt": os.environ["REQUEST_AT"]})
+if os.environ.get("SUMMARY_EDITED_AT") and comments:
+    comments[0]["lastEditedAt"] = os.environ["SUMMARY_EDITED_AT"]
 json.dump({"data": {"repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
@@ -236,6 +246,31 @@ HEAD_AT="2026-01-02T12:00:00Z" build_payload "<!-- rate limited by coderabbit.ai
 Reviewing files that changed from the base of the PR and between $PREV and $HEAD." "$TRIGGERED"
 out="$(run_json)"
 check "coderabbit_on_head" "in-progress" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+# --- case 4f3: requested, CodeRabbit has not answered at all yet -------------
+# netresearch/git-workflow-skill#383: no reply was ever posted; the summary was
+# edited to the outcome 9 minutes after the request.
+echo "case 4f3: an unanswered @coderabbitai review"
+HEAD_AT="2026-01-02T12:00:00Z" REQUEST_AT="2026-01-04T00:00:00Z" build_payload "$OLD_SUMMARY"
+out="$(run_json)"
+check "coderabbit_on_head" "in-progress" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+echo "case 4f4: the request answered by an edit to the summary"
+HEAD_AT="2026-01-02T12:00:00Z" REQUEST_AT="2026-01-04T00:00:00Z" \
+  SUMMARY_EDITED_AT="2026-01-04T00:09:00Z" build_payload "<!-- rate limited by coderabbit.ai -->
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD."
+out="$(run_json)"
+check "coderabbit_on_head" "rate-limited" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+echo "case 4f5: a request on a PR CodeRabbit never commented on"
+HEAD_AT="2026-01-02T12:00:00Z" REQUEST_AT="2026-01-04T00:00:00Z" build_payload NONE
+out="$(run_json)"
+check "coderabbit_on_head" "none" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+echo "case 4f6: Review triggered from a lookalike user account"
+HEAD_AT="2026-01-02T12:00:00Z" LATER_AS_USER=1 build_payload "$OLD_SUMMARY" "$TRIGGERED"
+out="$(run_json)"
+check "coderabbit_on_head" "none" "$(jq -r .coderabbit_on_head <<<"$out")"
 
 # --- case 4g: the triggered reply predates the head ---------------------------
 # A reply from before this head was committed belongs to an earlier one.
