@@ -44,7 +44,7 @@ chmod +x "$STUB_DIR/gh"
 # $2 = optional LATER CodeRabbit comment (a reply to @coderabbitai review)
 build_payload() {
     python3 - "$STUB_DIR/graphql.json" "$HEAD" "$1" "${2-}" <<'PY'
-import sys, json
+import sys, json, os
 out, head, body = sys.argv[1], sys.argv[2], sys.argv[3]
 later = sys.argv[4] if len(sys.argv) > 4 else ""
 # GraphQL returns the login WITHOUT the [bot] suffix REST appends.
@@ -52,8 +52,18 @@ comments = [] if body == "NONE" else [{
     "author": {"login": "coderabbitai", "__typename": "Bot"},
     "body": body, "url": "u", "createdAt": "2026-01-02T00:00:00Z"}]
 if later:
-    comments.append({"author": {"login": "coderabbitai", "__typename": "Bot"},
+    # LATER_AS_USER=1: the later comment comes from a lookalike user account.
+    kind = "User" if os.environ.get("LATER_AS_USER") == "1" else "Bot"
+    comments.append({"author": {"login": "coderabbitai", "__typename": kind},
                      "body": later, "url": "u2", "createdAt": "2026-01-03T00:00:00Z"})
+# REQUEST_AT=<iso>: a human's `@coderabbitai review` at that time.
+# SUMMARY_EDITED_AT=<iso>: when the summary was last edited.
+if os.environ.get("REQUEST_AT"):
+    comments.append({"author": {"login": "someone", "__typename": "User"},
+                     "body": "@coderabbitai review", "url": "u3",
+                     "createdAt": os.environ["REQUEST_AT"]})
+if os.environ.get("SUMMARY_EDITED_AT") and comments:
+    comments[0]["lastEditedAt"] = os.environ["SUMMARY_EDITED_AT"]
 json.dump({"data": {"repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
@@ -67,7 +77,9 @@ json.dump({"data": {"repository": {
         "reviews": {"nodes": []},
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
-        "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
+        "commits": {"nodes": [{"commit": {"oid": head,
+            **({"committedDate": os.environ["HEAD_AT"]} if os.environ.get("HEAD_AT") else {}),
+            "statusCheckRollup": {
             "state": "SUCCESS", "contexts": {"nodes": [
                 {"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS",
                  "status": "COMPLETED", "detailsUrl": "u",
@@ -211,6 +223,74 @@ The change updates CodeRabbit detection.
 <!-- change_assessment_commit:\"$HEAD\" -->"
 out="$(run_json)"
 check "coderabbit_on_head" "findings" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+# --- case 4f: review triggered, summary not yet naming the head --------------
+# Between @coderabbitai review and the summary update the reply is the only
+# trace; reading "none" there let a settled watch return while the review ran
+# (netresearch/retro-skill#169: reply 10:39:34, summary 10:39:45).
+TRIGGERED="<summary>Action performed</summary>
+Review triggered.
+> Note: CodeRabbit is an incremental review system and does not re-review already reviewed commits."
+OLD_SUMMARY="Reviewing files that changed from the base of the PR and between $OLDER and $PREV."
+echo "case 4f: a triggered review whose summary does not name the head yet"
+HEAD_AT="2026-01-02T12:00:00Z" build_payload "$OLD_SUMMARY" "$TRIGGERED"
+out="$(run_json)"
+check "coderabbit_on_head" "in-progress" "$(jq -r .coderabbit_on_head <<<"$out")"
+check "has_review_on_head stays false" "false" "$(jq -r .has_review_on_head <<<"$out")"
+
+# --- case 4f2: rate limited on THIS head, then requested again ---------------
+# The summary keeps its rate-limited block naming the head until the new
+# review lands; the open request must win over it.
+echo "case 4f2: a head refused as rate limited and requested again"
+HEAD_AT="2026-01-02T12:00:00Z" build_payload "<!-- rate limited by coderabbit.ai -->
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD." "$TRIGGERED"
+out="$(run_json)"
+check "coderabbit_on_head" "in-progress" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+# --- case 4f3: requested, CodeRabbit has not answered at all yet -------------
+# netresearch/git-workflow-skill#383: no reply was ever posted; the summary was
+# edited to the outcome 9 minutes after the request.
+echo "case 4f3: an unanswered @coderabbitai review"
+HEAD_AT="2026-01-02T12:00:00Z" REQUEST_AT="2026-01-04T00:00:00Z" build_payload "$OLD_SUMMARY"
+out="$(run_json)"
+check "coderabbit_on_head" "in-progress" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+echo "case 4f4: the request answered by an edit to the summary"
+HEAD_AT="2026-01-02T12:00:00Z" REQUEST_AT="2026-01-04T00:00:00Z" \
+  SUMMARY_EDITED_AT="2026-01-04T00:09:00Z" build_payload "<!-- rate limited by coderabbit.ai -->
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD."
+out="$(run_json)"
+check "coderabbit_on_head" "rate-limited" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+echo "case 4f5: a request on a PR CodeRabbit never commented on"
+HEAD_AT="2026-01-02T12:00:00Z" REQUEST_AT="2026-01-04T00:00:00Z" build_payload NONE
+out="$(run_json)"
+check "coderabbit_on_head" "none" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+echo "case 4f6: Review triggered from a lookalike user account"
+HEAD_AT="2026-01-02T12:00:00Z" LATER_AS_USER=1 build_payload "$OLD_SUMMARY" "$TRIGGERED"
+out="$(run_json)"
+check "coderabbit_on_head" "none" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+echo "case 4f7: an in-progress summary from a lookalike user account"
+HEAD_AT="2026-01-02T12:00:00Z" LATER_AS_USER=1 build_payload "$OLD_SUMMARY" "> Currently processing new changes in this PR. This may take a few minutes, please wait...
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD."
+out="$(run_json)"
+check "coderabbit_on_head" "none" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+# --- case 4g: the triggered reply predates the head ---------------------------
+# A reply from before this head was committed belongs to an earlier one.
+echo "case 4g: a triggered reply older than the head"
+HEAD_AT="2026-01-04T00:00:00Z" build_payload "$OLD_SUMMARY" "$TRIGGERED"
+out="$(run_json)"
+check "coderabbit_on_head" "none" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+# --- case 4h: the reply was edited to its outcome -----------------------------
+echo "case 4h: the reply now reads Review finished"
+HEAD_AT="2026-01-02T12:00:00Z" build_payload "$OLD_SUMMARY" "<summary>Action performed</summary>
+Review finished."
+out="$(run_json)"
+check "coderabbit_on_head" "none" "$(jq -r .coderabbit_on_head <<<"$out")"
 
 # --- case 5: the bot never posted --------------------------------------------
 echo "case 5: no CodeRabbit comment at all"

@@ -84,6 +84,13 @@ if os.environ.get("FAIL_CHECK", "0") == "1":
 mergeable = os.environ.get("MERGEABLE", "MERGEABLE")
 reviews = [{"author": {"login": "copilot-pull-request-reviewer"},
             "state": "COMMENTED", "commit": {"oid": head}, "body": body}]
+# CR_TRIGGERED=1: a reply to @coderabbitai review that CodeRabbit has not yet
+# edited to its outcome, and no summary naming the head.
+comments = []
+if os.environ.get("CR_TRIGGERED", "0") == "1":
+    comments.append({"author": {"login": "coderabbitai", "__typename": "Bot"},
+                     "body": "<summary>Action performed</summary>\nReview triggered.",
+                     "url": "u", "createdAt": "2026-01-03T00:00:00Z"})
 json.dump({"data": {"repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
@@ -93,6 +100,7 @@ json.dump({"data": {"repository": {
         "author": {"login": "someone"},
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
         "isCrossRepository": False,
+        "comments": {"nodes": comments},
         "reviews": {"nodes": reviews},
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
@@ -126,6 +134,21 @@ check         "exits 1 (timeout, not first poll)" "1" "$rc"
 check_contains "reports TIMEOUT"        "TIMEOUT" "$out"
 check_absent  "no ACTIONABLE return"    "ACTIONABLE" "$out"
 check_absent  "no premature SETTLED"    "SETTLED" "$out"
+
+echo "case: CodeRabbit review triggered, checks settled, ignored -> holds, no SETTLED"
+# The watch armed right after @coderabbitai review: settling here returns
+# while the review runs (netresearch/retro-skill#169).
+CR_TRIGGERED=1 make_stub
+rc=0; out=$(watch --ignore-action request-review --interval 1 --max-wait 2) || rc=$?
+check         "exits 1 (timeout, not first poll)" "1" "$rc"
+check_absent  "no premature SETTLED"    "SETTLED" "$out"
+check_contains "says the review is in flight" "CodeRabbit is still reviewing THIS head" "$out"
+
+echo "case: same, not ignored -> the quota line waits for the review too"
+CR_TRIGGERED=1 make_stub
+rc=0; out=$(watch --interval 1 --max-wait 2) || rc=$?
+check         "exits 1 (timeout, not first poll)" "1" "$rc"
+check_absent  "no ACTIONABLE return"    "ACTIONABLE" "$out"
 
 echo "case: ignored request-review still returns on a new check failure"
 FAIL_CHECK=1 make_stub
