@@ -641,8 +641,20 @@ evaluate() {
     # 512-character reply sat after the 7334-character summary. Pick the comment
     # that names the head instead of the newest one. GraphQL returns the login
     # without the [bot] suffix REST appends, hence the prefix match.
-    | ([$p.comments.nodes[]? | select(.author.login | test("^coderabbitai"; "i"))
-                            | .body // ""]) as $cr_bodies
+    | ([$p.comments.nodes[]? | select(.author.login | test("^coderabbitai"; "i"))]) as $cr_comments
+    | ([$cr_comments[] | .body // ""]) as $cr_bodies
+    # Between `@coderabbitai review` and the summary naming the head, the only
+    # trace of the review is the reply, which reads "Review triggered." until
+    # CodeRabbit edits it to the outcome ("Review finished.", "Review rate
+    # limited."). Unanswered by that summary, the head reads "none", and a
+    # watch that settles on it returns while the review runs: measured on
+    # netresearch/retro-skill#169, reply at 10:39:34, summary at 10:39:45, the
+    # watch gone in between. Bound to the head by time, so a reply left over
+    # from an earlier head does not count; with the commit date unreadable it
+    # counts, because in-progress only ever holds a watch and opens nothing.
+    | ($p.commits.nodes[0].commit.committedDate // "") as $cr_head_at
+    | ([$cr_comments[] | select((.body // "") | test("Review triggered\\."))
+                       | select((.createdAt // "") > $cr_head_at)] | length > 0) as $cr_triggered
     | (([$cr_bodies[] | select(test($p.headRefOid))] | last // "") | split("\n")) as $cr_lines
     | ([$cr_lines | to_entries[] | select(.value | test($p.headRefOid)) | .key] | first) as $cr_idx
     # The summary also comes in a shape that names the head it assessed as a
@@ -657,7 +669,8 @@ evaluate() {
     # head: when no comment names it, there are no $cr_lines to search.
     | (([$cr_bodies[] | select(test("up to `[0-9a-f]+`"))] | length) > 0) as $cr_short_shape
     | (if ($cr_bodies | length) == 0 then "none"
-       elif $cr_idx == null then (if $cr_short_shape then "unknown" else "none" end)
+       elif $cr_idx == null then (if $cr_triggered then "in-progress"
+                                  elif $cr_short_shape then "unknown" else "none" end)
        else (([$cr_lines[0:$cr_idx][]
                | if test("rate limited by coderabbit") then "rate-limited"
                  elif test("Currently processing new changes") then "in-progress"
@@ -1975,13 +1988,17 @@ while :; do
     echo "ACTIONABLE: check failed -> $fails"
     emit "$s"; exit 0
   fi
+  # A CodeRabbit review in flight is a review the gate must wait for, and it
+  # finishes on its own, so neither settled exit below may return over it.
+  cr_busy=false
+  [ "$(jq -r '.coderabbit_on_head' <<<"$s")" = "in-progress" ] && cr_busy=true
   if is_ignored "$act"; then
     # A standing action the caller has already seen and declined (#165): never
     # return on it. Once the checks settle, nothing about it will change
     # either — say so instead of idling into the timeout. The message claims
     # exactly what was checked: NEXT (the highest-priority action) is still
     # the ignored one — lower-ranked work may well remain in the snapshot.
-    if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ]; then
+    if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ] && [ "$cr_busy" = false ]; then
       echo "SETTLED: NEXT is still the ignored action -> $act"
       emit "$s"; exit 0
     fi
@@ -1994,7 +2011,7 @@ while :; do
     # checks are the thing that still moves, and returning early hands the
     # operator a manual re-arm for every push (observed twice on
     # 2026-08-18). It returns below once CI settles.
-    if [ "$(jq -r '.checks_settled' <<<"$s")" != "true" ]; then
+    if [ "$(jq -r '.checks_settled' <<<"$s")" != "true" ] || [ "$cr_busy" = true ]; then
       :
     # A request-review whose cause is an exhausted review bot is a standing
     # condition, not an event: waiting cannot clear a quota ceiling, so every
@@ -2020,7 +2037,7 @@ while :; do
     # The quota dead-end returns only here, WITH the checks settled — a
     # re-arm on a settled PR still comes straight back with the same
     # UNSATISFIABLE line, which is what its message says.
-    if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ]; then
+    if [ "$(jq -r '.checks_settled' <<<"$s")" = "true" ] && [ "$cr_busy" = false ]; then
       emit "$s"; exit 0
     fi
   elif in_list "$ACTIONABLE" "$act"; then

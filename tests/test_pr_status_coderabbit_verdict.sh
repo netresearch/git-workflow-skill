@@ -44,7 +44,7 @@ chmod +x "$STUB_DIR/gh"
 # $2 = optional LATER CodeRabbit comment (a reply to @coderabbitai review)
 build_payload() {
     python3 - "$STUB_DIR/graphql.json" "$HEAD" "$1" "${2-}" <<'PY'
-import sys, json
+import sys, json, os
 out, head, body = sys.argv[1], sys.argv[2], sys.argv[3]
 later = sys.argv[4] if len(sys.argv) > 4 else ""
 # GraphQL returns the login WITHOUT the [bot] suffix REST appends.
@@ -67,7 +67,9 @@ json.dump({"data": {"repository": {
         "reviews": {"nodes": []},
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
-        "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
+        "commits": {"nodes": [{"commit": {"oid": head,
+            **({"committedDate": os.environ["HEAD_AT"]} if os.environ.get("HEAD_AT") else {}),
+            "statusCheckRollup": {
             "state": "SUCCESS", "contexts": {"nodes": [
                 {"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS",
                  "status": "COMPLETED", "detailsUrl": "u",
@@ -211,6 +213,34 @@ The change updates CodeRabbit detection.
 <!-- change_assessment_commit:\"$HEAD\" -->"
 out="$(run_json)"
 check "coderabbit_on_head" "findings" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+# --- case 4f: review triggered, summary not yet naming the head --------------
+# Between @coderabbitai review and the summary update the reply is the only
+# trace; reading "none" there let a settled watch return while the review ran
+# (netresearch/retro-skill#169: reply 10:39:34, summary 10:39:45).
+TRIGGERED="<summary>Action performed</summary>
+Review triggered.
+> Note: CodeRabbit is an incremental review system and does not re-review already reviewed commits."
+OLD_SUMMARY="Reviewing files that changed from the base of the PR and between $OLDER and $PREV."
+echo "case 4f: a triggered review whose summary does not name the head yet"
+HEAD_AT="2026-01-02T12:00:00Z" build_payload "$OLD_SUMMARY" "$TRIGGERED"
+out="$(run_json)"
+check "coderabbit_on_head" "in-progress" "$(jq -r .coderabbit_on_head <<<"$out")"
+check "has_review_on_head stays false" "false" "$(jq -r .has_review_on_head <<<"$out")"
+
+# --- case 4g: the triggered reply predates the head ---------------------------
+# A reply from before this head was committed belongs to an earlier one.
+echo "case 4g: a triggered reply older than the head"
+HEAD_AT="2026-01-04T00:00:00Z" build_payload "$OLD_SUMMARY" "$TRIGGERED"
+out="$(run_json)"
+check "coderabbit_on_head" "none" "$(jq -r .coderabbit_on_head <<<"$out")"
+
+# --- case 4h: the reply was edited to its outcome -----------------------------
+echo "case 4h: the reply now reads Review finished"
+HEAD_AT="2026-01-02T12:00:00Z" build_payload "$OLD_SUMMARY" "<summary>Action performed</summary>
+Review finished."
+out="$(run_json)"
+check "coderabbit_on_head" "none" "$(jq -r .coderabbit_on_head <<<"$out")"
 
 # --- case 5: the bot never posted --------------------------------------------
 echo "case 5: no CodeRabbit comment at all"
