@@ -580,7 +580,10 @@ ssh -O check git@<host>   # "Master running" or an error on a dead socket
 ssh -O exit git@<host>    # close it; the next git command opens a fresh one
 ```
 
-Use the same user and host the remote URL uses, so the `ControlPath` matches.
+Address the same user, host and port as the remote URL, so `ssh` picks the same
+`ControlPath` git uses: with `%p` (or `%C`) in `ControlPath`, a remote on a
+non-default port needs `-p <port>` (or the same `Host` alias from `ssh_config`),
+otherwise `-O check` looks at another socket and reports nothing useful.
 One such hang cost about 15 minutes of retries against a healthy GitLab.
 
 ## Worktrees

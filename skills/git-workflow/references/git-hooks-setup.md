@@ -208,9 +208,10 @@ against the repo root, before inspecting it.
   not mounted, so every git call inside the container fails; the wrapper's
   install step fails for the same reason and falls through to `update`.
 - **Fix**: commit from the checkout the container mounts. If a worktree is
-  unavoidable: `git checkout -- composer.lock` (or restore it from the branch),
-  run the hook's checks yourself inside the container, then use the controlled
-  bypass above and say so in the MR/PR.
+  unavoidable: check `git diff -- composer.lock` first — if it holds changes
+  you made on purpose, keep them (stash or copy) — then restore the file from
+  the index or the branch, run the hook's checks yourself inside the container,
+  then use the controlled bypass above and say so in the MR/PR.
 
 ### Distinguish "the hook is broken" from "the check failed"
 
