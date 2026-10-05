@@ -272,6 +272,12 @@ HEAD_AT="2026-01-02T12:00:00Z" LATER_AS_USER=1 build_payload "$OLD_SUMMARY" "$TR
 out="$(run_json)"
 check "coderabbit_on_head" "none" "$(jq -r .coderabbit_on_head <<<"$out")"
 
+echo "case 4f7: an in-progress summary from a lookalike user account"
+HEAD_AT="2026-01-02T12:00:00Z" LATER_AS_USER=1 build_payload "$OLD_SUMMARY" "> Currently processing new changes in this PR. This may take a few minutes, please wait...
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD."
+out="$(run_json)"
+check "coderabbit_on_head" "none" "$(jq -r .coderabbit_on_head <<<"$out")"
+
 # --- case 4g: the triggered reply predates the head ---------------------------
 # A reply from before this head was committed belongs to an earlier one.
 echo "case 4g: a triggered reply older than the head"

@@ -640,9 +640,13 @@ evaluate() {
     # reviewed. Measured against netresearch/matrix-skill#151, where the
     # 512-character reply sat after the 7334-character summary. Pick the comment
     # that names the head instead of the newest one. GraphQL returns the login
-    # without the [bot] suffix REST appends, hence the prefix match.
+    # without the [bot] suffix REST appends, hence the prefix match. Only Bot
+    # accounts count: since a verdict of in-progress holds a watch, a user
+    # whose login merely starts with coderabbitai must not be able to post
+    # one (raised by CodeRabbit on netresearch/git-workflow-skill#383).
     | ([$p.comments.nodes[]? | select(.author.login | test("^coderabbitai"; "i"))]) as $cr_comments
-    | ([$cr_comments[] | .body // ""]) as $cr_bodies
+    | ([$cr_comments[] | select((.author.__typename // "Bot") == "Bot")]) as $cr_bot
+    | ([$cr_bot[] | .body // ""]) as $cr_bodies
     # Between `@coderabbitai review` and the summary naming the head, the only
     # trace of the review is the reply, which reads "Review triggered." until
     # CodeRabbit edits it to the outcome ("Review finished.", "Review rate
@@ -660,11 +664,8 @@ evaluate() {
     # answered 9 minutes later by editing the summary. A request counts until
     # a CodeRabbit comment is written or edited after it, and only where
     # CodeRabbit has commented on the PR before, so a repository without it
-    # does not wait for an answer that never comes. Only Bot accounts
-    # count as CodeRabbit here: a user whose login merely starts with
-    # coderabbitai must not be able to hold a watch.
+    # does not wait for an answer that never comes.
     | ($p.commits.nodes[0].commit.committedDate // "") as $cr_head_at
-    | ([$cr_comments[] | select((.author.__typename // "Bot") == "Bot")]) as $cr_bot
     | ([$cr_bot[] | (.lastEditedAt // .createdAt // "")] | max // "") as $cr_last_word
     | ([$cr_bot[] | select((.body // "") | test("Review triggered\\."))
                   | select((.createdAt // "") > $cr_head_at)] | length > 0) as $cr_reply_open
