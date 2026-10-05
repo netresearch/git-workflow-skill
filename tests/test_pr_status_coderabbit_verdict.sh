@@ -228,6 +228,15 @@ out="$(run_json)"
 check "coderabbit_on_head" "in-progress" "$(jq -r .coderabbit_on_head <<<"$out")"
 check "has_review_on_head stays false" "false" "$(jq -r .has_review_on_head <<<"$out")"
 
+# --- case 4f2: rate limited on THIS head, then requested again ---------------
+# The summary keeps its rate-limited block naming the head until the new
+# review lands; the open request must win over it.
+echo "case 4f2: a head refused as rate limited and requested again"
+HEAD_AT="2026-01-02T12:00:00Z" build_payload "<!-- rate limited by coderabbit.ai -->
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD." "$TRIGGERED"
+out="$(run_json)"
+check "coderabbit_on_head" "in-progress" "$(jq -r .coderabbit_on_head <<<"$out")"
+
 # --- case 4g: the triggered reply predates the head ---------------------------
 # A reply from before this head was committed belongs to an earlier one.
 echo "case 4g: a triggered reply older than the head"

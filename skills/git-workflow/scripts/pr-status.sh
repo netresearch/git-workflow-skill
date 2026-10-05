@@ -652,6 +652,9 @@ evaluate() {
     # watch gone in between. Bound to the head by time, so a reply left over
     # from an earlier head does not count; with the commit date unreadable it
     # counts, because in-progress only ever holds a watch and opens nothing.
+    # It outranks a summary block that already names the head: a head refused
+    # as rate limited and then requested again keeps that block until the new
+    # review lands, and reading it would settle the watch over the review.
     | ($p.commits.nodes[0].commit.committedDate // "") as $cr_head_at
     | ([$cr_comments[] | select((.body // "") | test("Review triggered\\."))
                        | select((.createdAt // "") > $cr_head_at)] | length > 0) as $cr_triggered
@@ -668,9 +671,9 @@ evaluate() {
     # Searched across every CodeRabbit comment, not only the one naming the
     # head: when no comment names it, there are no $cr_lines to search.
     | (([$cr_bodies[] | select(test("up to `[0-9a-f]+`"))] | length) > 0) as $cr_short_shape
-    | (if ($cr_bodies | length) == 0 then "none"
-       elif $cr_idx == null then (if $cr_triggered then "in-progress"
-                                  elif $cr_short_shape then "unknown" else "none" end)
+    | (if $cr_triggered then "in-progress"
+       elif ($cr_bodies | length) == 0 then "none"
+       elif $cr_idx == null then (if $cr_short_shape then "unknown" else "none" end)
        else (([$cr_lines[0:$cr_idx][]
                | if test("rate limited by coderabbit") then "rate-limited"
                  elif test("Currently processing new changes") then "in-progress"
