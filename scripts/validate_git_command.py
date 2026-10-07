@@ -700,7 +700,9 @@ def _untracked_files(repo_dir: str) -> list[str] | None:
     configuration names. `ls-files` reads the index and the work tree without
     refreshing the index, so no clean or process filter runs; fsmonitor and
     the untracked cache are switched off on the command line, which overrides
-    the repository's own configuration.
+    the repository's own configuration. Every transport is refused
+    (protocol.allow=never, GIT_NO_LAZY_FETCH=1), so a partial clone cannot
+    fetch a missing blob through a remote helper or ssh command it names.
     """
     try:
         p = subprocess.run(
@@ -710,6 +712,8 @@ def _untracked_files(repo_dir: str) -> list[str] | None:
                 "core.fsmonitor=false",
                 "-c",
                 "core.untrackedCache=false",
+                "-c",
+                "protocol.allow=never",
                 "-C",
                 repo_dir,
                 "ls-files",
@@ -724,6 +728,7 @@ def _untracked_files(repo_dir: str) -> list[str] | None:
             text=True,
             timeout=8,
             check=False,
+            env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},
         )
     except (OSError, subprocess.SubprocessError):
         return None

@@ -233,6 +233,59 @@ def repo_config_program_case() -> bool:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def partial_clone_fetch_case() -> bool:
+    """A partial clone's missing blob is not fetched while the gate looks.
+
+    `--exclude-standard` reads a skip-worktree `.gitignore` from the index;
+    when its blob is missing from a partial clone, git would fetch it through
+    the transport the repository names. The gate's lookup must not.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        origin = os.path.join(tmp, "origin")
+        os.mkdir(origin)
+        _git("-C", origin, "init", "-q")
+        with open(os.path.join(origin, "a.txt"), "w") as fh:
+            fh.write("a\n")
+        _git("-C", origin, "add", "a.txt")
+        _git("-C", origin, "commit", "-qm", "init")
+        _git("-C", origin, "config", "uploadpack.allowFilter", "true")
+        repo = os.path.join(tmp, "repo")
+        _git("clone", "-q", "--filter=blob:none", f"file://{origin}", repo)
+        # An index entry for .gitignore whose blob only the remote has.
+        missing = subprocess.run(
+            ["git", "-C", origin, "hash-object", "-w", "--stdin"],
+            input="*.log\n",
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        _git(
+            "-C",
+            repo,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            f"100644,{missing},.gitignore",
+        )
+        _git("-C", repo, "update-index", "--skip-worktree", ".gitignore")
+        marker = os.path.join(tmp, "ran")
+        script = os.path.join(tmp, "ssh.sh")
+        with open(script, "w") as fh:
+            fh.write(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n")
+        os.chmod(script, 0o700)
+        _git(
+            "-C", repo, "config", "remote.origin.url", "ssh://git@example.invalid/x.git"
+        )
+        _git("-C", repo, "config", "core.sshCommand", script)
+        with open(os.path.join(repo, "stray.txt"), "w") as fh:
+            fh.write("junk\n")
+        got = run(f"git -C {repo} add -A")
+        return got == "DENY" and not os.path.exists(marker)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def untracked_outside_named_subdir_case() -> bool:
     """An untracked file elsewhere in the repository still counts.
 
@@ -305,6 +358,7 @@ def main() -> int:
 
     for name, case in [
         ("repo config programs do not run", repo_config_program_case),
+        ("partial clone blobs are not fetched", partial_clone_fetch_case),
         (
             "untracked outside the named subdir counts",
             untracked_outside_named_subdir_case,
