@@ -2899,6 +2899,19 @@ gh api "repos/$R/rules/branches/main" \
   --jq '.[]|select(.type=="merge_queue")|.parameters'
 ```
 
+**A sweep across many repositories exhausts the pool for all of them.** The
+count above looks at one repository, but the concurrency limit for
+GitHub-hosted runners is listed per GitHub plan, not per repository (Team: 60
+concurrent standard jobs, <https://docs.github.com/en/actions/reference/limits>).
+Pushing the same change to 27 repositories at once, each with about 80 checks,
+queued far more jobs than that. Jobs then failed without a runner in several
+repositories (see `merge-gate-watcher.md`, "Jobs that never started"), and three
+merge-queue entries were dropped with `checks_timed_out`, one of them twice
+(2026-10-07, the extension-title sweep). Push such a sweep in groups of about
+three repositories and start the next group once the previous group's runs
+have finished; count the unfinished runs across every repository of the sweep,
+not only the one you are about to enqueue.
+
 Before that one retry, cancel your own orphaned queue runs — only your PR's,
 since other PRs thrash the same way and their runs are not yours to kill:
 

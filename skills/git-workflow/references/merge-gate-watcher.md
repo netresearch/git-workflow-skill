@@ -18,7 +18,7 @@ done
 wait; cat "$d"/*
 ```
 
-Then act per line: `NEXT: merge` → `pr-merge.sh` in a **new** invocation (merge-gate hooks evaluate at call time — never chain the wait and the merge in one command); `resolve-threads` / `address-review` → handle that PR individually while the rest keep going. Do not write a bespoke driver that re-reads PR state in a loop and dispatches on it — that re-implements `pr-status.sh` badly, waits for the one outcome it was told about, and sleeps through the rest (verified 2026-08-03: a 7-repo release sweep completed on this pattern with zero hand-rolled polling).
+Then act per line: `NEXT: merge` → `pr-merge.sh` in a **new** invocation (merge-gate hooks evaluate at call time — never chain the wait and the merge in one command); `resolve-threads` / `address-review` → handle that PR individually while the rest keep going. Do not write a bespoke driver that re-reads PR state in a loop and dispatches on it — that re-implements `pr-status.sh` badly, waits for the one outcome it was told about, and sleeps through the rest (verified 2026-08-03: a 7-repo release sweep completed on this pattern with zero hand-rolled polling). The failure is silent, which is why it costs time: on 2026-10-07 a bespoke driver over 27 PRs acted only on `merge` and on red checks, and netresearch/t3x-nr-passkeys-fe#92 sat green for about an hour at `NEXT: rebase — branch is behind main` without a single log line, until the PR was read by hand. The parallel `--watch` loop above returns on that action like on any other.
 
 ## Check taxonomy
 
@@ -29,6 +29,23 @@ Classify every failing check BEFORE reacting:
 | **Hard** | unit/integration/E2E tests, lint, build | HOLD and fix — except known infra flakes (Docker Hub pull timeout, buildx setup): one `gh run rerun <id> --failed` |
 | **Soft, self-healing** | `codecov/*` while sibling jobs still run (partial uploads) | Ignore while `pending > 0`; if persisting after completion: one full `gh run rerun <id>` |
 | **Soft, structural** | SonarCloud PR gate on refactor PRs | Introspect before deciding (below) |
+| **Not started** | a job that never got a runner: `failure`, empty `runner_name`, zero steps; `pr-status.sh` lists it under `not started` | Nothing to fix. `gh run rerun <id> --failed` once the whole run has completed (below) |
+| **Infra, silent upload** | CodeQL / SAST job red in its code-scanning upload step, log ends after `Uploading results` with no `##[error]` | One `gh run rerun <id> --failed`; investigate only if it repeats |
+
+### Jobs that never started, and uploads that fail without an error
+
+When the organisation's runner pool is exhausted, a queued job is not left waiting forever. After about 45 to 50 minutes GitHub concludes it `failure` with **zero steps** and an empty `runner_name`, and annotates it `The job was not started because it repeatedly failed to be acquired (5 attempts).` Aggregate gates such as `All CI checks` then fail as well, because a job they need failed, so a PR whose code is fine reads as a dozen red checks. Observed 2026-10-07 on netresearch/t3x-nr-textdb#169: six PHPStan, unit and functional jobs started 14:24:45 and concluded 15:13 to 15:15 without a runner; `gh run rerun --failed` turned them green.
+
+Tell it apart in one call per job — the check-run id is the job id:
+
+```bash
+gh api "repos/$R/actions/jobs/$JOB" --jq '{runner_name, steps: (.steps|length), conclusion}'
+# runner_name "" and steps 0  -> not started; re-run, do not debug
+```
+
+`pr-status.sh` reads `steps.totalCount` from GraphQL and lists such rows under `not started`. They still shut the gate. A re-run is accepted only once **every** job of that run has completed, so a run with one job still queued has to be waited out first.
+
+A second infrastructure failure looks like a finding and is not one: a CodeQL or Opengrep job fails in its upload step (`Perform CodeQL Analysis`, `Upload SARIF to code scanning`) and the log stops after `Uploading results` with no error line and no error annotation. The analysis finished; GitHub did not accept the upload. Same day, netresearch/t3x-nr-passkeys-fe#92 and netresearch/t3x-nr-xliff-streaming#54; one re-run cleared both. Because the step name alone also matches a real analysis failure, `pr-status.sh` does not classify this one — read the log tail before re-running.
 
 ## One shard red in a sharded suite: flake vs. real regression
 
