@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -179,6 +180,72 @@ def pr_status_path_case(command: str) -> bool:
     return bool(match and os.path.isfile(match.group(1)))
 
 
+def _git(*args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _repo_with_stray(tmp: str) -> str:
+    repo = os.path.join(tmp, "repo")
+    os.mkdir(repo)
+    _git("-C", repo, "init", "-q")
+    os.mkdir(os.path.join(repo, "sub"))
+    for name in ("tracked.txt", os.path.join("sub", "kept.txt")):
+        with open(os.path.join(repo, name), "w") as fh:
+            fh.write("a\n")
+    _git("-C", repo, "add", "tracked.txt", "sub/kept.txt")
+    _git("-C", repo, "commit", "-qm", "init")
+    with open(os.path.join(repo, "stray.txt"), "w") as fh:
+        fh.write("junk\n")
+    return repo
+
+
+def repo_config_program_case() -> bool:
+    """Looking at the repository a command names runs nothing its config names.
+
+    The blanket-add gate reads untracked files of the repository named by
+    `git -C <dir>` before the command is approved. Programs that repository's
+    configuration names (an fsmonitor hook, a clean filter) must not start.
+    The gate must still deny, listing the untracked file.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        repo = _repo_with_stray(tmp)
+        marker = os.path.join(tmp, "ran")
+        script = os.path.join(tmp, "probe.sh")
+        with open(script, "w") as fh:
+            fh.write(f"#!/bin/sh\ntouch '{marker}'\ncat\n")
+        os.chmod(script, 0o700)
+        _git("-C", repo, "config", "core.fsmonitor", script)
+        _git("-C", repo, "config", "filter.probe.clean", script)
+        with open(os.path.join(repo, ".gitattributes"), "w") as fh:
+            fh.write("*.txt filter=probe\n")
+        with open(os.path.join(repo, "tracked.txt"), "w") as fh:
+            fh.write("changed\n")
+        if os.path.exists(marker):
+            os.unlink(marker)  # setting up the repository may have run it
+        got = run(f"git -C {repo} add -A")
+        return got == "DENY" and not os.path.exists(marker)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def untracked_outside_named_subdir_case() -> bool:
+    """An untracked file elsewhere in the repository still counts.
+
+    `git -C <repo>/sub add -A` stages the whole work tree, not only `sub/`.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        repo = _repo_with_stray(tmp)
+        return run(f"git -C {os.path.join(repo, 'sub')} add -A") == "DENY"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 COMMANDS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "commands"
 )
@@ -235,6 +302,17 @@ def main() -> int:
             f"  {'OK  ' if ok else 'FAIL'} {name:<44} "
             f"want=abs-path got={'abs-path' if ok else 'bare-name'}"
         )
+
+    for name, case in [
+        ("repo config programs do not run", repo_config_program_case),
+        (
+            "untracked outside the named subdir counts",
+            untracked_outside_named_subdir_case,
+        ),
+    ]:
+        ok = case()
+        fails += 0 if ok else 1
+        print(f"  {'OK  ' if ok else 'FAIL'} {name:<44} want=True      got={ok}")
 
     denied = 0
     for fname, block in shipped_command_blocks():
