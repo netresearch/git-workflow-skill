@@ -64,7 +64,8 @@
 # it back: a PR comment BY THE PR AUTHOR containing the line
 # `Self-review: <head-sha>` (at least the first 12 chars). The ladder honours it
 # ONLY while the demanded bot review is unsatisfiable — quota wall, or two
-# failed reviews on this head — and the attestation dies with the next push,
+# failed reviews on this head — and only in a run authenticated as the PR
+# author; the attestation dies with the next push,
 # because the sha stops matching. `pr-merge.sh --self-reviewed` posts the
 # comment and merges in one step. This is an explicit operator assertion the
 # tool reads back, not a state it claims to observe (#203).
@@ -965,7 +966,13 @@ evaluate() {
     # inert so the ladder keeps reporting the honest review state instead of
     # falling through to a merge attempt (CHANGES_REQUESTED with no open
     # thread leaves mergeState CLEAN) or to "investigate".
+    # The attestation counts only for the PR author themselves: the run must be
+    # authenticated as that author. Read by anyone else (a maintainer running
+    # this on a pull request somebody else opened), the comment is reported in
+    # self_review_on_head but opens nothing; an unknown viewer opens nothing
+    # either.
     | ($s.self_review_on_head
+       and ($s.viewer != "") and ($s.viewer == $s.author)
        and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)
        and ($s.reviewDecision != "CHANGES_REQUESTED")
        and ($s.reviewDecision != "REVIEW_REQUIRED")) as $self_attested

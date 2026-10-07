@@ -72,6 +72,7 @@ head = "deadbeefcafe"
 # the authority for bot-ness (#280); the login is only the fallback.
 author = {"login": os.environ.get("PR_AUTHOR", "someone"),
           "__typename": os.environ.get("AUTHOR_TYPE", "User")}
+# VIEWER: the account the run is authenticated as (default: the PR author).
 # COMMENTS_JSON: issue comments on the PR, as [{"author": ..., "body": ...}] —
 # the surface the Self-review attestation (#203) is read from.
 comments = [{"author": {"login": c["author"]}, "body": c["body"],
@@ -95,7 +96,7 @@ reviews = [{"author": {"login": "copilot-pull-request-reviewer"},
            for b in bodies]
 requests = [{"requestedReviewer": {"login": r}}
             for r in json.loads(os.environ.get("REVIEW_REQUESTS_JSON", "[]"))]
-json.dump({"data": {"repository": {
+json.dump({"data": {"viewer": {"login": os.environ.get("VIEWER", author["login"])}, "repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
@@ -163,7 +164,7 @@ for s in specs:
     reviews.append({"author": {"login": who}, "state": state,
                     "commit": {"oid": oid}, "body": body})
     approved = approved or state == "APPROVED"
-json.dump({"data": {"repository": {
+json.dump({"data": {"viewer": {"login": os.environ.get("VIEWER", author["login"])}, "repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
@@ -765,6 +766,20 @@ COMMENTS_JSON='[{"author": "somebody-else", "body": "Self-review: deadbeefcafe"}
 plant_marker
 check "self_review_on_head" "false"          "$(run_flag self_review_on_head)"
 check "next.action"         "request-review" "$(run_next)"
+
+echo "case SR2b: author comment, read by somebody else — reported, but opens nothing"
+# A maintainer runs this on a pull request that someone else opened. The
+# author's attestation speaks for the author alone; the gate stays closed for
+# every other viewer, and an unknown viewer counts as somebody else.
+COMMENTS_JSON="$SR_MARKER" VIEWER=maintainer make_stub
+plant_marker
+check "self_review_on_head" "true"           "$(run_flag self_review_on_head)"
+check "next.action"         "request-review" "$(run_next)"
+COMMENTS_JSON="$SR_MARKER" VIEWER=maintainer make_stub
+check "next.action (no wall)" "request-review" "$(run_next)"
+COMMENTS_JSON="$SR_MARKER" VIEWER="" make_stub
+plant_marker
+check "next.action (viewer unknown)" "request-review" "$(run_next)"
 
 echo "case SR3: author comment with a STALE sha — dies with the push, as documented"
 COMMENTS_JSON='[{"author": "someone", "body": "Self-review: 0ldc0mm1t"}]' make_stub

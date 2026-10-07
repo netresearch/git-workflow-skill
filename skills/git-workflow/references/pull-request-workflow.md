@@ -452,7 +452,9 @@ one sweep got the attestation anyway. The bot branches now also require that no
 approval is on the current head — checked against the approval list rather than
 `has_review_on_head`, which a failed Copilot review satisfies by being an
 ordinary `COMMENTED` row. With a bot review in flight
-the attestation changes nothing, a non-author comment never counts, a human
+the attestation changes nothing, a non-author comment never counts, the
+attestation opens the gate only for a run authenticated as the PR author (read
+by anyone else it is reported in `self_review_on_head` and changes nothing), a human
 `CHANGES_REQUESTED` or a host-required approval keeps it inert, `--dry-run`
 previews the comment without posting it, and the next push invalidates the
 attestation because the sha stops matching. This is an explicit operator assertion the tool reads back, not a
