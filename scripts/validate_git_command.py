@@ -693,20 +693,48 @@ _WHOLE_TREE = {".", "./", ":/", "*", "'*'", '"*"', ":(top)"}
 
 
 def _untracked_files(repo_dir: str) -> list[str] | None:
-    """Untracked, non-ignored paths, or None when git could not be asked."""
+    """Untracked, non-ignored paths, or None when git could not be asked.
+
+    The directory comes from the command under review, which has not been
+    approved yet, so the lookup must not start anything that repository's
+    configuration names. `ls-files` reads the index and the work tree without
+    refreshing the index, so no clean or process filter runs; fsmonitor and
+    the untracked cache are switched off on the command line, which overrides
+    the repository's own configuration. Every transport is refused
+    (protocol.allow=never, GIT_NO_LAZY_FETCH=1), so a partial clone cannot
+    fetch a missing blob through a remote helper or ssh command it names.
+    """
     try:
         p = subprocess.run(
-            ["git", "-C", repo_dir, "status", "--porcelain", "--untracked-files=all"],
+            [
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.untrackedCache=false",
+                "-c",
+                "protocol.allow=never",
+                "-C",
+                repo_dir,
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "--full-name",
+                "-z",
+                "--",
+                ":/",
+            ],
             capture_output=True,
             text=True,
             timeout=8,
             check=False,
+            env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},
         )
     except (OSError, subprocess.SubprocessError):
         return None
     if p.returncode != 0:
         return None
-    return [line[3:] for line in p.stdout.splitlines() if line.startswith("?? ")]
+    return [path for path in p.stdout.split("\0") if path]
 
 
 def blanket_git_add(cmd: str, cwd: str = "", untracked=_untracked_files) -> str | None:

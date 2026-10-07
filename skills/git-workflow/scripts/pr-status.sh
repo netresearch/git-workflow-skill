@@ -64,7 +64,8 @@
 # it back: a PR comment BY THE PR AUTHOR containing the line
 # `Self-review: <head-sha>` (at least the first 12 chars). The ladder honours it
 # ONLY while the demanded bot review is unsatisfiable — quota wall, or two
-# failed reviews on this head — and the attestation dies with the next push,
+# failed reviews on this head — and only in a run authenticated as the PR
+# author; the attestation dies with the next push,
 # because the sha stops matching. `pr-merge.sh --self-reviewed` posts the
 # comment and merges in one step. This is an explicit operator assertion the
 # tool reads back, not a state it claims to observe (#203).
@@ -506,9 +507,10 @@ evaluate() {
     # action that cannot succeed — measured on netresearch/concourse-ci-skill#57,
     # author aseemann, viewer CybotTM, where the advice was printed on every read
     # and then refused at merge time. An empty viewer (an older gh, a stubbed
-    # response) keeps the previous assumption that the operator is the author.
+    # response) counts as somebody else: the attestation belongs to the author alone,
+    # and an account that cannot be named cannot be shown to be the author.
     | (($g.data.viewer.login // "")) as $viewer
-    | ($viewer == "" or $viewer == $author) as $viewer_is_author
+    | ($viewer != "" and $viewer == $author) as $viewer_is_author
     | ((($author_is_bot | not) and $viewer_is_author)) as $attestation_available
     # A non-author who pushed commits onto the branch reviewed nothing they did
     # not also write. Approving then is a self-approval: it attests to no second
@@ -965,7 +967,13 @@ evaluate() {
     # inert so the ladder keeps reporting the honest review state instead of
     # falling through to a merge attempt (CHANGES_REQUESTED with no open
     # thread leaves mergeState CLEAN) or to "investigate".
+    # The attestation counts only for the PR author themselves: the run must be
+    # authenticated as that author. Read by anyone else (a maintainer running
+    # this on a pull request somebody else opened), the comment is reported in
+    # self_review_on_head but opens nothing; an unknown viewer opens nothing
+    # either.
     | ($s.self_review_on_head
+       and ($s.viewer != "") and ($s.viewer == $s.author)
        and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)
        and ($s.reviewDecision != "CHANGES_REQUESTED")
        and ($s.reviewDecision != "REVIEW_REQUIRED")) as $self_attested
@@ -1054,6 +1062,11 @@ evaluate() {
        + (if ($s.attestation_available | not)
           then " The pull request is authored by \($author)"
                + (if $s.author_is_bot then ", a bot that never authenticates and never reads a diff"
+                       + (if $s.viewer == "" then " (and the account this run is authenticated as is"
+                               + " unknown: the response named no viewer; check gh auth status)"
+                          else "" end)
+                  elif $s.viewer == "" then ", and the account this run is authenticated as is unknown"
+                       + " (the response named no viewer; check gh auth status)"
                   else ", not by you (\($s.viewer))" end)
                + ", so the self-review attestation is not available on it: that attestation is an"
                + " assertion by the author, and pr-merge.sh --self-reviewed refuses every other"
@@ -1326,6 +1339,7 @@ evaluate() {
               # anyone else, so a non-author gets the ordinary approval instead —
               # unless they wrote commits here, or that is unknown ($approve_withheld).
               {action:"request-review", why:("copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate"
+                    + (if $s.viewer == "" then " (the account this run is authenticated as is unknown: the response named no viewer; check gh auth status)" else "" end)
                     + (if $approve_withheld then "." + $co_author_why
                        else ", and a review you write yourself satisfies it: " end)
                     + (if $approve_withheld then ""
@@ -1370,10 +1384,22 @@ evaluate() {
                # attestation and merge on it; requesting Copilot stays offered
                # as the other way to satisfy the same demand.
                {action:"request-review",
-                why:($no_review + " — a review is required and the one you write yourself counts:"
-                     + " read the diff, say in the pull request what you checked, and merge on that"
-                     + " with pr-merge.sh --self-reviewed. Requesting Copilot below is the other way"
-                     + " to satisfy the same demand, and commits you to waiting for its answer\($stale_approval)"),
+                why:(if $s.attestation_available
+                     then $no_review + " — a review is required and the one you write yourself counts:"
+                          + " read the diff, say in the pull request what you checked, and merge on that"
+                          + " with pr-merge.sh --self-reviewed. Requesting Copilot below is the other way"
+                          + " to satisfy the same demand, and commits you to waiting for its answer\($stale_approval)"
+                     else $no_review + " — a review is required. The self-review attestation is an"
+                          + " assertion by the author (\($author)), and pr-merge.sh --self-reviewed refuses"
+                          + " every other account"
+                          + (if $s.viewer == "" then "; the account this run is authenticated as is unknown"
+                                  + " (the response named no viewer; check gh auth status)."
+                             else "." end)
+                          + (if $approve_withheld then $co_author_why
+                             else " Review the diff and approve it as yourself: gh pr review"
+                                  + " \($s.number) --repo \($s.repo) --approve" end)
+                          + ". Requesting Copilot below is the other way to satisfy the same demand\($stale_approval)"
+                     end),
                 reason:"review-required",
                 cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
               end)
