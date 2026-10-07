@@ -350,7 +350,10 @@ collect_raw() {
             # It is what tells a required context reported only by an OLDER
             # run of a workflow apart from one the newest run reported; see
             # $stale_required below. Null for a check run of any other app.
+            # steps.totalCount 0 on a failed Actions job means no runner ever
+            # picked it up; see NOSTART below.
             ... on CheckRun{ name conclusion status detailsUrl startedAt
+              steps(first:1){ totalCount }
               checkSuite{ status workflowRun{ databaseId runNumber event createdAt url
                 workflow{ databaseId name } } } }
             ... on StatusContext{ context state targetUrl }
@@ -400,6 +403,15 @@ evaluate() {
                               elif .conclusion == "SUCCESS" then "PASS"
                               elif .conclusion == "SKIPPED" or .conclusion == "NEUTRAL" then "SKIP"
                               elif .conclusion == "CANCELLED" then "CANCEL"
+                              # A failed Actions job with zero steps never got a
+                              # runner: GitHub gave up acquiring one and annotates
+                              # it "The job was not started because it repeatedly
+                              # failed to be acquired". Nothing in the PR can fix
+                              # that, so it is named apart from a real failure.
+                              # Third-party check runs carry no steps at all,
+                              # hence the workflowRun condition.
+                              elif .conclusion == "FAILURE" and (.steps.totalCount // null) == 0
+                                   and (.checkSuite.workflowRun // null) != null then "NOSTART"
                               else "FAIL" end), url: .detailsUrl, started: .startedAt}
           else {name: .context, state: (if .state == "SUCCESS" then "PASS"
                                         elif .state == "PENDING" then "PENDING"
@@ -723,7 +735,8 @@ evaluate() {
     | ([$checks[] | select(.state=="PASS" or .state=="SKIP" or .state=="FAIL") | .name]) as $reported
     | ($checks | map(select(.state=="CANCEL" and (.name as $n | $reported | index($n)))))     as $stale
     | ($checks | map(select(.state=="CANCEL" and (.name as $n | $reported | index($n)) == null))) as $cancelled
-    | (($checks | map(select(.state=="FAIL"))) + $cancelled) as $failing
+    | ($checks | map(select(.state=="NOSTART"))) as $not_started
+    | (($checks | map(select(.state=="FAIL"))) + $cancelled + $not_started) as $failing
     | ($checks | map(select(.state=="QUEUED"))) as $queued
     | ($checks | map(select(.state=="PENDING"))) as $running
     # "pending" downstream keeps meaning "not finished", queued or running.
@@ -768,6 +781,7 @@ evaluate() {
           # check-run name arrives with newlines in it and would break the
           # single-line summary into fragments.
           cancelled: ($cancelled|map(.name|gsub("\\s+";" ")|.[0:90])),
+          not_started: ($not_started|map(.name|gsub("\\s+";" ")|.[0:90])),
           failing: ($failing|map(.name)),
           failing_required: ($failing_required|map(.name)),
           pending_required: ($pending_required|map(.name)),
@@ -1764,6 +1778,7 @@ render() {
     "  checks      : \(.checks.pass) pass, \(.checks.fail) fail, \(.checks.pending) pending\(if .checks.pending > 0 then " (\(.checks.running) running, \(.checks.queued) queued)" else "" end), \(.checks.skip) skip (of \(.checks.total))",
     (if (.checks.failing|length) > 0 then "  failing     : \(.checks.failing|join(", "))" else empty end),
     (if (.checks.cancelled|length) > 0 then "  cancelled   : \(.checks.cancelled|join(", ")) — re-run, do not debug" else empty end),
+    (if ((.checks.not_started // [])|length) > 0 then "  not started : \(.checks.not_started|join(", ")) — no runner acquired; gh run rerun --failed once the whole run has completed, do not debug" else empty end),
     (if .checks.stale > 0 then "  stale       : \(.checks.stale) cancelled row(s) from a superseded run, ignored" else empty end),
     (if (.checks.failing_required|length) > 0 then "  ^ REQUIRED  : \(.checks.failing_required|join(", "))" else empty end),
     "  rulesets    : \(if (.rulesets|length)>0 then (.rulesets|join(", ")) else "none" end)",
