@@ -47,7 +47,9 @@ arm_marker() {
 # the quota wall is armed — the state in which the advice is emitted.
 # AUTHOR / VIEWER / AUTHOR_TYPENAME select the case under test.
 make_stub() {
-    printf '%s\n' '[{"type":"copilot_code_review","parameters":{}}]' > "$STUB_DIR/rules.json"
+    # RULES_JSON overrides the branch rules; the default carries the Copilot ruleset.
+    default_rules='[{"type":"copilot_code_review","parameters":{}}]'
+    printf '%s\n' "${RULES_JSON:-$default_rules}" > "$STUB_DIR/rules.json"
     cat > "$STUB_DIR/gh" <<STUB
 #!/usr/bin/env bash
 for a in "\$@"; do
@@ -169,11 +171,20 @@ out=$(status)
 check_contains "attestation named"     "pr-merge.sh --self-reviewed"         "$out"
 check_absent   "no gap note"           "Only one page of authorship"         "$out"
 
-# An older gh, or any stubbed response without a viewer, must keep the previous
-# behaviour rather than silently withdrawing the attestation advice.
-echo "case: viewer absent -> falls back to the attestation advice"
+# The attestation counts only for a run authenticated as the author, so an
+# account the response does not name is not offered it either.
+echo "case: viewer absent -> no attestation advice, the unknown account is named"
 AUTHOR=someone VIEWER="" make_stub; arm_marker
 out=$(status)
-check_contains "attestation named" "To proceed on a documented self-review" "$out"
+check_absent   "attestation withheld" "To proceed on a documented self-review" "$out"
+check_contains "unknown account named" "check gh auth status"                  "$out"
+
+# Without a quota wall the generic branch answers; it must not hand a
+# non-author the attestation either.
+echo "case: viewer is NOT the author, no ruleset, no quota wall -> approve, never the attestation"
+AUTHOR=aseemann VIEWER=cybot RULES_JSON='[]' make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "approve named"         "gh pr review 1 --repo o/r --approve" "$out"
+check_absent   "self-review not offered" "merge on that with pr-merge.sh --self-reviewed" "$out"
 
 exit "$fail"

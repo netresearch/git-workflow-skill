@@ -507,9 +507,10 @@ evaluate() {
     # action that cannot succeed — measured on netresearch/concourse-ci-skill#57,
     # author aseemann, viewer CybotTM, where the advice was printed on every read
     # and then refused at merge time. An empty viewer (an older gh, a stubbed
-    # response) keeps the previous assumption that the operator is the author.
+    # response) counts as somebody else: the attestation belongs to the author alone,
+    # and an account that cannot be named cannot be shown to be the author.
     | (($g.data.viewer.login // "")) as $viewer
-    | ($viewer == "" or $viewer == $author) as $viewer_is_author
+    | ($viewer != "" and $viewer == $author) as $viewer_is_author
     | ((($author_is_bot | not) and $viewer_is_author)) as $attestation_available
     # A non-author who pushed commits onto the branch reviewed nothing they did
     # not also write. Approving then is a self-approval: it attests to no second
@@ -1061,6 +1062,8 @@ evaluate() {
        + (if ($s.attestation_available | not)
           then " The pull request is authored by \($author)"
                + (if $s.author_is_bot then ", a bot that never authenticates and never reads a diff"
+                  elif $s.viewer == "" then ", and the account this run is authenticated as is unknown"
+                       + " (the response named no viewer; check gh auth status)"
                   else ", not by you (\($s.viewer))" end)
                + ", so the self-review attestation is not available on it: that attestation is an"
                + " assertion by the author, and pr-merge.sh --self-reviewed refuses every other"
@@ -1377,10 +1380,22 @@ evaluate() {
                # attestation and merge on it; requesting Copilot stays offered
                # as the other way to satisfy the same demand.
                {action:"request-review",
-                why:($no_review + " — a review is required and the one you write yourself counts:"
-                     + " read the diff, say in the pull request what you checked, and merge on that"
-                     + " with pr-merge.sh --self-reviewed. Requesting Copilot below is the other way"
-                     + " to satisfy the same demand, and commits you to waiting for its answer\($stale_approval)"),
+                why:(if $s.attestation_available
+                     then $no_review + " — a review is required and the one you write yourself counts:"
+                          + " read the diff, say in the pull request what you checked, and merge on that"
+                          + " with pr-merge.sh --self-reviewed. Requesting Copilot below is the other way"
+                          + " to satisfy the same demand, and commits you to waiting for its answer\($stale_approval)"
+                     else $no_review + " — a review is required. The self-review attestation is an"
+                          + " assertion by the author (\($author)), and pr-merge.sh --self-reviewed refuses"
+                          + " every other account"
+                          + (if $s.viewer == "" then "; the account this run is authenticated as is unknown"
+                                  + " (the response named no viewer; check gh auth status)."
+                             else "." end)
+                          + (if $approve_withheld then $co_author_why
+                             else " Review the diff and approve it as yourself: gh pr review"
+                                  + " \($s.number) --repo \($s.repo) --approve" end)
+                          + ". Requesting Copilot below is the other way to satisfy the same demand\($stale_approval)"
+                     end),
                 reason:"review-required",
                 cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
               end)
