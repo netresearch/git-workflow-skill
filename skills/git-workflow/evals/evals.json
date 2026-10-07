@@ -1160,7 +1160,7 @@
       },
       {
         "type": "content",
-        "pattern": "(gh run rerun[^\\n]{0,40}--failed|re-?run[^.]{0,40}failed jobs)"
+        "pattern": "(gh run rerun[^.]{0,40}--failed|re-?run[^.]{0,40}failed jobs)"
       },
       {
         "type": "content",
