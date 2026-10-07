@@ -187,4 +187,17 @@ out=$(status)
 check_contains "approve named"         "gh pr review 1 --repo o/r --approve" "$out"
 check_absent   "self-review not offered" "merge on that with pr-merge.sh --self-reviewed" "$out"
 
+# An unknown viewer gets the auth hint from every branch, not only the quota one.
+echo "case: viewer absent, ruleset, no quota wall -> no attestation, the unknown account is named"
+AUTHOR=someone VIEWER="" make_stub; rm -f "$MARKER"
+out=$(status)
+check_absent   "self-review not offered" "satisfies it: pr-merge.sh --self-reviewed" "$out"
+check_contains "unknown account named"   "check gh auth status"                      "$out"
+
+echo "case: viewer absent, no ruleset, no quota wall -> no attestation, the unknown account is named"
+AUTHOR=someone VIEWER="" RULES_JSON='[]' make_stub; rm -f "$MARKER"
+out=$(status)
+check_absent   "self-review not offered" "merge on that with pr-merge.sh --self-reviewed" "$out"
+check_contains "unknown account named"   "check gh auth status"                          "$out"
+
 exit "$fail"

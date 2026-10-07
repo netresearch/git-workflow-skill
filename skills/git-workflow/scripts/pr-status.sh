@@ -1341,6 +1341,7 @@ evaluate() {
                     + (if $approve_withheld then ""
                        elif $s.attestation_available then "pr-merge.sh --self-reviewed"
                        else "gh pr review \($s.number) --repo \($s.repo) --approve, because the attestation belongs to the author (\($author)) and pr-merge.sh --self-reviewed refuses every other authenticated user"
+                            + (if $s.viewer == "" then " (the account this run is authenticated as is unknown: the response named no viewer; check gh auth status)" else "" end)
                        end)
                     + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported — do not enqueue on this reading)" end)),
                reason:"review-required",
