@@ -200,4 +200,17 @@ out=$(status)
 check_absent   "self-review not offered" "merge on that with pr-merge.sh --self-reviewed" "$out"
 check_contains "unknown account named"   "check gh auth status"                          "$out"
 
+# Withholding --approve for unread authorship must not drop the hint.
+echo "case: viewer absent, ruleset, no quota wall, authorship truncated -> the unknown account is named"
+AUTHOR=someone VIEWER="" COMMITTERS=someone MORE_COMMITS=150 make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "gap named"               "151 commits"          "$out"
+check_contains "unknown account named"   "check gh auth status" "$out"
+
+echo "case: bot author, viewer absent, quota wall -> the unknown account is named"
+AUTHOR="renovate" AUTHOR_TYPENAME="Bot" VIEWER="" make_stub; arm_marker
+out=$(status)
+check_contains "bot reason retained"     "never reads a diff"   "$out"
+check_contains "unknown account named"   "check gh auth status" "$out"
+
 exit "$fail"

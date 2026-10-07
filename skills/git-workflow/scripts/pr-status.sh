@@ -1062,6 +1062,9 @@ evaluate() {
        + (if ($s.attestation_available | not)
           then " The pull request is authored by \($author)"
                + (if $s.author_is_bot then ", a bot that never authenticates and never reads a diff"
+                       + (if $s.viewer == "" then " (and the account this run is authenticated as is"
+                               + " unknown: the response named no viewer; check gh auth status)"
+                          else "" end)
                   elif $s.viewer == "" then ", and the account this run is authenticated as is unknown"
                        + " (the response named no viewer; check gh auth status)"
                   else ", not by you (\($s.viewer))" end)
@@ -1336,12 +1339,12 @@ evaluate() {
               # anyone else, so a non-author gets the ordinary approval instead —
               # unless they wrote commits here, or that is unknown ($approve_withheld).
               {action:"request-review", why:("copilot_code_review ruleset is active and Copilot has not reviewed \($s.headOid[0:8]) — the rule itself does not block the merge, since a Copilot review does not count toward required approvals; the demand here is the never-merge-unreviewed policy, not a host gate"
+                    + (if $s.viewer == "" then " (the account this run is authenticated as is unknown: the response named no viewer; check gh auth status)" else "" end)
                     + (if $approve_withheld then "." + $co_author_why
                        else ", and a review you write yourself satisfies it: " end)
                     + (if $approve_withheld then ""
                        elif $s.attestation_available then "pr-merge.sh --self-reviewed"
                        else "gh pr review \($s.number) --repo \($s.repo) --approve, because the attestation belongs to the author (\($author)) and pr-merge.sh --self-reviewed refuses every other authenticated user"
-                            + (if $s.viewer == "" then " (the account this run is authenticated as is unknown: the response named no viewer; check gh auth status)" else "" end)
                        end)
                     + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported — do not enqueue on this reading)" end)),
                reason:"review-required",
