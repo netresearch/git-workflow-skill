@@ -18,7 +18,7 @@ done
 wait; cat "$d"/*
 ```
 
-Then act per line: `NEXT: merge` → `pr-merge.sh` in a **new** invocation (merge-gate hooks evaluate at call time — never chain the wait and the merge in one command); `resolve-threads` / `address-review` → handle that PR individually while the rest keep going. Do not write a bespoke driver that re-reads PR state in a loop and dispatches on it — that re-implements `pr-status.sh` badly, waits for the one outcome it was told about, and sleeps through the rest (verified 2026-08-03: a 7-repo release sweep completed on this pattern with zero hand-rolled polling).
+Then act per line: `NEXT: merge` → `pr-merge.sh` in a **new** invocation (merge-gate hooks evaluate at call time — never chain the wait and the merge in one command); `resolve-threads` / `address-review` → handle that PR individually while the rest keep going. Do not write a bespoke driver that re-reads PR state in a loop and dispatches on it — that re-implements `pr-status.sh` badly, waits for the one outcome it was told about, and sleeps through the rest (verified 2026-08-03: a 7-repo release sweep completed on this pattern with zero hand-rolled polling). The failure is silent, which is why it costs time: on 2026-10-07 a bespoke driver over 27 PRs acted only on `merge` and on red checks, and netresearch/t3x-nr-passkeys-fe#92 sat at `NEXT: rebase — branch is behind main` for about 35 minutes after its last check turned green (18:39 to 19:14 UTC) without a single log line, until the PR was read by hand. The parallel `--watch` loop above returns on that action like on any other.
 
 ## Check taxonomy
 
@@ -29,6 +29,31 @@ Classify every failing check BEFORE reacting:
 | **Hard** | unit/integration/E2E tests, lint, build | HOLD and fix — except known infra flakes (Docker Hub pull timeout, buildx setup): one `gh run rerun <id> --failed` |
 | **Soft, self-healing** | `codecov/*` while sibling jobs still run (partial uploads) | Ignore while `pending > 0`; if persisting after completion: one full `gh run rerun <id>` |
 | **Soft, structural** | SonarCloud PR gate on refactor PRs | Introspect before deciding (below) |
+| **Not started** | `failure` with zero steps, empty `runner_name` and the annotation `The job was not started because it repeatedly failed to be acquired`; `pr-status.sh` lists it under `not started` | Nothing to fix in the PR. `gh run rerun <id> --failed` once the whole run has completed; `NEXT: rerun-ci` names the runs (below) |
+| **Infra, silent upload** | CodeQL / SAST job red in its code-scanning upload step; the failed step ends at `Uploading results` and the job log has no `##[error]` | One `gh run rerun <id> --failed`; investigate only if it repeats |
+
+### Jobs that never started, and uploads that fail without an error
+
+A queued job whose runner GitHub could not acquire is concluded `failure` with **zero steps**, an empty `runner_name` and the annotation `The job was not started because it repeatedly failed to be acquired (5 attempts).` Aggregate gates such as `All CI checks` then fail as well, because a job they need failed, so a PR whose code is fine reads as a dozen red checks.
+
+Observed once, on 2026-10-07, and it coincided with a GitHub incident ([githubstatus.com, djlmxz2zd0j7](https://www.githubstatus.com/incidents/djlmxz2zd0j7): Actions, Pull Requests and Git Operations disrupted between 15:06 and 15:16 UTC). On netresearch/t3x-nr-textdb#169 twelve jobs created between 14:23 and 14:25 concluded this way between 15:08 and 15:16, while jobs of the same runs that were still queued got a runner from 15:16 on. `gh run rerun --failed` turned the twelve green. Whether a busy pool alone produces this outside an incident is not established.
+
+Tell it apart in one call per job — the check-run id is the job id:
+
+```bash
+gh api "repos/$R/actions/jobs/$JOB" --jq '{runner_name, steps: (.steps|length), conclusion}'
+# runner_name "" and steps 0 -> read the annotations:
+gh api "repos/$R/check-runs/$JOB/annotations" --jq '.[].message'
+# "... repeatedly failed to be acquired ..." -> re-run, do not debug
+```
+
+Zero steps alone does not identify it: other refusals to start a job carry a different annotation and a different fix. `pr-status.sh` therefore requires the annotation as well, lists such rows under `not started` with their run ids, and still counts them as failing, so the gate stays shut. When they are the only failures and each of their runs has concluded, `NEXT` is `rerun-ci` with one `gh run rerun <run> --failed` per run. While a job of such a run is still going, `NEXT` is whatever else is due (an open thread still comes first), and a `wait` names the not-started rows. With any other failure mixed in, `fix-ci` / `triage-ci` name that failure and list the not-started rows separately; while a required check is still pending, a non-required failure is only named in the `wait`, as for any red non-required check. `gh run rerun` refuses a run that is still in progress, so a run with one job still queued has to finish first.
+
+A second failure in the same window looked like a finding and was not one: a code-scanning job failed in its upload step, whose output ended at `Uploading results`, with no `##[error]` line anywhere in the job log and no error annotation. The job log itself goes on for about 140 lines of post-job cleanup, including `CodeQL job status was failure`, so its tail shows the cleanup, not the tell. The analysis had finished; the upload was not accepted. Seen on netresearch/t3x-nr-passkeys-fe#92 (`codeql / Analyze (javascript-typescript)`, step `Perform CodeQL Analysis`, 15:07) and netresearch/t3x-nr-xliff-streaming#54 (`security / SAST (Opengrep)`, step `Upload SARIF to code scanning`, 15:12), both inside the incident window; one re-run cleared both. The step name alone also matches a real analysis failure, so `pr-status.sh` does not classify this one. Check the signature before re-running — one hit for the first pattern and none for the second:
+
+```bash
+gh run view --repo "$R" --job "$JOB" --log | grep -n -e 'Uploading results' -e '##\[error\]'
+```
 
 ## One shard red in a sharded suite: flake vs. real regression
 

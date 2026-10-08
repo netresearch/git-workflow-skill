@@ -1149,5 +1149,31 @@
         "Rebuild each commit with git commit-tree $tree -p $parent -m \"$msg\" and append Signed-off-by: Agent <agent@example.com> to every message."
       ]
     }
+  },
+  {
+    "name": "red_checks_from_jobs_that_never_started",
+    "prompt": "pr-status.sh shows 13 failing checks on my PR, including 'ci / PHPStan (8.2, ^14.3)' and the aggregate 'ci / All CI checks'. The diff only renames a title in ext_emconf.php and composer.json. gh api repos/o/r/actions/jobs/112843864117 returns runner_name \"\", steps [] and conclusion failure, started 14:24:45 and completed 15:13:35, and its check-run annotations include \"The job was not started because it repeatedly failed to be acquired (5 attempts).\" What do I do?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(never (started|got a runner|picked up)|not started|no runner|failed to be acquired)"
+      },
+      {
+        "type": "content",
+        "pattern": "(gh run rerun[^.]{0,40}--failed|re-?run[^.]{0,40}failed jobs)"
+      },
+      {
+        "type": "content",
+        "pattern": "(once|after|when|until|wait (for|until))[^.]{0,60}((whole|entire|the|workflow) run[^.]{0,30}(complete|finish|done)|(all|every) jobs?[^.]{0,40}(complete|finish|done))"
+      }
+    ],
+    "samples": {
+      "passing": "Nothing in the diff caused this. runner_name is empty and the job has zero steps, so it never got a runner: GitHub could not acquire one and concluded it failure, and the aggregate check failed because a job it needs failed. Do not debug PHPStan. Wait until the whole run has completed, then gh run rerun <run-id> --failed; pr-status.sh lists such rows under not started.",
+      "failing": [
+        "PHPStan is failing on 8.2. Run vendor/bin/phpstan locally, fix the reported errors and push again.",
+        "The All CI checks job failed, so a test broke. Revert the title change and try again.",
+        "Re-run the failed jobs right away with gh run rerun --failed, even while other jobs of the run are still queued."
+      ]
+    }
   }
 ]

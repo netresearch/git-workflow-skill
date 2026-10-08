@@ -164,7 +164,7 @@ REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
 # are deliberately not in here. tests/test_pr_status_draft_watch.sh pins the
 # two lists against every action literal this script can emit — a new action
 # must land in one of them.
-ACTIONABLE="fix-ci triage-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs fix-required-context"
+ACTIONABLE="fix-ci triage-ci rerun-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs fix-required-context"
 
 die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
 
@@ -350,7 +350,11 @@ collect_raw() {
             # It is what tells a required context reported only by an OLDER
             # run of a workflow apart from one the newest run reported; see
             # $stale_required below. Null for a check run of any other app.
+            # steps and annotations identify a failed Actions job that no
+            # runner ever picked up; see NOSTART below.
             ... on CheckRun{ name conclusion status detailsUrl startedAt
+              steps(first:1){ totalCount }
+              annotations(first:10){ nodes{ message } }
               checkSuite{ status workflowRun{ databaseId runNumber event createdAt url
                 workflow{ databaseId name } } } }
             ... on StatusContext{ context state targetUrl }
@@ -400,7 +404,21 @@ evaluate() {
                               elif .conclusion == "SUCCESS" then "PASS"
                               elif .conclusion == "SKIPPED" or .conclusion == "NEUTRAL" then "SKIP"
                               elif .conclusion == "CANCELLED" then "CANCEL"
-                              else "FAIL" end), url: .detailsUrl, started: .startedAt}
+                              # A failed Actions job with zero steps whose
+                              # annotation reads "The job was not started because
+                              # it repeatedly failed to be acquired" never got a
+                              # runner. Nothing in the PR can fix that, so it is
+                              # named apart from a real failure. Other zero-step
+                              # failures (billing, a broken workflow file) carry a
+                              # different message and stay FAIL; so do third-party
+                              # check runs, which have no workflowRun.
+                              elif .conclusion == "FAILURE" and (.steps.totalCount // null) == 0
+                                   and (.checkSuite.workflowRun // null) != null
+                                   and any(.annotations.nodes[]?; (.message // "") | test("failed to be acquired"))
+                                then "NOSTART"
+                              else "FAIL" end), url: .detailsUrl, started: .startedAt,
+                run: (.checkSuite.workflowRun.databaseId // null),
+                suite_done: ((.checkSuite.status // "COMPLETED") == "COMPLETED")}
           else {name: .context, state: (if .state == "SUCCESS" then "PASS"
                                         elif .state == "PENDING" then "PENDING"
                                         else "FAIL" end), url: .targetUrl}
@@ -723,7 +741,8 @@ evaluate() {
     | ([$checks[] | select(.state=="PASS" or .state=="SKIP" or .state=="FAIL") | .name]) as $reported
     | ($checks | map(select(.state=="CANCEL" and (.name as $n | $reported | index($n)))))     as $stale
     | ($checks | map(select(.state=="CANCEL" and (.name as $n | $reported | index($n)) == null))) as $cancelled
-    | (($checks | map(select(.state=="FAIL"))) + $cancelled) as $failing
+    | ($checks | map(select(.state=="NOSTART"))) as $not_started
+    | (($checks | map(select(.state=="FAIL"))) + $cancelled + $not_started) as $failing
     | ($checks | map(select(.state=="QUEUED"))) as $queued
     | ($checks | map(select(.state=="PENDING"))) as $running
     # "pending" downstream keeps meaning "not finished", queued or running.
@@ -768,6 +787,21 @@ evaluate() {
           # check-run name arrives with newlines in it and would break the
           # single-line summary into fragments.
           cancelled: ($cancelled|map(.name|gsub("\\s+";" ")|.[0:90])),
+          not_started: ($not_started|map(.name|gsub("\\s+";" ")|.[0:90])),
+          # The runs to re-run, and which of them still have a job going: a
+          # run is re-runnable only once all of its jobs have concluded. The
+          # check suite of the row is the run, and its status covers jobs the
+          # rollup did not list (it is cut at 100 contexts); a pending row in
+          # the same run is the second signal.
+          not_started_runs: ($not_started|map(.run)|unique),
+          not_started_busy_runs: (($not_started|map(.run)|unique) as $ns_runs
+                                  | (($not_started|map(select(.suite_done|not)|.run))
+                                     + ($ns_runs - ($ns_runs - ($pending|map(.run // empty)))))
+                                  | unique),
+          # Failures other than not-started ones. Empty while failing is not
+          # means every red row is one nobody can fix in the PR.
+          failing_other: ($failing|map(select(.state != "NOSTART"))|map(.name)),
+          failing_required_other: ($failing_required|map(select(.state != "NOSTART"))|map(.name)),
           failing: ($failing|map(.name)),
           failing_required: ($failing_required|map(.name)),
           pending_required: ($pending_required|map(.name)),
@@ -794,7 +828,11 @@ evaluate() {
         # caller gating on this would act on a set it never verified.
         checks_settled: (if $ok == 1
                          then (($pending|length) == 0 and ($undispatched|length) == 0
-                               and ($checks|length) > 0)
+                               and ($checks|length) > 0
+                               # A not-started row whose run is still going per
+                               # its check suite: not settled either, though no
+                               # pending row of that run may be visible.
+                               and ($not_started|map(select(.suite_done|not))|length) == 0)
                          else null end),
         rulesets: $ruletypes,
         # Ids of the rulesets whose pull_request rule sets
@@ -1094,15 +1132,29 @@ evaluate() {
          elif $s.mergeState == "BEHIND" then
            {action:"rebase", why:"branch is behind \($s.base)",
             cmd:"git fetch origin \($s.base):refs/remotes/origin/\($s.base) && git rebase origin/\($s.base) && git push --force-with-lease"}
-         elif ($s.checks.failing_required|length) > 0 then
-           {action:"fix-ci", why:"required check(s) failing: \($s.checks.failing_required|join(", "))",
+         # Every red row is a job that never got a runner, and each of their
+         # runs has concluded: nothing in the PR to fix, re-run them. While a
+         # run still has a job going, this does not fire; the ladder goes on,
+         # so threads and comments still come first, and the wait it ends in
+         # names the not-started rows (see the end of the ladder).
+         elif ($s.checks.failing|length) > 0 and ($s.checks.failing_other|length) == 0
+              and ($s.checks.not_started_busy_runs|length) == 0 then
+           {action:"rerun-ci", why:"only not-started job(s) failing: \($s.checks.not_started|join(", ")) — no runner was acquired; nothing in the PR to fix",
+            cmd:($s.checks.not_started_runs|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))}
+         # fix-ci and triage-ci name only failures somebody can fix; the
+         # not-started rows next to them are named after the ladder.
+         elif ($s.checks.failing_required_other|length) > 0 then
+           {action:"fix-ci", why:"required check(s) failing: \($s.checks.failing_required_other|join(", "))",
             urls:$s.checks.failing_urls}
          # Only once every required check has concluded. While one is still
          # running, a red non-required check is information: it cannot be what
          # keeps the gate shut yet, and returning an action here ends a --watch
          # that has nothing to act on. The wait branch below names it instead.
-         elif ($s.checks.fail > 0 and ($s.checks.pending_required|length) == 0) then
-           {action:"triage-ci", why:"non-required check(s) failing: \($s.checks.failing|join(", ")) — not merge-blocking on their own, but UNSTABLE keeps the gate shut",
+         elif (($s.checks.failing_other|length) > 0 and ($s.checks.pending_required|length) == 0) then
+           {action:"triage-ci", why:("non-required check(s) failing: \($s.checks.failing_other|join(", ")) — not merge-blocking on their own"
+                                     + (if ($s.checks.failing_required|length) > 0
+                                        then "; required not-started row(s) keep the gate shut"
+                                        else ", but UNSTABLE keeps the gate shut" end)),
             urls:$s.checks.failing_urls}
          elif $s.unresolved_threads > 0 then
            {action:"resolve-threads", why:"\($s.unresolved_threads) unresolved review thread(s)",
@@ -1136,6 +1188,10 @@ evaluate() {
            # operator call this state exists for: mark it ready.
            (if ($s.checks.pending > 0) then
               {action:"wait", why:"draft — \($s.checks.pending) check(s) still running"}
+            # A not-started row whose run is still going, though no pending
+            # row is visible: running too, so not ready yet.
+            elif ($s.checks.not_started_busy_runs|length) > 0 then
+              {action:"wait", why:"draft — a run is still going"}
             else
               {action:"ready",
                why:("draft — nothing running, mark ready when the work is done"
@@ -1346,7 +1402,10 @@ evaluate() {
                        elif $s.attestation_available then "pr-merge.sh --self-reviewed"
                        else "gh pr review \($s.number) --repo \($s.repo) --approve, because the attestation belongs to the author (\($author)) and pr-merge.sh --self-reviewed refuses every other authenticated user"
                        end)
-                    + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported — do not enqueue on this reading)" end)),
+                    + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported"
+                                 + (if ($s.checks.not_started_busy_runs|length) > 0
+                                    then ", run(s) \($s.checks.not_started_busy_runs|map(tostring)|join(", ")) still going" else "" end)
+                                 + " — do not enqueue on this reading)" end)),
                reason:"review-required",
                cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
             end)
@@ -1418,9 +1477,15 @@ evaluate() {
          elif ($s.checks.pending_required|length) > 0 then
            {action:"wait",
             why:("required check(s) still pending: \($s.checks.pending_required|join(", "))"
-                 + (if $s.checks.fail > 0
-                    then " — non-required red meanwhile: \($s.checks.failing|join(", ")); it decides nothing until the required ones conclude"
+                 + (if ($s.checks.failing_other|length) > 0
+                    then " — non-required red meanwhile: \($s.checks.failing_other|join(", ")); it decides nothing until the required ones conclude"
                     else "" end))}
+         # Every failure rung above sits higher than merge; the not-started
+         # fall-through is the one path that can arrive here with a red row.
+         # GitHub does not report CLEAN with a red row, so this only guards an
+         # inconsistent reading, but it keeps "no red row reaches merge" true.
+         elif $s.mergeState == "CLEAN" and ($s.checks.failing|length) > 0 then
+           {action:"wait", why:"mergeState CLEAN while \($s.checks.failing|length) row(s) are red — not merging on that reading"}
          elif ($s.mergeState == "CLEAN"
                and ($s.merge_methods|index("merge")|not)
                and ($s.merge_methods|index("rebase")|not)) then
@@ -1457,10 +1522,20 @@ evaluate() {
            {action:"wait",
             why:("UNSTABLE while \($s.checks.pending) non-required check(s) have not finished"
                  + " (\($s.checks.running) running, \($s.checks.queued) queued) — nothing has failed")}
+         # The same while the only red rows are not-started ones whose run is
+         # still going: nothing to triage yet, the note says what to re-run.
+         elif ($s.mergeState == "UNSTABLE" and ($s.checks.not_started_busy_runs|length) > 0) then
+           {action:"wait", why:"UNSTABLE while a run is still going"}
          elif $s.mergeState == "UNSTABLE" then
            {action:"triage-ci", why:"UNSTABLE: a non-required check is red; the gate stays shut until it is green or the PR is force-merged"}
          elif $s.checks.pending > 0 then
            {action:"wait", why:"\($s.checks.pending) check(s) still running (none of them required)"}
+         # A not-started row whose run is still going, with no visible pending
+         # row to wait on (the busy job lies beyond the 100 rollup contexts,
+         # or only the check suite says so): still running, so wait here,
+         # before the rungs below that assume nothing runs any more.
+         elif ($s.checks.not_started_busy_runs|length) > 0 then
+           {action:"wait", why:"a run is still going"}
          # Checked last, because it only matters once everything visible is
          # green: an unsigned commit produces no red check and no rollup entry,
          # so it surfaces purely as BLOCKED and used to end here as
@@ -1521,6 +1596,24 @@ evaluate() {
          else
            {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review. The cause is NOT determined; check branch protection manually"}
          end)
+    # The not-started note, built in this one place for every rung that can
+    # be reached while such rows are red (rerun-ci names them itself). Their
+    # runs may still have a job going or may have concluded; name both kinds,
+    # with the command only for runs that can be re-run now (gh run rerun
+    # refuses a run in progress). A pending-only wait loses its "nothing has
+    # failed", which is no longer true.
+    | if (.next.action | IN("wait", "fix-ci", "triage-ci")) and ($s.checks.not_started|length) > 0 then
+        ($s.checks.not_started_runs - $s.checks.not_started_busy_runs) as $idle
+        | .next.why = ((.next.why | sub(" — nothing has failed$"; ""))
+                       + " — not started (no runner acquired): \($s.checks.not_started|join(", ")); "
+                       + ([ (if ($s.checks.not_started_busy_runs|length) > 0
+                             then "re-run once run(s) \($s.checks.not_started_busy_runs|map(tostring)|join(", ")) have finished" else empty end),
+                            (if ($idle|length) > 0
+                             then "run(s) \($idle|map(tostring)|join(", ")) can be re-run now: "
+                                  + ($idle|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))
+                             else empty end)
+                          ] | join("; ")))
+      else . end
   '
 }
 
@@ -1764,6 +1857,7 @@ render() {
     "  checks      : \(.checks.pass) pass, \(.checks.fail) fail, \(.checks.pending) pending\(if .checks.pending > 0 then " (\(.checks.running) running, \(.checks.queued) queued)" else "" end), \(.checks.skip) skip (of \(.checks.total))",
     (if (.checks.failing|length) > 0 then "  failing     : \(.checks.failing|join(", "))" else empty end),
     (if (.checks.cancelled|length) > 0 then "  cancelled   : \(.checks.cancelled|join(", ")) — re-run, do not debug" else empty end),
+    (if ((.checks.not_started // [])|length) > 0 then "  not started : \(.checks.not_started|join(", ")) — no runner acquired; gh run rerun <run> --failed once that run has completed (run \(.checks.not_started_runs|map(tostring)|join(", "))), do not debug" else empty end),
     (if .checks.stale > 0 then "  stale       : \(.checks.stale) cancelled row(s) from a superseded run, ignored" else empty end),
     (if (.checks.failing_required|length) > 0 then "  ^ REQUIRED  : \(.checks.failing_required|join(", "))" else empty end),
     "  rulesets    : \(if (.rulesets|length)>0 then (.rulesets|join(", ")) else "none" end)",
@@ -2010,13 +2104,15 @@ while :; do
   fi
   rm -f "$snap_err"
   act=$(jq -r '.next.action' <<<"$s")
-  fails=$(jq -r '.checks.failing|join(",")' <<<"$s")
+  # Not-started rows are left out: they are answered by NEXT (rerun-ci once
+  # their run has concluded, wait before), not by a check-failed return.
+  fails=$(jq -r '.checks.failing_other|join(",")' <<<"$s")
   # A red REQUIRED check is actionable the moment it appears. A red
   # non-required one is not, while a required check is still running: it
   # cannot be what keeps the gate shut yet, and returning on it ends the watch
   # with nothing to do (#249). Hold until the required checks conclude — then
   # the same red check is the reason the gate stays shut, and this fires.
-  fails_required=$(jq -r '.checks.failing_required|join(",")' <<<"$s")
+  fails_required=$(jq -r '.checks.failing_required_other|join(",")' <<<"$s")
   pending_required=$(jq -r '.checks.pending_required|length' <<<"$s")
   if [ -z "$fails_required" ] && [ "$pending_required" -gt 0 ]; then
     fails=""
