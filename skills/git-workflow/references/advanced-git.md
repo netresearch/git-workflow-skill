@@ -991,21 +991,42 @@ be sitting there with uncommitted work. `ls -d` each path before believing the
 marker.
 
 **Rescue before discarding.** The doomed `.git` is a valid fetch source, so
-nothing has to reach the remote first:
+nothing has to reach the remote first.
+
+**Rescue into `refs/rescue/*`, never into `refs/heads/*` or `refs/tags/*`.**
+Those two namespaces are what `git push --all` and `git push --tags` publish,
+and an old clone usually holds tags the remote never had: an abandoned
+pre-release, a tag deleted upstream. Where pushing a `v*` tag starts the
+release workflow, one later `push --tags` publishes those versions. A forced
+`+refs/tags/*:refs/tags/*` also overwrites any survivor tag of the same name
+with the old clone's value. `refs/rescue/*` is reached by neither push form,
+only by `--mirror` or an explicit refspec, and `for-each-ref --contains` still
+counts it as preserving. **`--no-tags` on every rescue fetch:** without it,
+fetching even a branch into `refs/rescue/` auto-follows every tag that points
+into the fetched history and writes it to `refs/tags/*` after all:
 
 ```bash
-git -C "$bare" fetch "$old" '+refs/heads/<branch>:refs/heads/<branch>'
-git -C "$bare" fetch "$old" '+refs/tags/*:refs/tags/*'    # a refs/heads refspec carries no tags
-git -C "$bare" fetch "$old" '+refs/notes/*:refs/notes/*'  # nor notes
+git -C "$bare" fetch --no-tags "$old" '+refs/heads/<branch>:refs/rescue/heads/<branch>'
+git -C "$bare" fetch --no-tags "$old" '+refs/tags/*:refs/rescue/tags/*'   # a refs/heads refspec carries no tags
+git -C "$bare" fetch --no-tags "$old" '+refs/notes/*:refs/notes/*'        # nor notes
 
 # Stashes: EVERY entry, not just the top one. `+refs/stash:refs/stash` carries
 # stash@{0} alone, and `stash branch` consumes entries one at a time while
 # shifting the rest — so turn each into its own ref before touching the reflog.
+# `stash list` is newest first, so stash-1 is stash@{0}, stash-2 is stash@{1}.
 git -C "$project" stash list --format='%H' | nl -ba | while read -r n sha; do
-  git -C "$project" branch "rescue-stash-$n" "$sha"
+  git -C "$project" update-ref "refs/rescue/stash-$n" "$sha"
 done
-git -C "$bare" fetch "$old" '+refs/heads/rescue-stash-*:refs/heads/rescue-stash-*'
+git -C "$bare" fetch --no-tags "$old" '+refs/rescue/stash-*:refs/rescue/stash/*'
+
+# Only if the old clone is kept after all: drop the temporary refs there.
+git -C "$project" for-each-ref --format='%(refname)' refs/rescue |
+  while read -r ref; do git -C "$project" update-ref -d "$ref"; done
 ```
+
+To work on a rescued ref again, promote that one ref on purpose:
+`git -C "$bare" branch <name> refs/rescue/heads/<name>`. Once a rescued ref
+is no longer needed, `git -C "$bare" update-ref -d <ref>` drops it.
 
 **Park, don't delete.** The reflog is the one thing that is not in the other
 repository. `find` moves dotfiles too and leaves the directory itself in place,
