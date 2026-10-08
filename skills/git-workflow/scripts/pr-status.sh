@@ -828,7 +828,11 @@ evaluate() {
         # caller gating on this would act on a set it never verified.
         checks_settled: (if $ok == 1
                          then (($pending|length) == 0 and ($undispatched|length) == 0
-                               and ($checks|length) > 0)
+                               and ($checks|length) > 0
+                               # A not-started row whose run is still going per
+                               # its check suite: not settled either, though no
+                               # pending row of that run may be visible.
+                               and ($not_started|map(select(.suite_done|not))|length) == 0)
                          else null end),
         rulesets: $ruletypes,
         # Ids of the rulesets whose pull_request rule sets
@@ -1398,7 +1402,10 @@ evaluate() {
                        elif $s.attestation_available then "pr-merge.sh --self-reviewed"
                        else "gh pr review \($s.number) --repo \($s.repo) --approve, because the attestation belongs to the author (\($author)) and pr-merge.sh --self-reviewed refuses every other authenticated user"
                        end)
-                    + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported — do not enqueue on this reading)" end)),
+                    + (if $s.checks_settled then "" else " (CI is NOT settled yet: \($s.checks.pending) pending, \($s.undispatched|length) required context(s) not reported"
+                                 + (if ($s.checks.not_started_busy_runs|length) > 0
+                                    then ", run(s) \($s.checks.not_started_busy_runs|map(tostring)|join(", ")) still going" else "" end)
+                                 + " — do not enqueue on this reading)" end)),
                reason:"review-required",
                cmd:"gh api repos/\($s.repo)/pulls/\($s.number)/requested_reviewers -X POST -f \"reviewers[]=copilot-pull-request-reviewer[bot]\""}
             end)
@@ -1523,6 +1530,12 @@ evaluate() {
            {action:"triage-ci", why:"UNSTABLE: a non-required check is red; the gate stays shut until it is green or the PR is force-merged"}
          elif $s.checks.pending > 0 then
            {action:"wait", why:"\($s.checks.pending) check(s) still running (none of them required)"}
+         # A not-started row whose run is still going, with no visible pending
+         # row to wait on (the busy job lies beyond the 100 rollup contexts,
+         # or only the check suite says so): still running, so wait here,
+         # before the rungs below that assume nothing runs any more.
+         elif ($s.checks.not_started_busy_runs|length) > 0 then
+           {action:"wait", why:"a run is still going"}
          # Checked last, because it only matters once everything visible is
          # green: an unsigned commit produces no red check and no rollup entry,
          # so it surfaces purely as BLOCKED and used to end here as
@@ -1580,11 +1593,6 @@ evaluate() {
          # state. The sentence says so and claims nothing more; snapshot()
          # attaches next.evidence with what it could read, so the reader sees
          # what was ruled out instead of guessing a cause (t3x-nr-image-optimize#201).
-         # A not-started row whose run is still going, with no visible pending
-         # row to wait on (the busy job lies beyond the 100 rollup contexts,
-         # or only the check suite says so): the cause is known, so wait.
-         elif ($s.checks.not_started_busy_runs|length) > 0 then
-           {action:"wait", why:"a run is still going"}
          else
            {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review. The cause is NOT determined; check branch protection manually"}
          end)

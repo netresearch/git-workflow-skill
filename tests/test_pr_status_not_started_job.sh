@@ -46,6 +46,7 @@ export XDG_CACHE_HOME="$STUB_DIR/cache"
 #   SUITE_BUSY=1 marks the red row's check suite (its run) as still in progress.
 #   REQFAIL=1 adds a real required failure "ci / Req2" in run 8.
 #   DRAFT=1 makes the pull request a draft.
+#   NOREVIEW=1 leaves the head without any review.
 make_stub() {
     python3 - "$STUB_DIR/rules.json" <<'PY2'
 import json, os, sys
@@ -132,8 +133,9 @@ json.dump({"data": {"repository": {
         "author": {"login": "someone"},
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
         "isCrossRepository": False,
-        "reviews": {"nodes": [{"author": {"login": "rev"}, "state": "APPROVED",
-                               "commit": {"oid": head}, "body": ""}]},
+        "reviews": {"nodes": [] if os.environ.get("NOREVIEW") == "1" else
+                    [{"author": {"login": "rev"}, "state": "APPROVED",
+                      "commit": {"oid": head}, "body": ""}]},
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": [{"id": "T1", "isResolved": False, "isOutdated": False,
             "comments": {"nodes": [{"databaseId": 1, "path": "f", "author": {"login": "rev"},
@@ -226,6 +228,22 @@ out=$(status_json)
 check "NEXT is wait"             '.next.action == "wait"' "$out"
 check "names the busy run"       '.checks.not_started_busy_runs == [7]' "$out"
 check "no command for it"        '.next.why | contains("gh run rerun 7") | not' "$out"
+
+echo "case: run busy per its check suite only -> not settled; --watch neither settles nor returns on review"
+ROW=starved REQUIRED=1 SUITE_BUSY=1 THREAD=1 make_stub
+out=$(status_json)
+check "checks_settled is false"  '.checks_settled == false' "$out"
+wout=$(PATH="$STUB_DIR:$PATH" timeout 60 bash "$SCRIPT" -R o/r 1 --watch --max-wait 6 --ignore-action resolve-threads 2>&1 || true)
+case "$wout" in
+    *SETTLED*) echo "  FAIL --watch settled while the run is busy"; fail=1 ;;
+    *) echo "  ok   --watch does not settle while the run is busy" ;;
+esac
+ROW=starved REQUIRED=1 SUITE_BUSY=1 NOREVIEW=1 make_stub
+wout=$(PATH="$STUB_DIR:$PATH" timeout 60 bash "$SCRIPT" -R o/r 1 --watch --max-wait 6 2>&1 || true)
+case "$wout" in
+    *"ACTIONABLE: request-review"*) echo "  FAIL --watch returned on request-review while the run is busy"; fail=1 ;;
+    *) echo "  ok   --watch holds request-review while the run is busy" ;;
+esac
 
 echo "case: a draft whose run is busy per its check suite only -> wait, not ready"
 ROW=starved REQUIRED=1 SUITE_BUSY=1 DRAFT=1 make_stub
