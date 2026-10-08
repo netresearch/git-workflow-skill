@@ -215,8 +215,9 @@ against the repo root, before inspecting it.
   directory, with each worktree at the same relative path beneath it (set the
   service's working directory to that subpath instead of mounting the worktree
   separately at e.g. `/app`). Relative links set the
-  `extensions.relativeWorktrees` repository extension in the shared config, so every git that touches the repository —
-  including the one in the container image — must be ≥ 2.48. Or commit from a
+  `extensions.relativeWorktrees` repository extension in the shared config, so
+  every git that touches the repository — including the one in the container
+  image — must be ≥ 2.48. Or commit from a
   checkout whose `.git` is a directory (a plain clone; a bare layout has none,
   so use the mount).
 - **If you must commit from this worktree anyway**: undo the wrapper's rewrite
