@@ -380,6 +380,9 @@ git clone -q "$TMP/origin5" "$proj5"     # the plain clone: proj5/.git + files
   # (a) a local branch that was never pushed anywhere
   git checkout -q -b unpushed-work
   echo local > only-here.txt && git add -A && git commit -qm "exists nowhere else"
+  # ... carrying a version tag the remote never had: a fetch of this branch
+  # auto-follows it into refs/tags unless --no-tags stops it.
+  git -c tag.gpgsign=false tag v0.0.1-never-pushed
   git checkout -q main
   # (b) TWO stashes. Only stash@{0} is a ref; the deeper entries are the stash
   # reflog, which no refspec carries.
@@ -450,8 +453,8 @@ check "its directory really is gone" "no" \
 # Step 4 — rescue what the survivor lacks. The doomed .git is a valid fetch
 # source, so nothing has to reach the remote first.
 try "rescue the unpushed branch" \
-    git -C "$proj5/.bare" fetch -q "$proj5/.git" \
-        '+refs/heads/unpushed-work:refs/heads/unpushed-work'
+    git -C "$proj5/.bare" fetch -q --no-tags "$proj5/.git" \
+        '+refs/heads/unpushed-work:refs/rescue/heads/unpushed-work'
 check "rescued branch is now preserved" "yes" "$(preserved "$proj5/.bare" "$unpushed5")"
 
 # Every stash entry, not just the top one. `+refs/stash:refs/stash` carries
@@ -468,17 +471,39 @@ check "neither is in .bare before the rescue" "no no" \
       "$(preserved "$proj5/.bare" "$stash_new") $(preserved "$proj5/.bare" "$stash_old")"
 
 git -C "$proj5" stash list --format='%H' | nl -ba | while read -r n sha; do
-  git -C "$proj5" branch "rescue-stash-$n" "$sha"
+  git -C "$proj5" update-ref "refs/rescue/stash-$n" "$sha"
 done
 try "rescue every stash entry" \
-    git -C "$proj5/.bare" fetch -q "$proj5/.git" \
-        '+refs/heads/rescue-stash-*:refs/heads/rescue-stash-*'
+    git -C "$proj5/.bare" fetch -q --no-tags "$proj5/.git" \
+        '+refs/rescue/stash-*:refs/rescue/stash/*'
 check "the newest stash entry is preserved" "yes" "$(preserved "$proj5/.bare" "$stash_new")"
 check "and so is the deeper one"            "yes" "$(preserved "$proj5/.bare" "$stash_old")"
 
 try "rescue the tag" \
-    git -C "$proj5/.bare" fetch -q "$proj5/.git" '+refs/tags/*:refs/tags/*'
+    git -C "$proj5/.bare" fetch -q --no-tags "$proj5/.git" '+refs/tags/*:refs/rescue/tags/*'
 check "rescued tag is now preserved" "yes" "$(preserved "$proj5/.bare" "$tagged5")"
+
+# The rescue must not arm a publication. A tag the remote never had, landed in
+# refs/tags, goes out with the next `push --tags` — and where a v* tag push is
+# the release trigger, that publishes it. Same for refs/heads and `push --all`.
+check "the rescued tag is not a tag in .bare" "" \
+      "$(git -C "$proj5/.bare" tag -l local-only-tag)"
+# new_refs <push args...> -> how many refs a dry-run push would create, or
+# "push failed": a dry-run that errors out must not read as "nothing to push".
+new_refs() {
+  local out
+  # The exit status is no signal here: a rejected ref (the stale main) fails
+  # the whole dry-run. Porcelain output ends in "Done" once every ref was
+  # evaluated, so its absence is the failure.
+  out=$(git -C "$proj5/.bare" push --dry-run --porcelain "$@" 2>/dev/null)
+  if ! printf '%s\n' "$out" | grep -qx 'Done'; then echo "push failed"; return; fi
+  printf '%s\n' "$out" | grep -c '^\*' || true
+}
+# Positive control: the probe does see a ref the remote lacks.
+check "the probe counts a ref the remote lacks" "1" \
+      "$(new_refs origin 'refs/rescue/tags/local-only-tag:refs/tags/local-only-tag')"
+check "push --tags would publish nothing" "0" "$(new_refs --tags origin)"
+check "push --all would publish nothing"  "0" "$(new_refs --all origin)"
 
 # Notes need their own refspec: neither the heads nor the tags fetch above
 # brought the notes ref across, and no --contains check would have noticed.
@@ -607,7 +632,7 @@ check "ORIG_HEAD names the pre-rebase tip" "$signed" "$(git rev-parse ORIG_HEAD)
 
 # The suite must notice when an assertion stops running at all — the failure
 # mode that `cmd && pass` used to produce silently.
-check "every assertion ran" "88" "$ran"
+check "every assertion ran" "92" "$ran"
 
 printf '\n---- assertions: %s, failures: %s\n' "$ran" "$failures"
 [ "$failures" -eq 0 ]
