@@ -47,6 +47,7 @@ export XDG_CACHE_HOME="$STUB_DIR/cache"
 #   REQFAIL=1 adds a real required failure "ci / Req2" in run 8.
 #   DRAFT=1 makes the pull request a draft.
 #   NOREVIEW=1 leaves the head without any review.
+#   UNDISP=1 adds a required context "ci / Never" that no row reports.
 make_stub() {
     python3 - "$STUB_DIR/rules.json" <<'PY2'
 import json, os, sys
@@ -57,6 +58,8 @@ if os.environ.get("REQPEND") == "1":
     ctx.append({"context": "ci / Req"})
 if os.environ.get("REQFAIL") == "1":
     ctx.append({"context": "ci / Req2"})
+if os.environ.get("UNDISP") == "1":
+    ctx.append({"context": "ci / Never"})
 rules = [{"type": "required_status_checks", "parameters": {"required_status_checks": ctx}}] if ctx else []
 json.dump(rules, open(sys.argv[1], "w"))
 PY2
@@ -244,6 +247,12 @@ case "$wout" in
     *"ACTIONABLE: request-review"*) echo "  FAIL --watch returned on request-review while the run is busy"; fail=1 ;;
     *) echo "  ok   --watch holds request-review while the run is busy" ;;
 esac
+
+echo "case: run busy per its check suite, a required context never reported -> wait, not await-checks"
+ROW=starved REQUIRED=1 SUITE_BUSY=1 UNDISP=1 make_stub
+out=$(status_json)
+check "NEXT is wait"                 '.next.action == "wait"' "$out"
+check "names the unreported context" '.next.why | contains("1 required context(s) never reported: ci / Never")' "$out"
 
 echo "case: a draft whose run is busy per its check suite only -> wait, not ready"
 ROW=starved REQUIRED=1 SUITE_BUSY=1 DRAFT=1 make_stub
