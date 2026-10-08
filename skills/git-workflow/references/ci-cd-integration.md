@@ -243,12 +243,12 @@ zero-pending count, and confirm the run belongs to the current head SHA first.
 `pr-status.sh --json` answers this in one field: **`checks_settled`** is true
 only when nothing is pending, every required context has reported at least
 once, *and* no job that never got a runner belongs to a run that is still
-going (see `merge-gate-watcher.md`, "Jobs that never started"). Gate on that rather than re-deriving it — and note the `NEXT:` line
-does not carry it, because the review branches of the ladder outrank every CI
-branch. On a repo with the `copilot_code_review` ruleset, `NEXT:` says
-`request-review` from the second a commit lands and keeps saying it; the CI
-state now rides along in that answer's `why`, but a script should read the
-field.
+going (see `merge-gate-watcher.md`, "Jobs that never started"). Gate on that
+rather than re-deriving it — and note the `NEXT:` line does not carry it,
+because the review branches of the ladder outrank every CI branch. On a repo
+with the `copilot_code_review` ruleset, `NEXT:` says `request-review` from the
+second a commit lands and keeps saying it; the CI state now rides along in
+that answer's `why`, but a script should read the field.
 
 **`gh run list --jq` is not `jq`: it takes no `--arg`.** The filter is evaluated
 by `gh`'s embedded jq, which accepts the expression and nothing else, so

@@ -1535,7 +1535,9 @@ evaluate() {
          # or only the check suite says so): still running, so wait here,
          # before the rungs below that assume nothing runs any more.
          elif ($s.checks.not_started_busy_runs|length) > 0 then
-           {action:"wait", why:"a run is still going"}
+           {action:"wait", why:("a run is still going"
+                                + (if ($s.undispatched|length) > 0
+                                   then "; \($s.undispatched|length) required context(s) never reported: \($s.undispatched|join(", "))" else "" end))}
          # Checked last, because it only matters once everything visible is
          # green: an unsigned commit produces no red check and no rollup entry,
          # so it surfaces purely as BLOCKED and used to end here as
