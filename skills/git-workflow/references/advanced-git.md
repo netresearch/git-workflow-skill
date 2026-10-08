@@ -2016,6 +2016,11 @@ ssh -O exit git@<host>   # "Exit request sent."; the next git command opens a fr
 GIT_SSH_COMMAND='ssh -o ControlPath=none' git ls-remote origin
 ```
 
+`GIT_SSH_COMMAND` replaces `core.sshCommand` and any `GIT_SSH_COMMAND` already
+set for that call. If one of them carries options the connection needs (an
+identity file, a port, a proxy), append `-o ControlPath=none` to that command
+instead of using the bare `ssh` above.
+
 A master whose *process* died leaves no hang: ssh finds the stale socket,
 unlinks it and connects directly. Without `ServerAliveInterval` the hang can
 last until the TCP retransmission timeout (about 15 minutes with Linux
