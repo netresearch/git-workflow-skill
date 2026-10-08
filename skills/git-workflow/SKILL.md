@@ -38,7 +38,7 @@ Releases: `github-release`. BLOCKED-PR diagnosis: `github-project`.
 | `references/commit-conventions.md` | Conventional commits, DCO sign-off |
 | `references/pull-request-workflow.md` | PR merge gate, signed rebase, posting a review with inline suggestions |
 | `references/ci-cd-integration.md` | CI watching, git mirrors |
-| `references/advanced-git.md` | Rebase (incl. non-interactive `rebase -i`), cherry-pick, bisect, stash, worktrees, reflog |
+| `references/advanced-git.md` | Rebase (incl. non-interactive `rebase -i`), cherry-pick, bisect, stash, worktrees, reflog, hanging push/fetch (SSH mux) |
 | `references/github-releases.md` | → `github-release` skill |
 | `references/git-hooks-setup.md` | Hook frameworks, hooks per stage |
 | `references/claude-code-hooks.md` | `settings.json` merge gate, cache-path rejection, auto-lint |

@@ -2000,6 +2000,41 @@ git filter-branch --force --index-filter \
   --prune-empty --tag-name-filter cat -- --all
 ```
 
+### git push/fetch hangs without output: SSH multiplexing
+
+With `ControlMaster auto`, a `ControlPath` and `ControlPersist` in
+`~/.ssh/config`, every git command to a host reuses one backgrounded master
+connection. If that connection dies while the master process stays alive
+(suspend, Wi-Fi/VPN switch), `git push`, `fetch` and `ls-remote` hang without
+output: the master accepts the request and waits on a dead TCP connection.
+`ssh -O check` does **not** detect this — it only asks the local master process
+and still prints `Master running (pid=…)`. Drop the master and retry:
+
+```bash
+ssh -O exit git@<host>   # "Exit request sent."; the next git command opens a fresh connection
+# Confirm the mux is the cause: bypass it for one command
+GIT_SSH_COMMAND='ssh -o ControlPath=none' git ls-remote origin
+```
+
+`GIT_SSH_COMMAND` replaces `core.sshCommand` and any `GIT_SSH_COMMAND` already
+set for that call. If one of them carries options the connection needs (an
+identity file, a port, a proxy), append `-o ControlPath=none` to that command
+instead of using the bare `ssh` above.
+
+A master whose *process* died leaves no hang: ssh finds the stale socket,
+unlinks it and connects directly. Without `ServerAliveInterval` the hang can
+last until the TCP retransmission timeout (about 15 minutes with Linux
+defaults); `ServerAliveInterval 30` (with the default `ServerAliveCountMax 3`)
+for that host lets the master notice a dead connection itself.
+
+Address the same user, host and port as the remote URL, so `ssh -O` picks the
+`ControlPath` git uses: with `%p` (or `%C`) in `ControlPath`, a remote on a
+non-default port needs `-p <port>` (or the same `Host` alias from `ssh_config`),
+otherwise `ssh -O` addresses a different socket and answers
+`No such file or directory`, which looks like "no master". If `core.sshCommand`
+or `GIT_SSH_COMMAND` adds options (`-F`, `-o ControlPath=…`), run `ssh -O` with
+the same ones.
+
 ### Recovery Operations
 
 ```bash
