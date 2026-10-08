@@ -2921,15 +2921,16 @@ more than 50 minutes, and merge-queue entries of three pull requests were
 dropped four times with `checks_timed_out` (the PR timeline's
 `removed_from_merge_queue` events; `check_response_timeout_minutes` is 60 in
 all three repositories). Two of the four drops lie outside the incident
-below: netresearch/t3x-nr-llm#1013 (queued 11:34, dropped 13:15 UTC) and the
-second drop of netresearch/t3x-nr-wellknown#21 (re-queued 18:24, dropped
-19:24, exactly the 60-minute timeout). Its first drop and the one of
-netresearch/t3x-rte_ckeditor_image#915 spanned the incident. Push a sweep in small groups and
-start the next group once the previous group's runs have finished; count the
-unfinished runs across every repository of the sweep, not only the one you
-are about to enqueue. The jobs that failed outright during that sweep did so
-inside a GitHub incident (see `merge-gate-watcher.md`, "Jobs that never
-started") and are not attributed to the sweep.
+below: netresearch/t3x-nr-llm#1013 (queued 11:34, dropped 13:15 UTC) and
+the second drop of netresearch/t3x-nr-wellknown#21 (re-queued 18:24,
+dropped 19:24, exactly the 60-minute timeout). Its first drop and the one
+of netresearch/t3x-rte_ckeditor_image#915 spanned the incident. Push a
+sweep in small groups and start the next group once the previous group's
+runs have finished; count the unfinished runs across every repository of
+the sweep, not only the one you are about to enqueue. The jobs that failed
+outright during that sweep did so inside a GitHub incident (see
+`merge-gate-watcher.md`, "Jobs that never started") and are not attributed
+to the sweep.
 
 **Ejection with ZERO dispatched runs is a third failure mode** — not a busy
 pool (runs would exist as `queued`) and not a short timeout (runs would exist
