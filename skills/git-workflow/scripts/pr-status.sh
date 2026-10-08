@@ -1131,12 +1131,10 @@ evaluate() {
               and ($s.checks.not_started_busy_runs|length) == 0 then
            {action:"rerun-ci", why:"only not-started job(s) failing: \($s.checks.not_started|join(", ")) — no runner was acquired; nothing in the PR to fix",
             cmd:($s.checks.not_started_runs|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))}
-         # fix-ci and triage-ci name only failures somebody can fix; a
-         # not-started row next to them is named separately.
+         # fix-ci and triage-ci name only failures somebody can fix; the
+         # not-started rows next to them are named after the ladder.
          elif ($s.checks.failing_required_other|length) > 0 then
-           {action:"fix-ci", why:("required check(s) failing: \($s.checks.failing_required_other|join(", "))"
-                                  + (if ($s.checks.not_started|length) > 0
-                                     then "; not started, re-run instead: \($s.checks.not_started|join(", "))" else "" end)),
+           {action:"fix-ci", why:"required check(s) failing: \($s.checks.failing_required_other|join(", "))",
             urls:$s.checks.failing_urls}
          # Only once every required check has concluded. While one is still
          # running, a red non-required check is information: it cannot be what
@@ -1145,10 +1143,8 @@ evaluate() {
          elif (($s.checks.failing_other|length) > 0 and ($s.checks.pending_required|length) == 0) then
            {action:"triage-ci", why:("non-required check(s) failing: \($s.checks.failing_other|join(", ")) — not merge-blocking on their own"
                                      + (if ($s.checks.failing_required|length) > 0
-                                        then "; the gate is \($s.mergeState) on required not-started row(s): \($s.checks.failing_required|join(", ")) — re-run them"
-                                        else ", but \($s.mergeState) keeps the gate shut" end)
-                                     + (($s.checks.not_started - $s.checks.failing_required) as $ns
-                                        | if ($ns|length) > 0 then "; not started, re-run instead: \($ns|join(", "))" else "" end)),
+                                        then "; required not-started row(s) keep the gate shut"
+                                        else ", but UNSTABLE keeps the gate shut" end)),
             urls:$s.checks.failing_urls}
          elif $s.unresolved_threads > 0 then
            {action:"resolve-threads", why:"\($s.unresolved_threads) unresolved review thread(s)",
@@ -1573,22 +1569,23 @@ evaluate() {
          else
            {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review. The cause is NOT determined; check branch protection manually"}
          end)
-    # A wait reached while not-started rows are red. Their runs may still have
-    # a job going, or may have concluded while another failure or a pending
-    # required check decided the rung; name both kinds, with the command for
-    # the runs that can be re-run now, and drop the "nothing has failed" a
-    # pending-only wait ends with.
-    | if .next.action == "wait" and ($s.checks.not_started|length) > 0 then
+    # The not-started note, built in this one place for every rung that can
+    # be reached while such rows are red (rerun-ci names them itself). Their
+    # runs may still have a job going or may have concluded; name both kinds,
+    # with the command only for runs that can be re-run now (gh run rerun
+    # refuses a run in progress). A pending-only wait loses its "nothing has
+    # failed", which is no longer true.
+    | if (.next.action | IN("wait", "fix-ci", "triage-ci")) and ($s.checks.not_started|length) > 0 then
         ($s.checks.not_started_runs - $s.checks.not_started_busy_runs) as $idle
-        | .next.why = ("not started: \($s.checks.not_started|join(", ")) — no runner acquired; "
+        | .next.why = ((.next.why | sub(" — nothing has failed$"; ""))
+                       + " — not started (no runner acquired): \($s.checks.not_started|join(", ")); "
                        + ([ (if ($s.checks.not_started_busy_runs|length) > 0
                              then "re-run once run(s) \($s.checks.not_started_busy_runs|map(tostring)|join(", ")) have finished" else empty end),
                             (if ($idle|length) > 0
                              then "run(s) \($idle|map(tostring)|join(", ")) can be re-run now: "
                                   + ($idle|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))
                              else empty end)
-                          ] | join("; ")) + ". "
-                       + (.next.why | sub(" — nothing has failed$"; "")))
+                          ] | join("; ")))
       else . end
   '
 }

@@ -41,12 +41,14 @@ export XDG_CACHE_HOME="$STUB_DIR/cache"
 #   THREAD=1 adds one unresolved review thread.
 #   REQPEND=1 adds a required check "ci / Req", still running, in run 9.
 #   MS=<state> overrides the mergeStateStatus.
+#   REALFAIL=1 adds a real non-required failure "lint / Lint" in run 8.
+#   RED_NAME=<name> renames the red row (REQUIRED=1 follows it).
 make_stub() {
     python3 - "$STUB_DIR/rules.json" <<'PY2'
 import json, os, sys
 ctx = []
 if os.environ.get("REQUIRED") == "1":
-    ctx.append({"context": "ci / PHPStan (8.2, ^14.3)"})
+    ctx.append({"context": os.environ.get("RED_NAME") or "ci / PHPStan (8.2, ^14.3)"})
 if os.environ.get("REQPEND") == "1":
     ctx.append({"context": "ci / Req"})
 rules = [{"type": "required_status_checks", "parameters": {"required_status_checks": ctx}}] if ctx else []
@@ -73,7 +75,7 @@ def suite(run):
         "databaseId": run, "runNumber": 1, "event": "pull_request",
         "createdAt": "2026-10-07T14:24:40Z", "url": f"run/{run}",
         "workflow": {"databaseId": 70, "name": "CI"}}}
-red = {"__typename": "CheckRun", "name": "ci / PHPStan (8.2, ^14.3)",
+red = {"__typename": "CheckRun", "name": os.environ.get("RED_NAME") or "ci / PHPStan (8.2, ^14.3)",
        "conclusion": "FAILURE", "status": "COMPLETED", "detailsUrl": "job/1",
        "startedAt": "2026-10-07T14:24:45Z", "steps": {"totalCount": 0},
        "annotations": {"nodes": [
@@ -100,6 +102,10 @@ elif extra == "real":
     second.update({"name": "lint / Lint", "conclusion": "FAILURE",
                    "steps": {"totalCount": 5}, "checkSuite": suite(8)})
 checks = [red, second]
+if os.environ.get("REALFAIL") == "1":
+    checks.append({"__typename": "CheckRun", "name": "lint / Lint", "conclusion": "FAILURE",
+                   "status": "COMPLETED", "detailsUrl": "job/4", "startedAt": "2026-10-07T14:30:00Z",
+                   "steps": {"totalCount": 5}, "checkSuite": suite(8)})
 if os.environ.get("REQPEND") == "1":
     checks.append({"__typename": "CheckRun", "name": "ci / Req", "conclusion": None,
                    "status": "IN_PROGRESS", "detailsUrl": "job/3", "startedAt": "2026-10-07T14:30:00Z",
@@ -167,7 +173,7 @@ ROW=starved EXTRA=pending make_stub
 out=$(status_json)
 check "NEXT is wait"            '.next.action == "wait"' "$out"
 check "names the busy run"      '.checks.not_started_busy_runs == [7]' "$out"
-check "wait names the rows"     '.next.why | startswith("not started: ci / PHPStan (8.2, ^14.3)")' "$out"
+check "wait names the rows"     '.next.why | contains("not started (no runner acquired): ci / PHPStan (8.2, ^14.3); re-run once run(s) 7 have finished")' "$out"
 check "no false nothing-failed" '.next.why | contains("nothing has failed") | not' "$out"
 
 echo "case: an open thread while the run is busy -> resolve-threads, not a silent wait"
@@ -180,7 +186,8 @@ ROW=starved REQUIRED=1 EXTRA=real make_stub
 out=$(status_json)
 check "NEXT is triage-ci"        '.next.action == "triage-ci"' "$out"
 check "names the real failure"   '.next.why | startswith("non-required check(s) failing: lint / Lint — ")' "$out"
-check "says the required row holds the gate" '.next.why | contains("the gate is BLOCKED on required not-started row(s): ci / PHPStan")' "$out"
+check "says the required row holds the gate" '.next.why | contains("required not-started row(s) keep the gate shut")' "$out"
+check "gives its re-run command" '.next.why | contains("run(s) 7 can be re-run now: gh run rerun 7 --repo o/r --failed")' "$out"
 check "no false UNSTABLE claim"  '.next.why | contains("UNSTABLE") | not' "$out"
 
 echo "case: concluded not-started run, a real failure and a pending required check -> wait names the re-runnable run"
@@ -189,6 +196,19 @@ out=$(status_json)
 check "NEXT is wait"             '.next.action == "wait"' "$out"
 check "no empty run list"        '.next.why | contains("run(s)  have") | not' "$out"
 check "gives the re-run command" '.next.why | contains("run(s) 7 can be re-run now: gh run rerun 7 --repo o/r --failed")' "$out"
+
+echo "case: required not-started row in a busy run plus a real failure -> triage-ci, no re-run command"
+ROW=starved REQUIRED=1 EXTRA=pending REALFAIL=1 make_stub
+out=$(status_json)
+check "NEXT is triage-ci"        '.next.action == "triage-ci"' "$out"
+check "waits for the busy run"   '.next.why | contains("re-run once run(s) 7 have finished")' "$out"
+check "no command for it"        '.next.why | contains("gh run rerun 7") | not' "$out"
+
+echo "case: a required not-started row whose name holds a newline -> named once"
+ROW=starved REQUIRED=1 EXTRA=real RED_NAME=$'ci / Matrix ${{ matrix.php }}\n  ${{ matrix.db }}' make_stub
+out=$(status_json)
+check "named once, normalised"   '[.next.why | scan("Matrix")] | length == 1' "$out"
+check "no raw newline in why"    '.next.why | contains("\n") | not' "$out"
 
 echo "case: busy not-started run while mergeState reads CLEAN -> wait, never merge"
 ROW=starved EXTRA=pending MS=CLEAN make_stub
