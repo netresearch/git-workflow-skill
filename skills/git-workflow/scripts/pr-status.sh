@@ -164,7 +164,7 @@ REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
 # are deliberately not in here. tests/test_pr_status_draft_watch.sh pins the
 # two lists against every action literal this script can emit — a new action
 # must land in one of them.
-ACTIONABLE="fix-ci triage-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs fix-required-context"
+ACTIONABLE="fix-ci triage-ci rerun-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs fix-required-context"
 
 die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
 
@@ -416,7 +416,8 @@ evaluate() {
                                    and (.checkSuite.workflowRun // null) != null
                                    and any(.annotations.nodes[]?; (.message // "") | test("failed to be acquired"))
                                 then "NOSTART"
-                              else "FAIL" end), url: .detailsUrl, started: .startedAt}
+                              else "FAIL" end), url: .detailsUrl, started: .startedAt,
+                run: (.checkSuite.workflowRun.databaseId // null)}
           else {name: .context, state: (if .state == "SUCCESS" then "PASS"
                                         elif .state == "PENDING" then "PENDING"
                                         else "FAIL" end), url: .targetUrl}
@@ -786,6 +787,15 @@ evaluate() {
           # single-line summary into fragments.
           cancelled: ($cancelled|map(.name|gsub("\\s+";" ")|.[0:90])),
           not_started: ($not_started|map(.name|gsub("\\s+";" ")|.[0:90])),
+          # The runs to re-run, and which of them still have a job going: a
+          # run is re-runnable only once all of its jobs have concluded.
+          not_started_runs: ($not_started|map(.run)|unique),
+          not_started_busy_runs: (($not_started|map(.run)|unique)
+                                  - (($not_started|map(.run)|unique) - ($pending|map(.run // empty)|unique))),
+          # Failures other than not-started ones. Empty while failing is not
+          # means every red row is one nobody can fix in the PR.
+          failing_other: ($failing|map(select(.state != "NOSTART"))|map(.name)),
+          failing_required_other: ($failing_required|map(select(.state != "NOSTART"))|map(.name)),
           failing: ($failing|map(.name)),
           failing_required: ($failing_required|map(.name)),
           pending_required: ($pending_required|map(.name)),
@@ -1112,6 +1122,17 @@ evaluate() {
          elif $s.mergeState == "BEHIND" then
            {action:"rebase", why:"branch is behind \($s.base)",
             cmd:"git fetch origin \($s.base):refs/remotes/origin/\($s.base) && git rebase origin/\($s.base) && git push --force-with-lease"}
+         # Every red row is a job that never got a runner: nothing in the PR
+         # to fix. Re-run those runs once each has concluded; until then wait.
+         # Only when no other failure is mixed in — then fix-ci/triage-ci
+         # below still name the real one first.
+         elif ($s.checks.failing|length) > 0 and ($s.checks.failing_other|length) == 0 then
+           (if ($s.checks.not_started_busy_runs|length) > 0 then
+              {action:"wait", why:"only not-started job(s) failing: \($s.checks.not_started|join(", ")) — re-run once run(s) \($s.checks.not_started_busy_runs|map(tostring)|join(", ")) have finished"}
+            else
+              {action:"rerun-ci", why:"only not-started job(s) failing: \($s.checks.not_started|join(", ")) — no runner was acquired; nothing in the PR to fix",
+               cmd:($s.checks.not_started_runs|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))}
+            end)
          elif ($s.checks.failing_required|length) > 0 then
            {action:"fix-ci", why:"required check(s) failing: \($s.checks.failing_required|join(", "))",
             urls:$s.checks.failing_urls}
@@ -1782,7 +1803,7 @@ render() {
     "  checks      : \(.checks.pass) pass, \(.checks.fail) fail, \(.checks.pending) pending\(if .checks.pending > 0 then " (\(.checks.running) running, \(.checks.queued) queued)" else "" end), \(.checks.skip) skip (of \(.checks.total))",
     (if (.checks.failing|length) > 0 then "  failing     : \(.checks.failing|join(", "))" else empty end),
     (if (.checks.cancelled|length) > 0 then "  cancelled   : \(.checks.cancelled|join(", ")) — re-run, do not debug" else empty end),
-    (if ((.checks.not_started // [])|length) > 0 then "  not started : \(.checks.not_started|join(", ")) — no runner acquired; gh run rerun --failed once the whole run has completed, do not debug" else empty end),
+    (if ((.checks.not_started // [])|length) > 0 then "  not started : \(.checks.not_started|join(", ")) — no runner acquired; gh run rerun <run> --failed once that run has completed (run \(.checks.not_started_runs|map(tostring)|join(", "))), do not debug" else empty end),
     (if .checks.stale > 0 then "  stale       : \(.checks.stale) cancelled row(s) from a superseded run, ignored" else empty end),
     (if (.checks.failing_required|length) > 0 then "  ^ REQUIRED  : \(.checks.failing_required|join(", "))" else empty end),
     "  rulesets    : \(if (.rulesets|length)>0 then (.rulesets|join(", ")) else "none" end)",
@@ -2029,13 +2050,15 @@ while :; do
   fi
   rm -f "$snap_err"
   act=$(jq -r '.next.action' <<<"$s")
-  fails=$(jq -r '.checks.failing|join(",")' <<<"$s")
+  # Not-started rows are left out: they are answered by NEXT (rerun-ci once
+  # their run has concluded, wait before), not by a check-failed return.
+  fails=$(jq -r '.checks.failing_other|join(",")' <<<"$s")
   # A red REQUIRED check is actionable the moment it appears. A red
   # non-required one is not, while a required check is still running: it
   # cannot be what keeps the gate shut yet, and returning on it ends the watch
   # with nothing to do (#249). Hold until the required checks conclude — then
   # the same red check is the reason the gate stays shut, and this fires.
-  fails_required=$(jq -r '.checks.failing_required|join(",")' <<<"$s")
+  fails_required=$(jq -r '.checks.failing_required_other|join(",")' <<<"$s")
   pending_required=$(jq -r '.checks.pending_required|length' <<<"$s")
   if [ -z "$fails_required" ] && [ "$pending_required" -gt 0 ]; then
     fails=""
