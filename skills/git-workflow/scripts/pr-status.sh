@@ -417,7 +417,8 @@ evaluate() {
                                    and any(.annotations.nodes[]?; (.message // "") | test("failed to be acquired"))
                                 then "NOSTART"
                               else "FAIL" end), url: .detailsUrl, started: .startedAt,
-                run: (.checkSuite.workflowRun.databaseId // null)}
+                run: (.checkSuite.workflowRun.databaseId // null),
+                suite_done: ((.checkSuite.status // "COMPLETED") == "COMPLETED")}
           else {name: .context, state: (if .state == "SUCCESS" then "PASS"
                                         elif .state == "PENDING" then "PENDING"
                                         else "FAIL" end), url: .targetUrl}
@@ -788,10 +789,15 @@ evaluate() {
           cancelled: ($cancelled|map(.name|gsub("\\s+";" ")|.[0:90])),
           not_started: ($not_started|map(.name|gsub("\\s+";" ")|.[0:90])),
           # The runs to re-run, and which of them still have a job going: a
-          # run is re-runnable only once all of its jobs have concluded.
+          # run is re-runnable only once all of its jobs have concluded. The
+          # check suite of the row is the run, and its status covers jobs the
+          # rollup did not list (it is cut at 100 contexts); a pending row in
+          # the same run is the second signal.
           not_started_runs: ($not_started|map(.run)|unique),
-          not_started_busy_runs: (($not_started|map(.run)|unique)
-                                  - (($not_started|map(.run)|unique) - ($pending|map(.run // empty)|unique))),
+          not_started_busy_runs: (($not_started|map(.run)|unique) as $ns_runs
+                                  | (($not_started|map(select(.suite_done|not)|.run))
+                                     + ($ns_runs - ($ns_runs - ($pending|map(.run // empty)))))
+                                  | unique),
           # Failures other than not-started ones. Empty while failing is not
           # means every red row is one nobody can fix in the PR.
           failing_other: ($failing|map(select(.state != "NOSTART"))|map(.name)),
@@ -1468,7 +1474,7 @@ evaluate() {
          # GitHub does not report CLEAN with a red row, so this only guards an
          # inconsistent reading, but it keeps "no red row reaches merge" true.
          elif $s.mergeState == "CLEAN" and ($s.checks.failing|length) > 0 then
-           {action:"wait", why:"mergeState CLEAN while \($s.checks.failing|join(", ")) is red — not merging on that reading"}
+           {action:"wait", why:"mergeState CLEAN while \($s.checks.failing|length) row(s) are red — not merging on that reading"}
          elif ($s.mergeState == "CLEAN"
                and ($s.merge_methods|index("merge")|not)
                and ($s.merge_methods|index("rebase")|not)) then
@@ -1566,6 +1572,11 @@ evaluate() {
          # state. The sentence says so and claims nothing more; snapshot()
          # attaches next.evidence with what it could read, so the reader sees
          # what was ruled out instead of guessing a cause (t3x-nr-image-optimize#201).
+         # A not-started row whose run is still going, with no visible pending
+         # row to wait on (the busy job lies beyond the 100 rollup contexts,
+         # or only the check suite says so): the cause is known, so wait.
+         elif ($s.checks.not_started_busy_runs|length) > 0 then
+           {action:"wait", why:"not-started row(s) wait for their run to finish"}
          else
            {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review. The cause is NOT determined; check branch protection manually"}
          end)

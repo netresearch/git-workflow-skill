@@ -43,6 +43,8 @@ export XDG_CACHE_HOME="$STUB_DIR/cache"
 #   MS=<state> overrides the mergeStateStatus.
 #   REALFAIL=1 adds a real non-required failure "lint / Lint" in run 8.
 #   RED_NAME=<name> renames the red row (REQUIRED=1 follows it).
+#   SUITE_BUSY=1 marks the red row's check suite (its run) as still in progress.
+#   REQFAIL=1 adds a real required failure "ci / Req2" in run 8.
 make_stub() {
     python3 - "$STUB_DIR/rules.json" <<'PY2'
 import json, os, sys
@@ -51,6 +53,8 @@ if os.environ.get("REQUIRED") == "1":
     ctx.append({"context": os.environ.get("RED_NAME") or "ci / PHPStan (8.2, ^14.3)"})
 if os.environ.get("REQPEND") == "1":
     ctx.append({"context": "ci / Req"})
+if os.environ.get("REQFAIL") == "1":
+    ctx.append({"context": "ci / Req2"})
 rules = [{"type": "required_status_checks", "parameters": {"required_status_checks": ctx}}] if ctx else []
 json.dump(rules, open(sys.argv[1], "w"))
 PY2
@@ -70,8 +74,8 @@ out = sys.argv[1]
 head = "deadbeefcafe"
 row = os.environ["ROW"]
 extra = os.environ.get("EXTRA", "green")
-def suite(run):
-    return {"status": "COMPLETED", "workflowRun": {
+def suite(run, status="COMPLETED"):
+    return {"status": status, "workflowRun": {
         "databaseId": run, "runNumber": 1, "event": "pull_request",
         "createdAt": "2026-10-07T14:24:40Z", "url": f"run/{run}",
         "workflow": {"databaseId": 70, "name": "CI"}}}
@@ -82,6 +86,8 @@ red = {"__typename": "CheckRun", "name": os.environ.get("RED_NAME") or "ci / PHP
            {"message": "The ubuntu-latest label will migrate to Ubuntu 26"},
            {"message": "The job was not started because it repeatedly failed to be acquired (5 attempts)."}]},
        "checkSuite": suite(7)}
+if os.environ.get("SUITE_BUSY") == "1":
+    red["checkSuite"] = suite(7, "IN_PROGRESS")
 if row == "real":
     red["steps"] = {"totalCount": 6}
 elif row == "thirdparty":
@@ -102,6 +108,10 @@ elif extra == "real":
     second.update({"name": "lint / Lint", "conclusion": "FAILURE",
                    "steps": {"totalCount": 5}, "checkSuite": suite(8)})
 checks = [red, second]
+if os.environ.get("REQFAIL") == "1":
+    checks.append({"__typename": "CheckRun", "name": "ci / Req2", "conclusion": "FAILURE",
+                   "status": "COMPLETED", "detailsUrl": "job/5", "startedAt": "2026-10-07T14:30:00Z",
+                   "steps": {"totalCount": 4}, "checkSuite": suite(8)})
 if os.environ.get("REALFAIL") == "1":
     checks.append({"__typename": "CheckRun", "name": "lint / Lint", "conclusion": "FAILURE",
                    "status": "COMPLETED", "detailsUrl": "job/4", "startedAt": "2026-10-07T14:30:00Z",
@@ -204,6 +214,26 @@ check "NEXT is triage-ci"        '.next.action == "triage-ci"' "$out"
 check "waits for the busy run"   '.next.why | contains("re-run once run(s) 7 have finished")' "$out"
 check "no command for it"        '.next.why | contains("gh run rerun 7") | not' "$out"
 
+echo "case: required not-started row in a busy run, nothing else wrong -> wait, not investigate"
+ROW=starved REQUIRED=1 EXTRA=pending make_stub
+out=$(status_json)
+check "NEXT is wait"             '.next.action == "wait"' "$out"
+
+echo "case: run busy per its check suite, no pending row visible -> wait, no re-run command"
+ROW=starved REQUIRED=1 SUITE_BUSY=1 make_stub
+out=$(status_json)
+check "NEXT is wait"             '.next.action == "wait"' "$out"
+check "names the busy run"       '.checks.not_started_busy_runs == [7]' "$out"
+check "no command for it"        '.next.why | contains("gh run rerun 7") | not' "$out"
+
+echo "case: a real required failure next to a busy not-started row -> fix-ci with the note"
+ROW=starved EXTRA=pending REQFAIL=1 make_stub
+out=$(status_json)
+check "NEXT is fix-ci"           '.next.action == "fix-ci"' "$out"
+check "names the real failure"   '.next.why | startswith("required check(s) failing: ci / Req2 — not started")' "$out"
+check "waits for the busy run"   '.next.why | contains("re-run once run(s) 7 have finished")' "$out"
+check "no command for it"        '.next.why | contains("gh run rerun 7") | not' "$out"
+
 echo "case: a required not-started row whose name holds a newline -> named once"
 ROW=starved REQUIRED=1 EXTRA=real RED_NAME=$'ci / Matrix ${{ matrix.php }}\n  ${{ matrix.db }}' make_stub
 out=$(status_json)
@@ -214,6 +244,12 @@ echo "case: busy not-started run while mergeState reads CLEAN -> wait, never mer
 ROW=starved EXTRA=pending MS=CLEAN make_stub
 out=$(status_json)
 check "NEXT is wait"             '.next.action == "wait"' "$out"
+
+echo "case: the same with a newline in the name -> named once"
+ROW=starved EXTRA=pending MS=CLEAN RED_NAME=$'ci / Matrix ${{ matrix.php }}\n  ${{ matrix.db }}' make_stub
+out=$(status_json)
+check "named once, normalised"   '[.next.why | scan("Matrix")] | length == 1' "$out"
+check "no raw newline in why"    '.next.why | contains("\n") | not' "$out"
 
 echo "case: a real failure besides the not-started one -> triage-ci names both"
 ROW=starved EXTRA=real make_stub
