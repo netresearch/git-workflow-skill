@@ -42,7 +42,9 @@ Tell it apart in one call per job — the check-run id is the job id:
 
 ```bash
 gh api "repos/$R/actions/jobs/$JOB" --jq '{runner_name, steps: (.steps|length), conclusion}'
-# runner_name "" and steps 0 -> read the annotation; "failed to be acquired" -> re-run, do not debug
+# runner_name "" and steps 0 -> read the annotations:
+gh api "repos/$R/check-runs/$JOB/annotations" --jq '.[].message'
+# "... repeatedly failed to be acquired ..." -> re-run, do not debug
 ```
 
 Zero steps alone does not identify it: other refusals to start a job carry a different annotation and a different fix. `pr-status.sh` therefore requires the annotation as well, lists such rows under `not started` with their run ids, and still counts them as failing, so the gate stays shut. When they are the only failures and each of their runs has concluded, `NEXT` is `rerun-ci` with one `gh run rerun <run> --failed` per run. While a job of such a run is still going, `NEXT` is whatever else is due (an open thread still comes first), and a `wait` names the not-started rows. With any other failure mixed in, `fix-ci` / `triage-ci` name that failure and list the not-started rows separately; while a required check is still pending, a non-required failure is only named in the `wait`, as for any red non-required check. `gh run rerun` refuses a run that is still in progress, so a run with one job still queued has to finish first.

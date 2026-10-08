@@ -1152,7 +1152,7 @@
   },
   {
     "name": "red_checks_from_jobs_that_never_started",
-    "prompt": "pr-status.sh shows 13 failing checks on my PR, including 'ci / PHPStan (8.2, ^14.3)' and the aggregate 'ci / All CI checks'. The diff only renames a title in ext_emconf.php and composer.json. gh api repos/o/r/actions/jobs/112843864117 returns runner_name \"\", steps [] and conclusion failure, started 14:24:45 and completed 15:13:35. What do I do?",
+    "prompt": "pr-status.sh shows 13 failing checks on my PR, including 'ci / PHPStan (8.2, ^14.3)' and the aggregate 'ci / All CI checks'. The diff only renames a title in ext_emconf.php and composer.json. gh api repos/o/r/actions/jobs/112843864117 returns runner_name \"\", steps [] and conclusion failure, started 14:24:45 and completed 15:13:35, and its check-run annotations include \"The job was not started because it repeatedly failed to be acquired (5 attempts).\" What do I do?",
     "assertions": [
       {
         "type": "content",
