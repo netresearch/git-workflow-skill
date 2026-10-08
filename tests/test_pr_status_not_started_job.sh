@@ -38,6 +38,7 @@ export XDG_CACHE_HOME="$STUB_DIR/cache"
 #   ROW=starved|real|thirdparty|startup|otherzero — the red row.
 #   REQUIRED=1 makes the red row a required check (default: nothing required).
 #   EXTRA=green|pending|real — the second row, in the same run unless real.
+#   THREAD=1 adds one unresolved review thread.
 make_stub() {
     if [ "${REQUIRED:-0}" = 1 ]; then
         printf '%s\n' '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"ci / PHPStan (8.2, ^14.3)"}]}}]' \
@@ -107,7 +108,9 @@ json.dump({"data": {"repository": {
         "reviews": {"nodes": [{"author": {"login": "rev"}, "state": "APPROVED",
                                "commit": {"oid": head}, "body": ""}]},
         "reviewRequests": {"nodes": []},
-        "reviewThreads": {"nodes": []},
+        "reviewThreads": {"nodes": [{"id": "T1", "isResolved": False, "isOutdated": False,
+            "comments": {"nodes": [{"databaseId": 1, "path": "f", "author": {"login": "rev"},
+                                    "body": "please fix"}]}}] if os.environ.get("THREAD") == "1" else []},
         "comments": {"nodes": []},
         "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
             "state": "FAILURE", "contexts": {"nodes": checks}}}}]},
@@ -154,6 +157,20 @@ ROW=starved EXTRA=pending make_stub
 out=$(status_json)
 check "NEXT is wait"            '.next.action == "wait"' "$out"
 check "names the busy run"      '.checks.not_started_busy_runs == [7]' "$out"
+check "wait names the rows"     '.next.why | startswith("not started: ci / PHPStan (8.2, ^14.3)")' "$out"
+check "no false nothing-failed" '.next.why | contains("nothing has failed") | not' "$out"
+
+echo "case: an open thread while the run is busy -> resolve-threads, not a silent wait"
+ROW=starved EXTRA=pending THREAD=1 make_stub
+out=$(status_json)
+check "NEXT is resolve-threads" '.next.action == "resolve-threads"' "$out"
+
+echo "case: required not-started row plus a real non-required failure -> triage-ci names the real one"
+ROW=starved REQUIRED=1 EXTRA=real make_stub
+out=$(status_json)
+check "NEXT is triage-ci"        '.next.action == "triage-ci"' "$out"
+check "names the real failure"   '.next.why | startswith("non-required check(s) failing: lint / Lint — ")' "$out"
+check "names the not-started row" '.next.why | contains("not started, re-run instead: ci / PHPStan")' "$out"
 
 echo "case: a real failure besides the not-started one -> triage-ci names both"
 ROW=starved EXTRA=real make_stub

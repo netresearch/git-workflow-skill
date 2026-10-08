@@ -1122,26 +1122,30 @@ evaluate() {
          elif $s.mergeState == "BEHIND" then
            {action:"rebase", why:"branch is behind \($s.base)",
             cmd:"git fetch origin \($s.base):refs/remotes/origin/\($s.base) && git rebase origin/\($s.base) && git push --force-with-lease"}
-         # Every red row is a job that never got a runner: nothing in the PR
-         # to fix. Re-run those runs once each has concluded; until then wait.
-         # Only when no other failure is mixed in — then fix-ci/triage-ci
-         # below still name the real one first.
-         elif ($s.checks.failing|length) > 0 and ($s.checks.failing_other|length) == 0 then
-           (if ($s.checks.not_started_busy_runs|length) > 0 then
-              {action:"wait", why:"only not-started job(s) failing: \($s.checks.not_started|join(", ")) — re-run once run(s) \($s.checks.not_started_busy_runs|map(tostring)|join(", ")) have finished"}
-            else
-              {action:"rerun-ci", why:"only not-started job(s) failing: \($s.checks.not_started|join(", ")) — no runner was acquired; nothing in the PR to fix",
-               cmd:($s.checks.not_started_runs|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))}
-            end)
-         elif ($s.checks.failing_required|length) > 0 then
-           {action:"fix-ci", why:"required check(s) failing: \($s.checks.failing_required|join(", "))",
+         # Every red row is a job that never got a runner, and each of their
+         # runs has concluded: nothing in the PR to fix, re-run them. While a
+         # run still has a job going, this does not fire; the ladder goes on,
+         # so threads and comments still come first, and the wait it ends in
+         # names the not-started rows (see the end of the ladder).
+         elif ($s.checks.failing|length) > 0 and ($s.checks.failing_other|length) == 0
+              and ($s.checks.not_started_busy_runs|length) == 0 then
+           {action:"rerun-ci", why:"only not-started job(s) failing: \($s.checks.not_started|join(", ")) — no runner was acquired; nothing in the PR to fix",
+            cmd:($s.checks.not_started_runs|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))}
+         # fix-ci and triage-ci name only failures somebody can fix; a
+         # not-started row next to them is named separately.
+         elif ($s.checks.failing_required_other|length) > 0 then
+           {action:"fix-ci", why:("required check(s) failing: \($s.checks.failing_required_other|join(", "))"
+                                  + (if ($s.checks.not_started|length) > 0
+                                     then "; not started, re-run instead: \($s.checks.not_started|join(", "))" else "" end)),
             urls:$s.checks.failing_urls}
          # Only once every required check has concluded. While one is still
          # running, a red non-required check is information: it cannot be what
          # keeps the gate shut yet, and returning an action here ends a --watch
          # that has nothing to act on. The wait branch below names it instead.
-         elif ($s.checks.fail > 0 and ($s.checks.pending_required|length) == 0) then
-           {action:"triage-ci", why:"non-required check(s) failing: \($s.checks.failing|join(", ")) — not merge-blocking on their own, but UNSTABLE keeps the gate shut",
+         elif (($s.checks.failing_other|length) > 0 and ($s.checks.pending_required|length) == 0) then
+           {action:"triage-ci", why:("non-required check(s) failing: \($s.checks.failing_other|join(", ")) — not merge-blocking on their own, but UNSTABLE keeps the gate shut"
+                                     + (if ($s.checks.not_started|length) > 0
+                                        then "; not started, re-run instead: \($s.checks.not_started|join(", "))" else "" end)),
             urls:$s.checks.failing_urls}
          elif $s.unresolved_threads > 0 then
            {action:"resolve-threads", why:"\($s.unresolved_threads) unresolved review thread(s)",
@@ -1457,8 +1461,8 @@ evaluate() {
          elif ($s.checks.pending_required|length) > 0 then
            {action:"wait",
             why:("required check(s) still pending: \($s.checks.pending_required|join(", "))"
-                 + (if $s.checks.fail > 0
-                    then " — non-required red meanwhile: \($s.checks.failing|join(", ")); it decides nothing until the required ones conclude"
+                 + (if ($s.checks.failing_other|length) > 0
+                    then " — non-required red meanwhile: \($s.checks.failing_other|join(", ")); it decides nothing until the required ones conclude"
                     else "" end))}
          elif ($s.mergeState == "CLEAN"
                and ($s.merge_methods|index("merge")|not)
@@ -1560,6 +1564,13 @@ evaluate() {
          else
            {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review. The cause is NOT determined; check branch protection manually"}
          end)
+    # A wait reached while not-started rows are red: their run still has a
+    # job going (otherwise rerun-ci above would have fired). Say so, and drop
+    # the "nothing has failed" a pending-only wait ends with.
+    | if .next.action == "wait" and ($s.checks.not_started|length) > 0 then
+        .next.why = ("not started: \($s.checks.not_started|join(", ")) — no runner acquired; re-run once run(s) \($s.checks.not_started_busy_runs|map(tostring)|join(", ")) have finished. "
+                     + (.next.why | sub(" — nothing has failed$"; "")))
+      else . end
   '
 }
 
