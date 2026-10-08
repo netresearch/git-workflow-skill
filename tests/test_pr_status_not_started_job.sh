@@ -45,6 +45,7 @@ export XDG_CACHE_HOME="$STUB_DIR/cache"
 #   RED_NAME=<name> renames the red row (REQUIRED=1 follows it).
 #   SUITE_BUSY=1 marks the red row's check suite (its run) as still in progress.
 #   REQFAIL=1 adds a real required failure "ci / Req2" in run 8.
+#   DRAFT=1 makes the pull request a draft.
 make_stub() {
     python3 - "$STUB_DIR/rules.json" <<'PY2'
 import json, os, sys
@@ -124,7 +125,7 @@ json.dump({"data": {"repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
-        "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
+        "number": 1, "title": "t", "state": "OPEN", "isDraft": os.environ.get("DRAFT") == "1",
         "mergeable": "MERGEABLE",
         "mergeStateStatus": os.environ.get("MS") or ("BLOCKED" if os.environ.get("REQUIRED") == "1" else "UNSTABLE"),
         "reviewDecision": "APPROVED",
@@ -214,7 +215,7 @@ check "NEXT is triage-ci"        '.next.action == "triage-ci"' "$out"
 check "waits for the busy run"   '.next.why | contains("re-run once run(s) 7 have finished")' "$out"
 check "no command for it"        '.next.why | contains("gh run rerun 7") | not' "$out"
 
-echo "case: required not-started row in a busy run, nothing else wrong -> wait, not investigate"
+echo "case: required not-started row, its run's pending row visible -> wait"
 ROW=starved REQUIRED=1 EXTRA=pending make_stub
 out=$(status_json)
 check "NEXT is wait"             '.next.action == "wait"' "$out"
@@ -225,6 +226,19 @@ out=$(status_json)
 check "NEXT is wait"             '.next.action == "wait"' "$out"
 check "names the busy run"       '.checks.not_started_busy_runs == [7]' "$out"
 check "no command for it"        '.next.why | contains("gh run rerun 7") | not' "$out"
+
+echo "case: a draft whose run is busy per its check suite only -> wait, not ready"
+ROW=starved REQUIRED=1 SUITE_BUSY=1 DRAFT=1 make_stub
+out=$(status_json)
+check "NEXT is wait"             '.next.action == "wait"' "$out"
+check "no nothing-running claim" '.next.why | contains("nothing running") | not' "$out"
+check "waits for the busy run"   '.next.why | contains("re-run once run(s) 7 have finished")' "$out"
+
+echo "case: UNSTABLE, run busy per its check suite only -> wait, not triage-ci"
+ROW=starved SUITE_BUSY=1 make_stub
+out=$(status_json)
+check "NEXT is wait"             '.next.action == "wait"' "$out"
+check "waits for the busy run"   '.next.why | contains("re-run once run(s) 7 have finished")' "$out"
 
 echo "case: a real required failure next to a busy not-started row -> fix-ci with the note"
 ROW=starved EXTRA=pending REQFAIL=1 make_stub

@@ -1184,6 +1184,10 @@ evaluate() {
            # operator call this state exists for: mark it ready.
            (if ($s.checks.pending > 0) then
               {action:"wait", why:"draft — \($s.checks.pending) check(s) still running"}
+            # A not-started row whose run is still going, though no pending
+            # row is visible: running too, so not ready yet.
+            elif ($s.checks.not_started_busy_runs|length) > 0 then
+              {action:"wait", why:"draft — a run is still going"}
             else
               {action:"ready",
                why:("draft — nothing running, mark ready when the work is done"
@@ -1511,6 +1515,10 @@ evaluate() {
            {action:"wait",
             why:("UNSTABLE while \($s.checks.pending) non-required check(s) have not finished"
                  + " (\($s.checks.running) running, \($s.checks.queued) queued) — nothing has failed")}
+         # The same while the only red rows are not-started ones whose run is
+         # still going: nothing to triage yet, the note says what to re-run.
+         elif ($s.mergeState == "UNSTABLE" and ($s.checks.not_started_busy_runs|length) > 0) then
+           {action:"wait", why:"UNSTABLE while a run is still going"}
          elif $s.mergeState == "UNSTABLE" then
            {action:"triage-ci", why:"UNSTABLE: a non-required check is red; the gate stays shut until it is green or the PR is force-merged"}
          elif $s.checks.pending > 0 then
@@ -1576,7 +1584,7 @@ evaluate() {
          # row to wait on (the busy job lies beyond the 100 rollup contexts,
          # or only the check suite says so): the cause is known, so wait.
          elif ($s.checks.not_started_busy_runs|length) > 0 then
-           {action:"wait", why:"not-started row(s) wait for their run to finish"}
+           {action:"wait", why:"a run is still going"}
          else
            {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review. The cause is NOT determined; check branch protection manually"}
          end)
