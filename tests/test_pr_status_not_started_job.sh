@@ -39,13 +39,19 @@ export XDG_CACHE_HOME="$STUB_DIR/cache"
 #   REQUIRED=1 makes the red row a required check (default: nothing required).
 #   EXTRA=green|pending|real — the second row, in the same run unless real.
 #   THREAD=1 adds one unresolved review thread.
+#   REQPEND=1 adds a required check "ci / Req", still running, in run 9.
+#   MS=<state> overrides the mergeStateStatus.
 make_stub() {
-    if [ "${REQUIRED:-0}" = 1 ]; then
-        printf '%s\n' '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"ci / PHPStan (8.2, ^14.3)"}]}}]' \
-            > "$STUB_DIR/rules.json"
-    else
-        printf '%s\n' '[]' > "$STUB_DIR/rules.json"
-    fi
+    python3 - "$STUB_DIR/rules.json" <<'PY2'
+import json, os, sys
+ctx = []
+if os.environ.get("REQUIRED") == "1":
+    ctx.append({"context": "ci / PHPStan (8.2, ^14.3)"})
+if os.environ.get("REQPEND") == "1":
+    ctx.append({"context": "ci / Req"})
+rules = [{"type": "required_status_checks", "parameters": {"required_status_checks": ctx}}] if ctx else []
+json.dump(rules, open(sys.argv[1], "w"))
+PY2
     cat > "$STUB_DIR/gh" <<STUB
 #!/usr/bin/env bash
 for a in "\$@"; do
@@ -94,13 +100,17 @@ elif extra == "real":
     second.update({"name": "lint / Lint", "conclusion": "FAILURE",
                    "steps": {"totalCount": 5}, "checkSuite": suite(8)})
 checks = [red, second]
+if os.environ.get("REQPEND") == "1":
+    checks.append({"__typename": "CheckRun", "name": "ci / Req", "conclusion": None,
+                   "status": "IN_PROGRESS", "detailsUrl": "job/3", "startedAt": "2026-10-07T14:30:00Z",
+                   "steps": {"totalCount": 2}, "checkSuite": suite(9)})
 json.dump({"data": {"repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
     "pullRequest": {
         "number": 1, "title": "t", "state": "OPEN", "isDraft": False,
         "mergeable": "MERGEABLE",
-        "mergeStateStatus": "BLOCKED" if os.environ.get("REQUIRED") == "1" else "UNSTABLE",
+        "mergeStateStatus": os.environ.get("MS") or ("BLOCKED" if os.environ.get("REQUIRED") == "1" else "UNSTABLE"),
         "reviewDecision": "APPROVED",
         "author": {"login": "someone"},
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
@@ -170,7 +180,20 @@ ROW=starved REQUIRED=1 EXTRA=real make_stub
 out=$(status_json)
 check "NEXT is triage-ci"        '.next.action == "triage-ci"' "$out"
 check "names the real failure"   '.next.why | startswith("non-required check(s) failing: lint / Lint — ")' "$out"
-check "names the not-started row" '.next.why | contains("not started, re-run instead: ci / PHPStan")' "$out"
+check "says the required row holds the gate" '.next.why | contains("the gate is BLOCKED on required not-started row(s): ci / PHPStan")' "$out"
+check "no false UNSTABLE claim"  '.next.why | contains("UNSTABLE") | not' "$out"
+
+echo "case: concluded not-started run, a real failure and a pending required check -> wait names the re-runnable run"
+ROW=starved EXTRA=real REQPEND=1 make_stub
+out=$(status_json)
+check "NEXT is wait"             '.next.action == "wait"' "$out"
+check "no empty run list"        '.next.why | contains("run(s)  have") | not' "$out"
+check "gives the re-run command" '.next.why | contains("run(s) 7 can be re-run now: gh run rerun 7 --repo o/r --failed")' "$out"
+
+echo "case: busy not-started run while mergeState reads CLEAN -> wait, never merge"
+ROW=starved EXTRA=pending MS=CLEAN make_stub
+out=$(status_json)
+check "NEXT is wait"             '.next.action == "wait"' "$out"
 
 echo "case: a real failure besides the not-started one -> triage-ci names both"
 ROW=starved EXTRA=real make_stub

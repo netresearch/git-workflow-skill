@@ -1143,9 +1143,12 @@ evaluate() {
          # keeps the gate shut yet, and returning an action here ends a --watch
          # that has nothing to act on. The wait branch below names it instead.
          elif (($s.checks.failing_other|length) > 0 and ($s.checks.pending_required|length) == 0) then
-           {action:"triage-ci", why:("non-required check(s) failing: \($s.checks.failing_other|join(", ")) — not merge-blocking on their own, but UNSTABLE keeps the gate shut"
-                                     + (if ($s.checks.not_started|length) > 0
-                                        then "; not started, re-run instead: \($s.checks.not_started|join(", "))" else "" end)),
+           {action:"triage-ci", why:("non-required check(s) failing: \($s.checks.failing_other|join(", ")) — not merge-blocking on their own"
+                                     + (if ($s.checks.failing_required|length) > 0
+                                        then "; the gate is \($s.mergeState) on required not-started row(s): \($s.checks.failing_required|join(", ")) — re-run them"
+                                        else ", but \($s.mergeState) keeps the gate shut" end)
+                                     + (($s.checks.not_started - $s.checks.failing_required) as $ns
+                                        | if ($ns|length) > 0 then "; not started, re-run instead: \($ns|join(", "))" else "" end)),
             urls:$s.checks.failing_urls}
          elif $s.unresolved_threads > 0 then
            {action:"resolve-threads", why:"\($s.unresolved_threads) unresolved review thread(s)",
@@ -1464,6 +1467,12 @@ evaluate() {
                  + (if ($s.checks.failing_other|length) > 0
                     then " — non-required red meanwhile: \($s.checks.failing_other|join(", ")); it decides nothing until the required ones conclude"
                     else "" end))}
+         # Every failure rung above sits higher than merge; the not-started
+         # fall-through is the one path that can arrive here with a red row.
+         # GitHub does not report CLEAN with a red row, so this only guards an
+         # inconsistent reading, but it keeps "no red row reaches merge" true.
+         elif $s.mergeState == "CLEAN" and ($s.checks.failing|length) > 0 then
+           {action:"wait", why:"mergeState CLEAN while \($s.checks.failing|join(", ")) is red — not merging on that reading"}
          elif ($s.mergeState == "CLEAN"
                and ($s.merge_methods|index("merge")|not)
                and ($s.merge_methods|index("rebase")|not)) then
@@ -1564,12 +1573,22 @@ evaluate() {
          else
            {action:"investigate", why:"mergeState=\($s.mergeState) with no failing check, no open thread and no missing review. The cause is NOT determined; check branch protection manually"}
          end)
-    # A wait reached while not-started rows are red: their run still has a
-    # job going (otherwise rerun-ci above would have fired). Say so, and drop
-    # the "nothing has failed" a pending-only wait ends with.
+    # A wait reached while not-started rows are red. Their runs may still have
+    # a job going, or may have concluded while another failure or a pending
+    # required check decided the rung; name both kinds, with the command for
+    # the runs that can be re-run now, and drop the "nothing has failed" a
+    # pending-only wait ends with.
     | if .next.action == "wait" and ($s.checks.not_started|length) > 0 then
-        .next.why = ("not started: \($s.checks.not_started|join(", ")) — no runner acquired; re-run once run(s) \($s.checks.not_started_busy_runs|map(tostring)|join(", ")) have finished. "
-                     + (.next.why | sub(" — nothing has failed$"; "")))
+        ($s.checks.not_started_runs - $s.checks.not_started_busy_runs) as $idle
+        | .next.why = ("not started: \($s.checks.not_started|join(", ")) — no runner acquired; "
+                       + ([ (if ($s.checks.not_started_busy_runs|length) > 0
+                             then "re-run once run(s) \($s.checks.not_started_busy_runs|map(tostring)|join(", ")) have finished" else empty end),
+                            (if ($idle|length) > 0
+                             then "run(s) \($idle|map(tostring)|join(", ")) can be re-run now: "
+                                  + ($idle|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))
+                             else empty end)
+                          ] | join("; ")) + ". "
+                       + (.next.why | sub(" — nothing has failed$"; "")))
       else . end
   '
 }
