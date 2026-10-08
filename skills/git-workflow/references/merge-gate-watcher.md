@@ -29,23 +29,25 @@ Classify every failing check BEFORE reacting:
 | **Hard** | unit/integration/E2E tests, lint, build | HOLD and fix — except known infra flakes (Docker Hub pull timeout, buildx setup): one `gh run rerun <id> --failed` |
 | **Soft, self-healing** | `codecov/*` while sibling jobs still run (partial uploads) | Ignore while `pending > 0`; if persisting after completion: one full `gh run rerun <id>` |
 | **Soft, structural** | SonarCloud PR gate on refactor PRs | Introspect before deciding (below) |
-| **Not started** | a job that never got a runner: `failure`, empty `runner_name`, zero steps; `pr-status.sh` lists it under `not started` | Nothing to fix. `gh run rerun <id> --failed` once the whole run has completed (below) |
+| **Not started** | `failure` with zero steps, empty `runner_name` and the annotation `The job was not started because it repeatedly failed to be acquired`; `pr-status.sh` lists it under `not started` | Nothing to fix in the PR. `gh run rerun <id> --failed` once the whole run has completed (below) |
 | **Infra, silent upload** | CodeQL / SAST job red in its code-scanning upload step, log ends after `Uploading results` with no `##[error]` | One `gh run rerun <id> --failed`; investigate only if it repeats |
 
 ### Jobs that never started, and uploads that fail without an error
 
-When the organisation's runner pool is exhausted, a queued job is not left waiting forever. After about 45 to 50 minutes GitHub concludes it `failure` with **zero steps** and an empty `runner_name`, and annotates it `The job was not started because it repeatedly failed to be acquired (5 attempts).` Aggregate gates such as `All CI checks` then fail as well, because a job they need failed, so a PR whose code is fine reads as a dozen red checks. Observed 2026-10-07 on netresearch/t3x-nr-textdb#169: six PHPStan, unit and functional jobs started 14:24:45 and concluded 15:13 to 15:15 without a runner; `gh run rerun --failed` turned them green.
+A queued job whose runner GitHub could not acquire is concluded `failure` with **zero steps**, an empty `runner_name` and the annotation `The job was not started because it repeatedly failed to be acquired (5 attempts).` Aggregate gates such as `All CI checks` then fail as well, because a job they need failed, so a PR whose code is fine reads as a dozen red checks.
+
+Observed once, on 2026-10-07, and it coincided with a GitHub incident ([githubstatus.com, djlmxz2zd0j7](https://www.githubstatus.com/incidents/djlmxz2zd0j7): Actions, Pull Requests and Git Operations disrupted between 15:06 and 15:16 UTC). On netresearch/t3x-nr-textdb#169 twelve jobs queued since 14:24:45 concluded this way between 15:08 and 15:16, while jobs of the same runs that were still queued got a runner from 15:16 on. `gh run rerun --failed` turned the twelve green. Whether a busy pool alone produces this outside an incident is not established.
 
 Tell it apart in one call per job — the check-run id is the job id:
 
 ```bash
 gh api "repos/$R/actions/jobs/$JOB" --jq '{runner_name, steps: (.steps|length), conclusion}'
-# runner_name "" and steps 0  -> not started; re-run, do not debug
+# runner_name "" and steps 0 -> read the annotation; "failed to be acquired" -> re-run, do not debug
 ```
 
-`pr-status.sh` reads `steps.totalCount` from GraphQL and lists such rows under `not started`. They still shut the gate. A re-run is accepted only once **every** job of that run has completed, so a run with one job still queued has to be waited out first.
+Zero steps alone does not identify it: other refusals to start a job carry a different annotation and a different fix. `pr-status.sh` therefore requires the annotation as well, lists such rows under `not started`, and still counts them as failing, so the gate stays shut. `gh run rerun` refuses a run that is still in progress, so a run with one job still queued has to finish first.
 
-A second infrastructure failure looks like a finding and is not one: a CodeQL or Opengrep job fails in its upload step (`Perform CodeQL Analysis`, `Upload SARIF to code scanning`) and the log stops after `Uploading results` with no error line and no error annotation. The analysis finished; GitHub did not accept the upload. Same day, netresearch/t3x-nr-passkeys-fe#92 and netresearch/t3x-nr-xliff-streaming#54; one re-run cleared both. Because the step name alone also matches a real analysis failure, `pr-status.sh` does not classify this one — read the log tail before re-running.
+A second failure in the same window looked like a finding and was not one: a code-scanning job failed in its upload step and the log stopped after `Uploading results`, with no error line and no error annotation. The analysis had finished; the upload was not accepted. Seen on netresearch/t3x-nr-passkeys-fe#92 (`codeql / Analyze (javascript-typescript)`, step `Perform CodeQL Analysis`, 15:07) and netresearch/t3x-nr-xliff-streaming#54 (`security / SAST (Opengrep)`, step `Upload SARIF to code scanning`, 15:12), both inside the incident window; one re-run cleared both. The step name alone also matches a real analysis failure, so `pr-status.sh` does not classify this one — read the log tail before re-running.
 
 ## One shard red in a sharded suite: flake vs. real regression
 

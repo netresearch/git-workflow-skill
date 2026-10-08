@@ -2899,19 +2899,6 @@ gh api "repos/$R/rules/branches/main" \
   --jq '.[]|select(.type=="merge_queue")|.parameters'
 ```
 
-**A sweep across many repositories exhausts the pool for all of them.** The
-count above looks at one repository, but the concurrency limit for
-GitHub-hosted runners is listed per GitHub plan, not per repository (Team: 60
-concurrent standard jobs, <https://docs.github.com/en/actions/reference/limits>).
-Pushing the same change to 27 repositories at once, each with about 80 checks,
-queued far more jobs than that. Jobs then failed without a runner in several
-repositories (see `merge-gate-watcher.md`, "Jobs that never started"), and three
-merge-queue entries were dropped with `checks_timed_out`, one of them twice
-(2026-10-07, the extension-title sweep). Push such a sweep in groups of about
-three repositories and start the next group once the previous group's runs
-have finished; count the unfinished runs across every repository of the sweep,
-not only the one you are about to enqueue.
-
 Before that one retry, cancel your own orphaned queue runs — only your PR's,
 since other PRs thrash the same way and their runs are not yours to kill:
 
@@ -2922,6 +2909,23 @@ gh run list --repo "$R" --limit 40 --json databaseId,status,headBranch \
            | select(.headBranch | startswith($p)) | .databaseId' \
   | xargs -r -n1 gh run cancel --repo "$R"
 ```
+
+**A sweep across many repositories shares one pool.** The count above looks at
+one repository, but the concurrency limit for GitHub-hosted runners belongs to
+the account's plan, not to a repository: 20 concurrent standard jobs on Free,
+60 on Team (<https://docs.github.com/en/actions/reference/limits>; read the plan
+with `gh api orgs/<org> --jq .plan.name`). Jobs above the limit queue. One
+pull request in a repository with 58 check contexts already exceeds 20, so
+pushing a change to 27 such repositories at once (2026-10-07) queued jobs for
+more than 50 minutes, and three merge-queue entries were dropped with
+`checks_timed_out` (the PR timeline's `removed_from_merge_queue` events,
+netresearch/t3x-nr-llm#1013, netresearch/t3x-nr-wellknown#21,
+netresearch/t3x-rte_ckeditor_image#915). Push a sweep in small groups and
+start the next group once the previous group's runs have finished; count the
+unfinished runs across every repository of the sweep, not only the one you
+are about to enqueue. The jobs that failed outright during that sweep did so
+inside a GitHub incident (see `merge-gate-watcher.md`, "Jobs that never
+started") and are not attributed to the sweep.
 
 **Ejection with ZERO dispatched runs is a third failure mode** — not a busy
 pool (runs would exist as `queued`) and not a short timeout (runs would exist

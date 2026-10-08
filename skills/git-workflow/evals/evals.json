@@ -1164,11 +1164,11 @@
       },
       {
         "type": "content",
-        "pattern": "(once|after|when|until)[^.]{0,60}(whole|entire|every job of the|the) run[^.]{0,30}(complete|finish)"
+        "pattern": "(once|after|when|until)[^.]{0,60}((whole|entire|the) run[^.]{0,30}(complete|finish|done)|every job[^.]{0,30}(complete|finish|done))"
       }
     ],
     "samples": {
-      "passing": "Nothing in the diff caused this. runner_name is empty and the job has zero steps, so it never got a runner: GitHub gave up acquiring one after about 50 minutes and concluded it failure, and the aggregate check failed because a job it needs failed. Do not debug PHPStan. Wait until the whole run has completed, then gh run rerun <run-id> --failed; pr-status.sh lists such rows under not started.",
+      "passing": "Nothing in the diff caused this. runner_name is empty and the job has zero steps, so it never got a runner: GitHub could not acquire one and concluded it failure, and the aggregate check failed because a job it needs failed. Do not debug PHPStan. Wait until the whole run has completed, then gh run rerun <run-id> --failed; pr-status.sh lists such rows under not started.",
       "failing": [
         "PHPStan is failing on 8.2. Run vendor/bin/phpstan locally, fix the reported errors and push again.",
         "The All CI checks job failed, so a test broke. Revert the title change and try again.",
