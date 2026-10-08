@@ -1164,7 +1164,7 @@
       },
       {
         "type": "content",
-        "pattern": "(once|after|when|until)[^.]{0,60}((whole|entire|the) run[^.]{0,30}(complete|finish|done)|every job[^.]{0,30}(complete|finish|done))"
+        "pattern": "(once|after|when|until|wait (for|until))[^.]{0,60}((whole|entire|the|workflow) run[^.]{0,30}(complete|finish|done)|(all|every) jobs?[^.]{0,40}(complete|finish|done))"
       }
     ],
     "samples": {

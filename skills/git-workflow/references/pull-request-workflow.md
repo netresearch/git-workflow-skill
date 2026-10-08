@@ -36,7 +36,7 @@ classic branch protection, whose review gates like `require_last_push_approval`
 are invisible to the rules endpoint; the same gate set in a *ruleset* is a
 parameter of the `pull_request` rule and needs no admin token), and the output
 ends in a computed `NEXT:` — rebase, fix-ci,
-triage-ci, resolve-threads, address-comments, request-review, wait, or merge (with the method
+triage-ci, rerun-ci (every red job never got a runner), resolve-threads, address-comments, request-review, wait, or merge (with the method
 this repo actually allows and a warning when a merge queue is active). The
 JSON form carries each unresolved thread's `threadId` *and* `commentId`, which
 is everything needed to reply and resolve without another query.
@@ -2917,10 +2917,13 @@ the account's plan, not to a repository: 20 concurrent standard jobs on Free,
 with `gh api orgs/<org> --jq .plan.name`). Jobs above the limit queue. One
 pull request in a repository with 58 check contexts already exceeds 20, so
 pushing a change to 27 such repositories at once (2026-10-07) queued jobs for
-more than 50 minutes, and three merge-queue entries were dropped with
-`checks_timed_out` (the PR timeline's `removed_from_merge_queue` events,
-netresearch/t3x-nr-llm#1013, netresearch/t3x-nr-wellknown#21,
-netresearch/t3x-rte_ckeditor_image#915). Push a sweep in small groups and
+more than 50 minutes, and merge-queue entries of three pull requests were
+dropped four times with `checks_timed_out` (the PR timeline's
+`removed_from_merge_queue` events; `check_response_timeout_minutes` is 60 in
+all three repositories). Only netresearch/t3x-nr-llm#1013 (queued 11:34,
+dropped 13:15 UTC) lies outside the incident below;
+netresearch/t3x-nr-wellknown#21 and netresearch/t3x-rte_ckeditor_image#915
+were in the queue during it. Push a sweep in small groups and
 start the next group once the previous group's runs have finished; count the
 unfinished runs across every repository of the sweep, not only the one you
 are about to enqueue. The jobs that failed outright during that sweep did so
