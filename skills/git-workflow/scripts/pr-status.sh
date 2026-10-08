@@ -350,10 +350,11 @@ collect_raw() {
             # It is what tells a required context reported only by an OLDER
             # run of a workflow apart from one the newest run reported; see
             # $stale_required below. Null for a check run of any other app.
-            # steps.totalCount 0 on a failed Actions job means no runner ever
-            # picked it up; see NOSTART below.
+            # steps and annotations identify a failed Actions job that no
+            # runner ever picked up; see NOSTART below.
             ... on CheckRun{ name conclusion status detailsUrl startedAt
               steps(first:1){ totalCount }
+              annotations(first:10){ nodes{ message } }
               checkSuite{ status workflowRun{ databaseId runNumber event createdAt url
                 workflow{ databaseId name } } } }
             ... on StatusContext{ context state targetUrl }
@@ -403,15 +404,18 @@ evaluate() {
                               elif .conclusion == "SUCCESS" then "PASS"
                               elif .conclusion == "SKIPPED" or .conclusion == "NEUTRAL" then "SKIP"
                               elif .conclusion == "CANCELLED" then "CANCEL"
-                              # A failed Actions job with zero steps never got a
-                              # runner: GitHub gave up acquiring one and annotates
-                              # it "The job was not started because it repeatedly
-                              # failed to be acquired". Nothing in the PR can fix
-                              # that, so it is named apart from a real failure.
-                              # Third-party check runs carry no steps at all,
-                              # hence the workflowRun condition.
+                              # A failed Actions job with zero steps whose
+                              # annotation reads "The job was not started because
+                              # it repeatedly failed to be acquired" never got a
+                              # runner. Nothing in the PR can fix that, so it is
+                              # named apart from a real failure. Other zero-step
+                              # failures (billing, a broken workflow file) carry a
+                              # different message and stay FAIL; so do third-party
+                              # check runs, which have no workflowRun.
                               elif .conclusion == "FAILURE" and (.steps.totalCount // null) == 0
-                                   and (.checkSuite.workflowRun // null) != null then "NOSTART"
+                                   and (.checkSuite.workflowRun // null) != null
+                                   and any(.annotations.nodes[]?; (.message // "") | test("failed to be acquired"))
+                                then "NOSTART"
                               else "FAIL" end), url: .detailsUrl, started: .startedAt}
           else {name: .context, state: (if .state == "SUCCESS" then "PASS"
                                         elif .state == "PENDING" then "PENDING"

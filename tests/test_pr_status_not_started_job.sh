@@ -3,14 +3,15 @@
 # SPDX-FileCopyrightText: Netresearch DTT GmbH
 # Regression test: a job that never got a runner is named apart from a failure.
 #
-# When the runner pool is exhausted, GitHub gives up acquiring a runner for a
-# queued job after about 45 to 50 minutes and concludes it FAILURE with zero
-# steps, annotated "The job was not started because it repeatedly failed to be
-# acquired (5 attempts)." pr-status.sh counted those rows as ordinary failures,
-# so a pull request whose code was fine read as 13 red checks and answered
-# fix-ci (netresearch/t3x-nr-textdb#169, 2026-10-07: six PHPStan / unit /
-# functional jobs, runner_name empty, steps 0; a re-run turned all of them
-# green). The row still shuts the gate, but it is listed under "not started".
+# A queued job whose runner GitHub could not acquire is concluded FAILURE with
+# zero steps and annotated "The job was not started because it repeatedly
+# failed to be acquired (5 attempts)." pr-status.sh counted those rows as
+# ordinary failures, so a pull request whose code was fine read as 13 red
+# checks and answered fix-ci (netresearch/t3x-nr-textdb#169, 2026-10-07: the
+# jobs concluded between 15:08 and 15:16 UTC, inside a GitHub Actions incident;
+# a re-run turned all of them green). The row still shuts the gate, but it is
+# listed under "not started". Only that annotation qualifies: other zero-step
+# failures carry a different message and stay ordinary failures.
 #
 # Runs pr-status.sh against a stubbed `gh`, so it needs no network and no repo.
 
@@ -32,7 +33,8 @@ check() { # check <name> <jq filter yielding true> <json>
 export XDG_CACHE_HOME="$STUB_DIR/cache"
 
 # Stub `gh`: no rulesets, so every check is non-required.
-#   ROW=starved|real|thirdparty|startup — the one red row besides a green one.
+#   ROW=starved|real|thirdparty|startup|otherzero — the one red row besides a
+#   green one.
 make_stub() {
     printf '%s\n' '[]' > "$STUB_DIR/rules.json"
     cat > "$STUB_DIR/gh" <<STUB
@@ -57,6 +59,9 @@ suite = {"status": "COMPLETED", "workflowRun": {
 red = {"__typename": "CheckRun", "name": "ci / PHPStan (8.2, ^14.3)",
        "conclusion": "FAILURE", "status": "COMPLETED", "detailsUrl": "job/1",
        "startedAt": "2026-10-07T14:24:45Z", "steps": {"totalCount": 0},
+       "annotations": {"nodes": [
+           {"message": "The ubuntu-latest label will migrate to Ubuntu 26"},
+           {"message": "The job was not started because it repeatedly failed to be acquired (5 attempts)."}]},
        "checkSuite": suite}
 if row == "real":
     red["steps"] = {"totalCount": 6}
@@ -65,6 +70,9 @@ elif row == "thirdparty":
     red["checkSuite"] = {"status": "COMPLETED", "workflowRun": None}
 elif row == "startup":
     red["conclusion"] = "STARTUP_FAILURE"
+elif row == "otherzero":
+    red["annotations"] = {"nodes": [{"message":
+        "The job was not started because recent account payments have failed."}]}
 checks = [
     red,
     {"__typename": "CheckRun", "name": "ci / Unit Tests",
@@ -124,6 +132,12 @@ check "counted failing"           '.checks.fail == 1' "$out"
 
 echo "case: STARTUP_FAILURE with zero steps -> an ordinary failure (a broken workflow file)"
 ROW=startup make_stub
+out=$(status_json)
+check "not listed as not started" '.checks.not_started == []' "$out"
+check "counted failing"           '.checks.fail == 1' "$out"
+
+echo "case: zero steps with a different annotation -> an ordinary failure"
+ROW=otherzero make_stub
 out=$(status_json)
 check "not listed as not started" '.checks.not_started == []' "$out"
 check "counted failing"           '.checks.fail == 1' "$out"
