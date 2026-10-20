@@ -1175,5 +1175,35 @@
         "Re-run the failed jobs right away with gh run rerun --failed, even while other jobs of the run are still queued."
       ]
     }
+  },
+  {
+    "name": "review_comment_asks_to_restore_a_documented_removal",
+    "prompt": "CodeRabbit commented on src/Entity/Holiday.php in my PR: \"Restore the `$day` parameter of `Holiday::setDay()`; dropping it breaks callers that pass a date.\" The PR description says the parameter was removed as unused (SonarCloud S1172), as commit f6b647b6 did for `setName()`; the method always throws BadMethodCallException and nothing in src/ calls it. How do I handle this thread?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "S1172"
+      },
+      {
+        "type": "content",
+        "pattern": "(f6b647b|setName|precedent)"
+      },
+      {
+        "type": "content",
+        "pattern": "(do not|don't|no need to|not) (restore|re-?add|revert|change|apply)|keep[^.]{0,40}(removal|removed|as it is|as is|parameterless|without)"
+      },
+      {
+        "type": "content",
+        "pattern": "(reply|answer|respond)[^.]{0,80}(thread|comment|reviewer|coderabbit)"
+      }
+    ],
+    "samples": {
+      "passing": "Do not restore it. Read the PR description and the commit that removed the parameter first: the description removes it for SonarCloud S1172, following f6b647b6, which did the same for setName(), and the shim always throws. Reply in the CodeRabbit thread with that reason (kept on purpose, S1172, same as f6b647b6) and change the code only if the reason does not hold.",
+      "failing": [
+        "Good catch by CodeRabbit. Restore the $day parameter, push the fix and reply with the fixing SHA, then resolve the thread.",
+        "Bots are often wrong here. Resolve the thread without a reply and move on.",
+        "S1172 is only a SonarCloud warning and CodeRabbit is right about callers: restore the parameter and push."
+      ]
+    }
   }
 ]
