@@ -1238,7 +1238,33 @@ These replies are banned:
 - `Done` (done how?)
 - `Good point, updated` (updated what, in which commit?)
 
-Every resolving reply must include: commit SHA (7+ chars), one sentence of what changed, one sentence of why if not obvious from the diff.
+Every resolving reply that changes code must include: commit SHA (7+ chars), one sentence of what changed, one sentence of why if not obvious from the diff. A reply that resolves a thread without a code change — the hunk is kept for a documented reason (next section) — carries no SHA; it names that reason and where it is written instead.
+
+### Before changing a flagged hunk, read why it was written
+
+A reviewer, human or bot, sees the diff, not the reasoning behind it. Before
+changing a hunk a thread flags, read the PR description and the message of the
+commit that introduced the hunk (`git log -L<start>,<end>:<file>` or
+`git blame` names it). When they state a reason for exactly this change — a
+rule ID such as SonarCloud S1172, a precedent commit, an ADR — answer the
+thread with that reason instead of reverting the change. Change the code only
+when the reason does not hold for this hunk, and say so in the reply.
+
+The reason can hold while the flagged change still breaks something the
+reviewer names — a caller, a test, a behaviour. Then keep the documented
+change, fix the regression without undoing it, and say both in the reply: why
+the change stays, and which commit fixes the regression. That reply changes
+code, so it carries the SHA.
+
+Such a reply changes no code, so it carries the reason where a fixing reply
+carries a SHA: *"Kept on purpose: the PR description removes this parameter
+for SonarCloud S1172, following f6b647b6, which did the same for
+`setName()`."*
+
+On `netresearch/timetracker#827` CodeRabbit asked to restore the `$day`
+parameter of `Holiday::setDay()`, which the PR description said was removed
+for S1172 following f6b647b6. Applying the suggestion first cost a commit, a
+revert and a corrected thread reply.
 
 ### Verifying AI-reviewer claims before acting
 
