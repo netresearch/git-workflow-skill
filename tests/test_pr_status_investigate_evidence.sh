@@ -75,6 +75,8 @@ chmod +x "$STUB_DIR/gh"
 #   RUN_FILLER       extra green check-runs on the REST side only
 #   LAST_PUSH        true sets require_last_push_approval on the pull_request rule
 #   DECISION         reviewDecision of the pull request (default APPROVED)
+#   BIG_BODY         length of a pull request body made of "x" (default 0), to
+#                    push the GraphQL answer past one argv string (128 KiB)
 build() {
     python3 - "$STUB_DIR" "$HEAD" "$@" <<'PY'
 import sys, json, os
@@ -88,6 +90,7 @@ rollup_filler = int(env.get("ROLLUP_FILLER", "0"))
 run_filler = int(env.get("RUN_FILLER", "0"))
 last_push = env.get("LAST_PUSH", "false") == "true"
 decision = env.get("DECISION", "APPROVED")
+big_body = int(env.get("BIG_BODY", "0"))
 GHA = 15368
 ruleset_a = ["ci / Code Style", "ci / Rector", "security / Composer Audit"]
 ruleset_b = ["All security checks", "DCO", "ci / All CI checks"]
@@ -166,6 +169,7 @@ json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
     "autoMergeAllowed": True,
     "pullRequest": {
         "number": 201, "title": "t", "state": "OPEN", "isDraft": False,
+        "body": "x" * big_body,
         "mergeable": "MERGEABLE", "mergeStateStatus": merge_state,
         "reviewDecision": decision, "mergeQueueEntry": None,
         "author": {"login": "someone", "__typename": "User"},
@@ -494,5 +498,11 @@ check "next.action" "request-review" "$(jq -r .next.action <<<"$out")"
 check_grep "both sources named, verb in the plural" \
       "classic branch protection and ruleset 20547668 set require_last_push_approval" \
       "$(jq -r .next.why <<<"$out")"
+echo "case 20: a GraphQL answer larger than one argv string reaches the evidence"
+BIG_BODY=300000 build BLOCKED yes true 0 15368
+out="$(run_json 2>"$STUB_DIR/err")" || true
+check "no argv overflow" "0" "$(grep -c 'Argument list too long' "$STUB_DIR/err" || true)"
+check "next.action" "investigate" "$(jq -r .next.action <<<"$out" 2>/dev/null)"
+check "evidence.cause_determined" "false" "$(jq -r .next.evidence.cause_determined <<<"$out" 2>/dev/null)"
 
 exit $fail

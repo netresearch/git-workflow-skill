@@ -373,9 +373,13 @@ collect_raw() {
 
 evaluate() {
   local gql="$1" rules="$2" ok="$3" marker="$4" prot="${5:-null}" runs="${6:-[]}"
-  jq -n --argjson g "$gql" --argjson r "$rules" --argjson ok "$ok" \
+  # The GraphQL answer goes in through a file, not argv: one argument is capped
+  # at 128 KiB on Linux, and a pull request with long comments passes that,
+  # which made jq fail with "Argument list too long" on every poll.
+  jq -n --slurpfile gf <(printf '%s' "$gql") --argjson r "$rules" --argjson ok "$ok" \
         --argjson marker "$marker" --arg marker_path "$QUOTA_MARKER" \
         --argjson prot "$prot" --argjson runs "$runs" '
+    ($gf[0]) as $g |
     # Defined once and used by BOTH the error list and the $head_reviews filter.
     # Two hand-kept copies would have to stay byte-identical: loosening one to
     # match a third error body and not the other puts the row back into
@@ -1683,13 +1687,15 @@ investigate_evidence() {
        && cmp=$(jq -c '{behind_by, ahead_by}' <<<"$raw" 2>/dev/null); then cmp_state='"read"'
     else cmp='null'; cmp_state='"failed"'; fi
   fi
-  jq -n --argjson g "$g" --argjson r "$r" --argjson prot "$prot" \
+  # Through a file for the same reason as in evaluate(): argv caps one argument.
+  printf '%s' "$g" >"$tmp/g"
+  jq -n --slurpfile gf "$tmp/g" --argjson r "$r" --argjson prot "$prot" \
         --arg prot_state "$prot_state" --arg prot_err "$prot_err" \
         --slurpfile crf "$tmp/cr" --slurpfile csf "$tmp/cs" --argjson cmp "$cmp" \
         --argjson cr_ok "$cr_ok" --argjson cs_ok "$cs_ok" --argjson cmp_state "$cmp_state" '
     # No apostrophes anywhere in this program: it is one single-quoted shell
     # string, and one would end it.
-    ($crf[0]) as $cr | ($csf[0]) as $cs
+    ($gf[0]) as $g | ($crf[0]) as $cr | ($csf[0]) as $cs
     | ($g.data.repository.pullRequest) as $p
     | ($p.commits.nodes[0].commit.oid) as $head
     | ($p.commits.nodes[0].commit.statusCheckRollup.contexts) as $rollup_conn
