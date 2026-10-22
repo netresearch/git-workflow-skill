@@ -552,6 +552,17 @@ Three consequences for the diagnosis:
 - **A dequeue is not evidence of a defect in the PR.** Observed 2026-08-09 (netresearch/t3x-nr-llm#686): five of six workflows green, `Checks` red on one job — `composer audit` exited 100 because `https://packagist.org/api/security-advisories/` answered HTTP 502. The identical workflow had passed on the previous queue branch 30 minutes earlier. Read the step log before concluding anything about the branch; a network-dependent step in a required check turns any upstream outage into a dequeue.
 - **A red job can be a race with the queue's own cleanup.** Observed 2026-09-22 (netresearch/t3x-nr-llm#957): the required `All security checks` job failed because its SARIF upload targeted the queue branch after the queue had already deleted it — `ref 'refs/heads/gh-readonly-queue/main/pr-<n>-<sha>' not found` — while every Opengrep finding was suppressed and 0 were uploaded. That is not a finding. Re-queue.
 
+### A check run on the queue commit's SHA did not necessarily run in the queue
+
+A check run on the SHA of a merge-queue commit is not evidence that it ran on the queue ref. The queue fast-forwards the base branch to the queue commit, so the same SHA later also carries the base branch's `push` runs, and `commits/<sha>/check-runs` lists both kinds side by side. Attribute a check run by its check suite's branch: a queue suite has `head_branch` `gh-readonly-queue/<base>/pr-<n>-…`, a post-merge suite has the base branch. For Actions runs, `actions/runs?event=merge_group` lists the queue's runs directly. Measured 2026-10-21 on netresearch/typo3-demo: the `Analyze (actions)` and `Analyze (python)` check runs on queue commit `09c4429` belonged to suite 107341419296 on branch `main`, created 13:38 after the merge, while the queue's own suites (dco, coderabbit, sonarqubecloud, github-actions) were on `gh-readonly-queue/main/pr-326-…`, created 12:51; 0 of the latest 100 `merge_group` runs there were CodeQL. Reading by SHA alone had led to the wrong conclusion that CodeQL default setup reports in the queue.
+
+```bash
+gh api "repos/$R/commits/$SHA/check-suites?per_page=100" --paginate \
+  --jq '.check_suites[] | {app: .app.slug, branch: .head_branch, created: .created_at}'
+gh api "repos/$R/actions/runs?event=merge_group&per_page=100" \
+  --jq '.workflow_runs[] | "\(.head_branch) \(.name)"'
+```
+
 ### A queue entry also drops when its jobs never start
 
 The queue has its own timeout, and it is not on the PR or in the workflow: it is the ruleset's `merge_queue` parameter `check_response_timeout_minutes`.
