@@ -2,7 +2,11 @@
 # SPDX-FileCopyrightText: Netresearch DTT GmbH
 # The jq program of investigate_evidence() in pr-status.sh, kept in a
 # file for the same reason as pr-status-evaluate.jq (#395).
-    ($gf[0]) as $g | ($rf[0]) as $r | ($protf[0]) as $prot | ($crf[0]) as $cr | ($csf[0]) as $cs
+    [inputs] as $in
+    | if ($in | length) != 3
+      then error("expected 3 JSON documents on stdin (GraphQL answer, rules, protection), got \($in | length)")
+      else . end
+    | $in[0] as $g | $in[1] as $r | $in[2] as $prot | ($crf[0]) as $cr | ($csf[0]) as $cs
     | ($g.data.repository.pullRequest) as $p
     | ($p.commits.nodes[0].commit.oid) as $head
     | ($p.commits.nodes[0].commit.statusCheckRollup.contexts) as $rollup_conn

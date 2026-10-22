@@ -156,8 +156,17 @@ skill_version() {
 }
 
 # The jq programs of evaluate() and investigate_evidence() live next to this
-# script (pr-status-evaluate.jq, pr-status-investigate.jq).
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# script (pr-status-evaluate.jq, pr-status-investigate.jq). A symlink to the
+# script is followed to the real file.
+script_path="${BASH_SOURCE[0]}"
+while [ -L "$script_path" ]; do
+  link="$(readlink "$script_path")"
+  case "$link" in
+    /*) script_path="$link" ;;
+    *) script_path="$(dirname "$script_path")/$link" ;;
+  esac
+done
+SCRIPT_DIR="$(CDPATH='' cd -P "$(dirname "$script_path")" && pwd)"
 
 REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
 
@@ -166,8 +175,8 @@ REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
 # would let a typo behave as if the flag were absent. The waiting actions
 # (wait, await-*, rules-unavailable) heartbeat instead of returning, so they
 # are deliberately not in here. tests/test_pr_status_draft_watch.sh pins the
-# two lists against every action literal this script can emit — a new action
-# must land in one of them.
+# two lists against every action literal this script and its .jq programs can
+# emit — a new action must land in one of them.
 ACTIONABLE="fix-ci triage-ci rerun-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs fix-required-context"
 
 die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
@@ -209,6 +218,11 @@ fi
 
 command -v gh  >/dev/null || die "gh not found"
 command -v jq  >/dev/null || die "jq not found"
+# Checked once here: a missing program would otherwise make every --watch poll
+# read as an unreadable gate until --max-wait ran out.
+for f in pr-status-evaluate.jq pr-status-investigate.jq; do
+  [ -f "$SCRIPT_DIR/$f" ] || die "$SCRIPT_DIR/$f is missing; it ships beside pr-status.sh"
+done
 
 if [ -z "$REPO" ]; then
   REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) \
@@ -377,23 +391,15 @@ collect_raw() {
 
 evaluate() {
   local gql="$1" rules="$2" ok="$3" marker="$4" prot="${5:-null}" runs="${6:-[]}"
-  # The jq program and the JSON payloads go in through files, not argv. Linux
-  # caps one argument at 128 KiB, which a pull request with long comments
-  # passes; Windows caps the whole command line at 32767 characters, which
-  # the program alone passes (#395). Plain files, as in investigate_evidence().
-  local tmp rc
-  tmp=$(mktemp -d) || return 1
-  printf '%s' "$gql" >"$tmp/g"
-  printf '%s' "$rules" >"$tmp/r"
-  printf '%s' "$prot" >"$tmp/prot"
-  printf '%s' "$runs" >"$tmp/runs"
-  jq -n --slurpfile gf "$tmp/g" --slurpfile rf "$tmp/r" --argjson ok "$ok" \
-        --argjson marker "$marker" --arg marker_path "$QUOTA_MARKER" \
-        --slurpfile protf "$tmp/prot" --slurpfile runsf "$tmp/runs" \
-        -f "$SCRIPT_DIR/pr-status-evaluate.jq"
-  rc=$?
-  rm -rf "$tmp"
-  return $rc
+  # The jq program comes from a file and the JSON payloads from stdin, not
+  # argv. Linux caps one argument at 128 KiB, which a pull request with long
+  # comments passes; Windows caps the whole command line at 32767 characters,
+  # which the program alone passes (#395). The program takes exactly four
+  # documents and fails on any other count, so an empty rules answer stays an
+  # error instead of reading as "no rules".
+  printf '%s\n' "$gql" "$rules" "$prot" "$runs" \
+    | jq -n --argjson ok "$ok" --argjson marker "$marker" --arg marker_path "$QUOTA_MARKER" \
+         -f "$SCRIPT_DIR/pr-status-evaluate.jq"
 }
 
 # ------------------------------------------------------- investigate --------
@@ -460,13 +466,10 @@ investigate_evidence() {
        && cmp=$(jq -c '{behind_by, ahead_by}' <<<"$raw" 2>/dev/null); then cmp_state='"read"'
     else cmp='null'; cmp_state='"failed"'; fi
   fi
-  # Through files for the same reason as in evaluate(): argv caps one argument
+  # Through stdin for the same reason as in evaluate(): argv caps one argument
   # on Linux and the whole command line on Windows.
-  printf '%s' "$g" >"$tmp/g"
-  printf '%s' "$r" >"$tmp/r"
-  printf '%s' "$prot" >"$tmp/prot"
-  jq -n --slurpfile gf "$tmp/g" --slurpfile rf "$tmp/r" --slurpfile protf "$tmp/prot" \
-        --arg prot_state "$prot_state" --arg prot_err "$prot_err" \
+  printf '%s\n' "$g" "$r" "$prot" \
+    | jq -n --arg prot_state "$prot_state" --arg prot_err "$prot_err" \
         --slurpfile crf "$tmp/cr" --slurpfile csf "$tmp/cs" --argjson cmp "$cmp" \
         --argjson cr_ok "$cr_ok" --argjson cs_ok "$cs_ok" --argjson cmp_state "$cmp_state" \
         -f "$SCRIPT_DIR/pr-status-investigate.jq"
@@ -627,8 +630,12 @@ snapshot() {
     [ "$PROT_STATE" = "not requested" ] && read_protection "$enc"
     if ev=$(investigate_evidence "$g" "$r" "$PROT" "$PROT_STATE" "$PROT_ERR" "$enc" "$(jq -r '.headOid' <<<"$out")") \
        && [ -n "$ev" ]; then
-      out=$(jq -c --argjson ev "$ev" '.next.evidence = $ev
-             | .next.why += " — the evidence below lists what was read and the remaining candidates, none of them a verdict"' <<<"$out")
+      # Both through stdin: the evidence block grows with the required checks
+      # and the failed suites, and passes 32767 characters at about 135
+      # required contexts.
+      out=$(printf '%s\n' "$out" "$ev" | jq -cn 'input as $o | input as $ev | $o
+             | .next.evidence = $ev
+             | .next.why += " — the evidence below lists what was read and the remaining candidates, none of them a verdict"')
     else
       out=$(jq -c '.next.why += " (the evidence block could not be built; cause on stderr above)"' <<<"$out")
     fi

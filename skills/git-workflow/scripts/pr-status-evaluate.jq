@@ -2,9 +2,13 @@
 # SPDX-FileCopyrightText: Netresearch DTT GmbH
 # The jq program of evaluate() in pr-status.sh, kept in a file because
 # Windows caps a whole command line at 32767 characters and this program
-# alone is longer (#395). --slurpfile binds each payload as an array, so
-# the first line rebinds every name to the document it holds.
-    ($gf[0]) as $g | ($rf[0]) as $r | ($protf[0]) as $prot | ($runsf[0]) as $runs |
+# alone is longer (#395). The payloads arrive on stdin as four JSON
+# documents, in the order the first lines bind them.
+    [inputs] as $in
+    | if ($in | length) != 4
+      then error("expected 4 JSON documents on stdin (GraphQL answer, rules, protection, runs), got \($in | length)")
+      else . end
+    | $in[0] as $g | $in[1] as $r | $in[2] as $prot | $in[3] as $runs |
     # Defined once and used by BOTH the error list and the $head_reviews filter.
     # Two hand-kept copies would have to stay byte-identical: loosening one to
     # match a third error body and not the other puts the row back into
