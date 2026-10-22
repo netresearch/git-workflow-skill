@@ -180,7 +180,11 @@ echo "vocabulary: every emitted action is either actionable or waiting"
 WAITING="wait await-checks await-review await-capacity rules-unavailable"
 actionable=$(sed -n 's/^ACTIONABLE="\(.*\)"$/\1/p' "$SCRIPT")
 check "ACTIONABLE was found in the script" "yes" "$([ -n "$actionable" ] && echo yes || echo no)"
-emitted=$(grep -oE 'action:"[a-z-]+"' "$SCRIPT" | sed 's/action:"//; s/"$//' | sort -u)
+# The jq programs that build NEXT live in .jq files beside the script (#395).
+jq_programs=("${SCRIPT%/*}"/pr-status-*.jq)
+check "the jq programs were found beside the script" "yes" \
+    "$([ -f "${jq_programs[0]}" ] && echo yes || echo no)"
+emitted=$(grep -ohE 'action:"[a-z-]+"' "$SCRIPT" "${jq_programs[@]}" | sed 's/action:"//; s/"$//' | sort -u)
 for a in $emitted; do
     case " $actionable $WAITING " in
         *" $a "*) echo "  ok   emitted action '$a' is classified" ;;
