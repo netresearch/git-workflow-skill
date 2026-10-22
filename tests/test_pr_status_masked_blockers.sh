@@ -67,6 +67,7 @@ CLASSIC_SIG='{"required_signatures":{"enabled":true},"required_status_checks":{"
 #   CROSS       1 = fork pull request
 #   UNSIGNED    1 = six of 29 commits unsigned
 #   CODEQL_ROW  1 = a CodeQL check run on the head
+#   MERGES      1 = one merge commit among the 29
 make_stub() {
     printf '%s\n' "${RULES_JSON}" > "$STUB_DIR/rules.json"
     printf '%s\n' "${PROT_JSON}"  > "$STUB_DIR/prot.json"
@@ -99,7 +100,7 @@ for i in range(29):
     login = "cybot" if i >= 20 else "contributor"
     commits.append({"commit": {"oid": oid,
         "signature": {"isValid": True} if signed else None,
-        "parents": {"totalCount": 1},
+        "parents": {"totalCount": 2 if (os.environ.get("MERGES", "0") == "1" and i == 20) else 1},
         "authors": {"totalCount": 1, "nodes": [{"user": {"login": login}}]}}})
 def run(name):
     return {"__typename": "CheckRun", "name": name, "conclusion": "SUCCESS",
@@ -146,7 +147,9 @@ check_contains "names the source"               "classic branch protection requi
 check_contains "names the six commits"          "6 commit(s)" "$(why "$out")"
 check_contains "keeps the review gate in sight" "The review gate is open as well" "$(why "$out")"
 check_contains "names the unreported context"   "never reported on 0419d32f — All security checks" "$(why "$out")"
-check_contains "names the CodeQL fork gap"      "CodeQL default setup never analyzes fork pull requests" "$(why "$out")"
+check_contains "names the CodeQL fork gap"      "never analyzes fork pull requests" "$(why "$out")"
+check_contains "asks to confirm default setup"  "code-scanning/default-setup" "$(why "$out")"
+check          "offers the rebase on a linear history" "true" "$(jq -r '.next | has("cmd")' <<<"$out")"
 check_contains "points to the workaround"       "merge-strategy.md" "$(why "$out")"
 
 echo "case: the same with REVIEW_REQUIRED — a known requirement still leads"
@@ -176,8 +179,15 @@ RULES_JSON="[$COPILOT_RULE,$CODEQL_RULE]" PROT_JSON="$CLASSIC_SIG" RD="" CROSS=1
 out=$(json)
 check          "request-review"                 "request-review" "$(action "$out")"
 check_absent   "no signature claim"             "carry no valid signature" "$(why "$out")"
-check_contains "but the CodeQL gap is named"    "CodeQL default setup never analyzes fork pull requests" "$(why "$out")"
+check_contains "but the CodeQL gap is named"    "never analyzes fork pull requests" "$(why "$out")"
 check_contains "and the unreported context"     "All security checks" "$(why "$out")"
+
+echo "case: a merge commit on the branch — no linear-rebase command, the procedure is named"
+RULES_JSON="[$COPILOT_RULE]" PROT_JSON="$CLASSIC_SIG" RD="" CROSS=1 UNSIGNED=1 CODEQL_ROW=0 MERGES=1 make_stub
+out=$(json)
+check          "fix-signatures"                 "fix-signatures" "$(action "$out")"
+check          "no rebase command"              "false" "$(jq -r '.next | has("cmd")' <<<"$out")"
+check_contains "names the procedure"            "tree-preserving procedure" "$(why "$out")"
 
 echo "case: same-repository pull request — no CodeQL fork claim"
 RULES_JSON="[$COPILOT_RULE,$CODEQL_RULE]" PROT_JSON="$CLASSIC_SIG" RD="" CROSS=0 UNSIGNED=0 CODEQL_ROW=0 make_stub

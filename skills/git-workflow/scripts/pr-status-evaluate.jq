@@ -758,6 +758,11 @@
          then "classic branch protection" else empty end),
         (if ($ruletypes | index("required_signatures")) != null
          then "the required_signatures ruleset" else empty end)]) as $sig_required_by
+    # A linear rebase re-signs only a linear history: it drops merge commits,
+    # and with them any conflict resolution they carry. Unknown (a second page
+    # of commits) counts as having merges.
+    | (($p.allCommits.totalCount // 0) > ($p.allCommits.nodes // [] | length)
+       or any($p.allCommits.nodes[]?.commit; (.parents.totalCount // 1) >= 2)) as $branch_has_merges
     # CodeQL default setup does not analyze a pull request from a fork, so a
     # code_scanning rule that demands CodeQL results can never be met on its
     # head. Inferred from the absence of every CodeQL row, never measured
@@ -900,11 +905,16 @@
                     elif ($s.has_review_on_head | not)
                     then ". The review gate is open as well (\($no_review)); it does not lift this one"
                     else "" end)
-                 + ". Note: gh pr update-branch re-writes the head UNSIGNED; a branch"
-                 + " that merged the base in with conflict resolutions cannot be re-signed"
-                 + " by a linear rebase — see references/pull-request-workflow.md"
-                 + " § Re-signing a contributor's unsigned commits"),
-            cmd:"git rebase --exec \"git commit --amend --no-edit -S\" $(git merge-base HEAD origin/\($s.base)) ; git push --force-with-lease"}
+                 + ". Note: gh pr update-branch re-writes the head UNSIGNED"
+                 + (if $branch_has_merges
+                    then "; this branch contains merge commits (or more than one page of"
+                         + " commits), which a linear rebase drops with any conflict resolution"
+                         + " they carry — re-sign it with the tree-preserving procedure in"
+                         + " references/pull-request-workflow.md § Re-signing a contributor's"
+                         + " unsigned commits"
+                    else "" end))}
+           + (if $branch_has_merges then {}
+              else {cmd:"git rebase --exec \"git commit --amend --no-edit -S\" $(git merge-base HEAD origin/\($s.base)) ; git push --force-with-lease"} end)
          # A required-signatures gate can live in CLASSIC branch protection,
          # which neither the rulesets endpoint nor a non-admin protection
          # query can see: mergeState sits at BLOCKED while every visible gate
@@ -1284,8 +1294,10 @@
       else . end
     | if $s.mergeState == "BLOCKED" and $codeql_fork_gap then
         .next.why += ". Also BLOCKED (inferred): this is a fork pull request, the code_scanning rule"
-                     + " requires CodeQL results, and no CodeQL row exists on \($s.headOid[0:8]) — CodeQL"
-                     + " default setup never analyzes fork pull requests, so that rule cannot be met"
-                     + " here. See github-project references/merge-strategy.md § \"CodeQL default"
-                     + " setup never analyzes fork PRs\" for the helper-PR workaround"
+                     + " requires CodeQL results, and no CodeQL row exists on \($s.headOid[0:8]). If the"
+                     + " repository runs CodeQL default setup (gh api repos/\($s.repo)/code-scanning/default-setup"
+                     + " --jq .state answers configured), it never analyzes fork pull requests and that"
+                     + " rule cannot be met here; an advanced-setup workflow may still be pending. See"
+                     + " github-project references/merge-strategy.md § \"CodeQL default setup never"
+                     + " analyzes fork PRs\" for the helper-PR workaround"
       else . end
