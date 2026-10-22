@@ -1855,6 +1855,93 @@ Use `--diff-filter=ACMR` (not just `AM`) so renames and copies into a guarded
 path are caught. Verify pathspec support empirically before swapping one
 command for the other — the failure mode is silent, not loud.
 
+## Parsing Git Output in a Script
+
+A script that reads git output runs under the user's configuration, not under
+the defaults it was written against. Each setting below changed a line a parser
+depended on, and each is overridden by a flag on the command itself. Measured
+with git 2.55.
+
+### `git diff`: pin prefixes, colour, drivers and renames
+
+```bash
+git diff --no-color --no-ext-diff --no-textconv \
+         --src-prefix=a/ --dst-prefix=b/ --no-relative ...
+```
+
+- `--src-prefix=a/ --dst-prefix=b/`: `diff.noprefix=true` prints `+++ one.txt`,
+  `diff.mnemonicPrefix=true` prints `+++ w/one.txt`; the parser expects `b/`.
+- `--no-color`: `color.diff=always` wraps the header in escape codes, so
+  `^\+\+\+ b/` no longer matches.
+- `--no-ext-diff`: `diff.external`, or a `.gitattributes` `diff=<driver>` with a
+  `command`, replaces the whole patch with that tool's output.
+- `--no-textconv`: a driver's `textconv` still applies under `--no-ext-diff` and
+  rewrites the content lines.
+- `--no-relative`: `diff.relative=true` run from a subdirectory drops every path
+  outside it and prints the rest without the directory.
+
+Add `--no-renames` when the removed text of a deleted file matters. With rename
+detection (`diff.renames`, on by default) a deleted file can pair with a similar
+new one and show as a rename; whether it pairs depends on the config and the
+similarity, and the patch then lists only the differing lines:
+
+```bash
+# old.txt (40 lines) deleted, new.txt (39 of them + 1) added
+git diff --cached --name-status                  # R097  old.txt  new.txt
+git -c diff.renames=false diff --cached --name-status   # A new.txt / D old.txt
+git diff --cached | grep -c '^-[0-9]'            # 1
+git diff --cached --no-renames | grep -c '^-[0-9]'      # 40
+```
+
+### `git log --format`: `--no-show-signature`
+
+`log.showSignature=true` prints the signature check before the formatted
+message, so the first line of `git log -1 --format=%s` is
+`Good "git" signature for ...`, not the subject.
+
+```bash
+git log -1 --no-show-signature --format=%s
+```
+
+### `git status --porcelain -z`: two paths for a rename, `??` for untracked
+
+Entries are NUL-terminated. An entry with `R` or `C` in either status column
+(first column = staged, second column = worktree) is followed by a second
+NUL-terminated path, the **old** one, which the parser must consume. With `-z`
+the new path comes first; the non-`-z` form prints `"old" -> "new"`, the
+reverse, and quotes names with spaces.
+
+```bash
+git status --porcelain -z | tr '\0' '|'
+# R  moved sp.txt|sp ace.txt|?? untracked.txt|
+```
+
+`??` entries are untracked files. Two settings change which entries appear:
+`status.showUntrackedFiles=no` drops every `??` entry (pass `-unormal` or
+`-uall`), and `status.renames=false` reports a rename as `D` plus `A` (pass
+`--renames`, or `--no-renames` to always get `D` plus `A`).
+
+### File names: `-z` on `ls-files` and `diff --name-only`
+
+Without `-z`, git C-quotes non-ASCII names while `core.quotePath` is true (the
+default): `"\303\274mlaut.txt"`. With `-z` names are never quoted, so split on
+NUL:
+
+```bash
+git ls-files -z | while IFS= read -r -d '' f; do ...; done
+git diff --name-only -z ...
+```
+
+### Fetching one branch in a clone that may be single-branch
+
+A single-branch clone has the refspec `+refs/heads/<its branch>:...` only. A
+plain `git fetch <remote> main` then updates `FETCH_HEAD` and creates no
+`<remote>/main`. Name the destination:
+
+```bash
+git fetch <remote> +refs/heads/main:refs/remotes/<remote>/main
+```
+
 ## Reading a File As It Is Committed on Another Branch
 
 To see what a file *actually contains on another branch or ref* — without
