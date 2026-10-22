@@ -66,11 +66,13 @@ for t in test_pr_status_large_graphql.sh test_pr_status_investigate_evidence.sh 
 done
 
 # The payloads count toward the same limit. Three shapes, each built by
-# build_case below:
-#   rules  2000 required contexts, none reported: about 60 KB of rules, read
+# build_case below. The two rules sizes lie between 32767 characters and
+# Linux's 131072-byte limit for one argument, so it is the wrapper, not the
+# kernel, that refuses them when they go back on argv.
+#   rules  1000 required contexts, none reported: about 74 KB of rules, read
 #          by evaluate(); NEXT is await-checks.
 #   inv    800 required contexts, all green, BLOCKED and APPROVED: NEXT is
-#          investigate, so investigate_evidence() reads the rules (about 50 KB)
+#          investigate, so investigate_evidence() reads the rules (about 60 KB)
 #          too, and its evidence block is merged into the answer.
 #   empty  the rules endpoint answers 200 with an empty body: the gate must
 #          stay unreadable, as it was when the rules went in through
@@ -97,7 +99,7 @@ import sys, json, os
 d, shape = sys.argv[1], sys.argv[2]
 head = "cddd6f7cf8cedba97886c14dfb65387c53efd2ba"
 GHA = 15368
-n = {"rules": 2000, "inv": 800}.get(shape, 200)
+n = {"rules": 1000, "inv": 800}.get(shape, 200)
 names = ["ci / PHP 8.4 TYPO3 14.3 job %04d" % i for i in range(n)]
 green = shape == "inv"
 rules = [{"type": "required_status_checks", "ruleset_id": 1, "parameters": {
@@ -172,7 +174,7 @@ run_case() { # run_case <label> <shape> <expected NEXT, or "unreadable">
     fi
 }
 
-run_case "60 KB of rules" rules await-checks
+run_case "74 KB of rules" rules await-checks
 run_case "800 green required contexts, evidence merged" inv investigate
 run_case "empty rules answer" empty unreadable
 
