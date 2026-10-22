@@ -3201,6 +3201,8 @@ When `mergeStateStatus: BLOCKED` and the blocking check is `dco` or a "Commits m
 > none of the steps below apply: you cannot sign off on another author's work, and the
 > rebase in Step 2 would forge it. See
 > [Merging Divergent Upstream History (Forks)](#dco-and-third-party-history-are-structurally-incompatible).
+> If they already carry their author's own `Signed-off-by` and lack only the cryptographic
+> signature, see [Re-signing a contributor's unsigned commits](#re-signing-a-contributors-unsigned-commits).
 
 **Step 1 — Verify git identity is correct (not swapped).**
 A swapped name/email pair silently produces a malformed `Signed-off-by:` trailer that the DCO bot rejects:
@@ -3237,6 +3239,38 @@ gh api /repos/{owner}/{repo}/commits/HEAD --jq '.commit.verification | {verified
 ```
 
 If `unknown_key`: go to *github.com → Settings → SSH and GPG keys*, find your key, and add it again under *New signing key* (same public key, different "Key type"). After adding, re-verify with the API call above.
+
+#### Re-signing a contributor's unsigned commits
+
+The case: a contributor's commits satisfy DCO — each carries their own `Signed-off-by` — but have no cryptographic signature, and branch protection requires verified signatures. A linear `git rebase -S <base>` fails when the branch contains merges from the base that resolved conflicts: each replayed commit conflicts again.
+
+Re-create every commit above the merge base instead, with `git commit-tree -S` on its exact tree, message and author. Parents inside the range are remapped to their new copies; parents outside the range are kept, so merges stay merges. Assert the tree per commit and for the head:
+
+```bash
+base=$(git merge-base HEAD origin/main)
+old_head=$(git rev-parse HEAD)
+declare -A new
+for c in $(git rev-list --reverse --topo-order "$base..HEAD"); do
+  parents=()
+  for p in $(git rev-list --parents -n 1 "$c" | cut -d' ' -f2-); do
+    parents+=(-p "${new[$p]:-$p}")      # inside the range: the new copy; outside: unchanged
+  done
+  new[$c]=$(git cat-file commit "$c" | sed '1,/^$/d' |
+    GIT_AUTHOR_NAME="$(git show -s --format=%an "$c")" \
+    GIT_AUTHOR_EMAIL="$(git show -s --format=%ae "$c")" \
+    GIT_AUTHOR_DATE="$(git show -s --format=%ad --date=raw "$c")" \
+    git commit-tree -S "${parents[@]}" "$c^{tree}")
+  [ "$(git rev-parse "${new[$c]}^{tree}")" = "$(git rev-parse "$c^{tree}")" ] || { echo "tree differs: $c"; exit 1; }
+done
+[ "$(git rev-parse "${new[$old_head]}^{tree}")" = "$(git rev-parse "$old_head^{tree}")" ]
+git update-ref "refs/heads/$(git branch --show-current)" "${new[$old_head]}" "$old_head"
+```
+
+If the branch is out of date, merge the current base in with one signed merge (`git merge -S --signoff origin/main`; the merge is your own commit, so the sign-off is yours) rather than rebasing.
+
+This adds the pusher's committer signature. It does not add or forge a `Signed-off-by` — the message is copied byte for byte — so the warning above about signing off on another author's work does not apply. The contributor stays the author.
+
+When the pull request allows maintainer edits, push to the contributor's branch with a lease on the head you rewrote: `git push --force-with-lease=<branch>:<old head> <fork-remote> HEAD:<branch>`.
 
 ### Merge-Gate Command
 
