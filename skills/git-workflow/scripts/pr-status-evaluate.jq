@@ -751,6 +751,27 @@
                + " into PR comments, and a paste must never mint an attestation, so the accepting"
                + " sequence never appears in it"
           end)) as $quota_why
+    # Where a signature requirement is KNOWN rather than suspected: classic
+    # protection as read (admin-only, null otherwise) or the ruleset rule. The
+    # suspected case is the fix-signatures rung further down, whose guards stay.
+    | ([(if (($prot | type) == "object") and ($prot.required_signatures.enabled // false)
+         then "classic branch protection" else empty end),
+        (if ($ruletypes | index("required_signatures")) != null
+         then "the required_signatures ruleset" else empty end)]) as $sig_required_by
+    # A linear rebase re-signs only a linear history: it drops merge commits,
+    # and with them any conflict resolution they carry. Unknown (a second page
+    # of commits) counts as having merges.
+    | (($p.allCommits.totalCount // 0) > ($p.allCommits.nodes // [] | length)
+       or any($p.allCommits.nodes[]?.commit; (.parents.totalCount // 1) >= 2)) as $branch_has_merges
+    # CodeQL default setup does not analyze a pull request from a fork, so a
+    # code_scanning rule that demands CodeQL results can never be met on its
+    # head. Inferred from the absence of every CodeQL row, never measured
+    # directly: the code-scanning analyses are not read here.
+    | ($s.cross_repository
+       and ([$r[]? | select(.type == "code_scanning")
+             | .parameters.code_scanning_tools[]?.tool // ""
+             | select(test("codeql"; "i"))] | length) > 0
+       and ([$checks[] | .name // "" | select(test("^(CodeQL$|Analyze \\()"))] | length) == 0) as $codeql_fork_gap
     | .next =
         (if $s.state != "OPEN" then
            {action:"none", why:"PR is \($s.state)"}
@@ -863,6 +884,37 @@
                  + " This is a fork pull request, and GitHub demands that approval after every new SHA."
                  + " Until then those runs report nothing at all, so the check counts above understate the gate"),
             cmd:([$s.awaiting_approval[] | "gh api -X POST repos/\($s.repo)/actions/runs/\(.id)/approve"] | join(" ; "))}
+         # The signature requirement is READ here, not guessed, so none of the
+         # guards of the rung below apply: no review and no further CI result
+         # can lift it. Without this rung a review action outranked it whenever
+         # one of those guards failed, and nothing named the signatures
+         # (netresearch-branding-skill#110: BLOCKED, Copilot out of quota, 6 of
+         # 29 commits unsigned under classic required_signatures, a required
+         # context not yet reported — NEXT said only request-review). The
+         # review state is carried along: it is a second gate, not a lesser one.
+         elif (($s.unsigned|length) > 0 and $s.mergeState == "BLOCKED"
+               and ($sig_required_by|length) > 0) then
+           {action:"fix-signatures",
+            why:("\($s.unsigned|length) commit(s) on this branch carry no valid signature — \($s.unsigned|join(", "))"
+                 + " — and \($sig_required_by|join(" and "))"
+                 + (if ($sig_required_by|length) > 1 then " require" else " requires" end)
+                 + " signed commits, so the"
+                 + " merge stays BLOCKED whatever the review state"
+                 + (if ($s.reviewDecision | IN("REVIEW_REQUIRED", "CHANGES_REQUESTED"))
+                    then ". The review gate is open as well (decision \($s.reviewDecision)); it does not lift this one"
+                    elif ($s.has_review_on_head | not)
+                    then ". The review gate is open as well (\($no_review)); it does not lift this one"
+                    else "" end)
+                 + ". Note: gh pr update-branch re-writes the head UNSIGNED"
+                 + (if $branch_has_merges
+                    then "; this branch contains merge commits (or more than one page of"
+                         + " commits), which a linear rebase drops with any conflict resolution"
+                         + " they carry — re-sign it with the tree-preserving procedure in"
+                         + " references/pull-request-workflow.md § Re-signing a contributor's"
+                         + " unsigned commits"
+                    else "" end))}
+           + (if $branch_has_merges then {}
+              else {cmd:"git rebase --exec \"git commit --amend --no-edit -S\" $(git merge-base HEAD origin/\($s.base)) ; git push --force-with-lease"} end)
          # A required-signatures gate can live in CLASSIC branch protection,
          # which neither the rulesets endpoint nor a non-admin protection
          # query can see: mergeState sits at BLOCKED while every visible gate
@@ -1228,4 +1280,24 @@
                                   + ($idle|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))
                              else empty end)
                           ] | join("; ")))
+      else . end
+    # Structural blockers named beside whatever rung won. A review action sits
+    # above every CI rung, so on a BLOCKED pull request it used to be the only
+    # thing said while a required context had never reported and CodeQL could
+    # never report (netresearch-branding-skill#110). Rungs that are themselves
+    # about the unreported contexts already name them.
+    | if $s.mergeState == "BLOCKED"
+         and (.next.action | IN("request-review", "await-review", "fix-signatures"))
+         and ($s.undispatched|length) > 0 then
+        .next.why += ". Also BLOCKED: \($s.undispatched|length) required context(s) never reported on"
+                     + " \($s.headOid[0:8]) — \($s.undispatched|join(", "))"
+      else . end
+    | if $s.mergeState == "BLOCKED" and $codeql_fork_gap then
+        .next.why += ". Also BLOCKED (inferred): this is a fork pull request, the code_scanning rule"
+                     + " requires CodeQL results, and no CodeQL row exists on \($s.headOid[0:8]). If the"
+                     + " repository runs CodeQL default setup (gh api repos/\($s.repo)/code-scanning/default-setup"
+                     + " --jq .state answers configured), it never analyzes fork pull requests and that"
+                     + " rule cannot be met here; an advanced-setup workflow may still be pending. See"
+                     + " github-project references/merge-strategy.md § \"CodeQL default setup never"
+                     + " analyzes fork PRs\" for the helper-PR workaround"
       else . end
