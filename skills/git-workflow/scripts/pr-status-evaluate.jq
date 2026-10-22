@@ -386,8 +386,6 @@
     # check_response_timeout_minutes, which the REST docs give no default for
     # and which is configured per ruleset (30 and 60 on the two netresearch
     # repos checked, #233).
-    # No apostrophes in here — the whole jq program sits in a single-quoted
-    # shell string, and one would end it.
     | (($queued_required | map(.started // empty) | min) // null) as $oldest_q
     | (if $oldest_q == null then 0
        else (((now - ($oldest_q | fromdateiso8601)) / 60) | floor) end) as $queued_minutes
@@ -398,8 +396,7 @@
         reviewDecision: ($p.reviewDecision // ""),
         base: $p.baseRefName, head: $p.headRefName, headOid: $head,
         # The head branch of a fork pull request lives in another repository,
-        # which decides whether the merge may delete it. (No apostrophes in
-        # this block: the jq program is a single-quoted shell string.)
+        # which decides whether the merge may delete it.
         cross_repository: ($p.isCrossRepository // false),
         checks: {
           # Stale rows are excluded so pass+fail+pending+skip still adds up to
@@ -803,9 +800,7 @@
          # to act on yet: report wait, so --watch holds through the parked
          # state and returns on the first real event instead of answering
          # "ready" on every poll (#228). Only a settled draft is actionable,
-         # and that action belongs to the operator: mark it ready. (No single
-         # quotes in this block — the jq program lives in a single-quoted
-         # shell string, same trap the fix-signatures cmd below notes.)
+         # and that action belongs to the operator: mark it ready.
          elif $s.draft then
            # checks_settled is deliberately NOT the gate here: it demands at
            # least one registered context and zero undispatched required ones,
@@ -848,9 +843,6 @@
                     else "" end)
                  + " — the queue merges it once its own checks pass; enqueueing"
                  + " again only restarts them")}
-         # No single quotes anywhere in this rung, comments included: the whole
-         # jq program is one single-quoted shell string and an apostrophe ends
-         # it (the parse then fails several hundred lines further down).
          # Runs awaiting maintainer approval outrank every review and
          # signature branch below, because none of those can unblock the PR:
          # the required contexts have not started and will not start until
@@ -866,8 +858,6 @@
                  + " — \([$s.awaiting_approval[].name]|unique|join(", "))."
                  + " This is a fork pull request, and GitHub demands that approval after every new SHA."
                  + " Until then those runs report nothing at all, so the check counts above understate the gate"),
-            # No single quotes: this jq program lives in a single-quoted shell
-            # string (same trap the fix-signatures cmd below notes).
             cmd:([$s.awaiting_approval[] | "gh api -X POST repos/\($s.repo)/actions/runs/\(.id)/approve"] | join(" ; "))}
          # A required-signatures gate can live in CLASSIC branch protection,
          # which neither the rulesets endpoint nor a non-admin protection
@@ -898,8 +888,6 @@
                  + " queries — fix the signatures before chasing review state."
                  + " Note: gh pr update-branch re-writes the head UNSIGNED;"
                  + " rebase locally instead"),
-            # No single quotes in here: the whole jq program lives in a
-            # single-quoted shell string (same trap as the sibling cmd below).
             cmd:"git rebase --exec \"git commit --amend --no-edit -S\" $(git merge-base HEAD origin/\($s.base)) ; git push --force-with-lease"}
          # An approval that does not count: classic protection with
          # require_last_push_approval discounts an approval from whoever
@@ -1176,10 +1164,6 @@
             why:("\($s.unsigned|length) commit(s) on this branch carry no valid signature — \($s.unsigned|join(", "))"
                  + " — and the required_signatures ruleset is active. GitHub reports this"
                  + " only as mergeStateStatus \($s.mergeState), never as a failing check"),
-            # No single quotes in here: the whole jq program lives in a
-            # single-quoted shell string and one would end it (shellcheck
-            # SC2026 catches it, but only after the parse has already gone
-            # wrong further down).
             cmd:"git rebase --exec \"git commit --amend --no-edit -S\" $(git merge-base HEAD origin/\($s.base)) ; git push --force-with-lease"}
          # Same shape as fix-signatures above: a required context that never
          # reported produces no red check and no rollup entry, so it used to
@@ -1191,8 +1175,6 @@
             why:("\($s.undispatched|length) required check(s) never reported — \($s.undispatched|join(", "))"
                  + ". Nothing is red; they were never dispatched, or this is a fork PR"
                  + " whose runs need approving (once per push)"),
-            # No single quotes: this jq program lives in a single-quoted
-            # shell string (same trap the fix-signatures cmd above notes).
             cmd:("gh run list --repo \($s.repo) --branch \($s.head) --json databaseId,status,name"
                  + " — then for each action_required id:"
                  + " gh api -X POST repos/\($s.repo)/actions/runs/ID/approve."
@@ -1202,8 +1184,7 @@
          # replaces that verdict only when nothing else explains the state.
          # The re-trigger is inferred, not measured: what was measured is
          # that re-running the job inside the old run does not help, and that
-         # dropping the context from the ruleset does. No single quotes in
-         # this rung: the jq program is a single-quoted shell string.
+         # dropping the context from the ruleset does.
          elif (($stale_required|length) > 0) then
            {action:"fix-required-context",
             why:("\($stale_required|length) required context(s) reported only by a SUPERSEDED workflow run — "
@@ -1218,7 +1199,6 @@
                  + " verified). Durable fix: require a check every run of the workflow reports (an"
                  + " aggregate gate job) instead of a job that is skipped on some events"),
             stale_contexts:$stale_required,
-            # No single quotes: same trap as the fix-signatures cmd above.
             cmd:"gh pr close \($s.number) --repo \($s.repo) && gh pr reopen \($s.number) --repo \($s.repo)"}
          # The end of the ladder: nothing this script decides on explains the
          # state. The sentence says so and claims nothing more; snapshot()
