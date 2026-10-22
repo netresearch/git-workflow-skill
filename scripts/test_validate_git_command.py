@@ -23,7 +23,7 @@ from typing import ClassVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from validate_git_command import GERMAN_MARKERS
+import validate_git_command as vgc
 
 HOOK = Path(__file__).with_name("validate_git_command.py")
 
@@ -265,7 +265,9 @@ class ForgeBodyLanguageGate(unittest.TestCase):
         assertion that makes the decision fail loudly when it is reversed.
         """
         for word in ("mit", "das", "von", "hat", "die", "man", "war", "so", "in"):
-            self.assertNotIn(word, GERMAN_MARKERS, f"{word!r} also occurs in English")
+            self.assertNotIn(
+                word, vgc.GERMAN_MARKERS, f"{word!r} also occurs in English"
+            )
 
     def test_an_english_body_about_licences_is_not_denied(self) -> None:
         # The body shape that made `mit` untenable, run through the real gate
@@ -508,8 +510,6 @@ class NowhereToStoreAMarker(unittest.TestCase):
     """
 
     def test_every_candidate_failing_reads_as_not_fired(self) -> None:
-        import validate_git_command as vgc
-
         payload = {"session_id": "sess-nowhere"}
         with unittest.mock.patch.object(
             vgc.os, "makedirs", side_effect=OSError("read-only")
@@ -526,7 +526,6 @@ class NowhereToStoreAMarker(unittest.TestCase):
         # advisory directory may exist and be unwritable. Committing to the
         # first root that accepts makedirs leaves the dedupe off for good,
         # which is the storm this whole mechanism exists to prevent.
-        import validate_git_command as vgc
 
         with (
             tempfile.TemporaryDirectory() as runtime,
@@ -564,8 +563,6 @@ class NowhereToStoreAMarker(unittest.TestCase):
             )
 
     def test_the_runtime_dir_is_preferred_when_it_works(self) -> None:
-        import validate_git_command as vgc
-
         with (
             tempfile.TemporaryDirectory() as runtime,
             tempfile.TemporaryDirectory() as fallback,

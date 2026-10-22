@@ -184,7 +184,9 @@ def _forge_bodies(cmd: str) -> list[tuple[str, str]]:
                 with open(p, encoding="utf-8", errors="replace") as fh:
                     bodies.append((p, fh.read(BODY_READ_LIMIT)))
             except OSError:
-                pass
+                # Unreadable (permissions, or deleted after the isfile check):
+                # skip this body, so the remaining gates in the hook still run.
+                continue
     for m in BODY_INLINE.finditer(cmd):
         bodies.append(("--body", m.group(2)))
     for m in BODY_FIELD.finditer(cmd):
