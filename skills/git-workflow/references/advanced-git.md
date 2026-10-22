@@ -1886,11 +1886,12 @@ new one and show as a rename; whether it pairs depends on the config and the
 similarity, and the patch then lists only the differing lines:
 
 ```bash
-# old.txt (40 lines) deleted, new.txt (39 of them + 1) added
-git diff --cached --name-status                  # R097  old.txt  new.txt
+# old.txt (40 lines) deleted, new.txt (39 of them + 1 other) added
+git diff --cached --name-status                  # R094  old.txt  new.txt
 git -c diff.renames=false diff --cached --name-status   # A new.txt / D old.txt
-git diff --cached | grep -c '^-[0-9]'            # 1
-git diff --cached --no-renames | grep -c '^-[0-9]'      # 40
+git diff --cached --numstat                      # 1  1   old.txt => new.txt
+git diff --cached --numstat --no-renames         # 40 0   new.txt
+                                                 # 0  40  old.txt
 ```
 
 ### `git log --format`: `--no-show-signature`
@@ -1934,9 +1935,10 @@ git diff --name-only -z ...
 
 ### Fetching one branch in a clone that may be single-branch
 
-A single-branch clone has the refspec `+refs/heads/<its branch>:...` only. A
-plain `git fetch <remote> main` then updates `FETCH_HEAD` and creates no
-`<remote>/main`. Name the destination:
+A single-branch clone has the refspec `+refs/heads/<its branch>:...` only. When
+`main` is not that branch, a plain `git fetch <remote> main` updates
+`FETCH_HEAD` and creates no `<remote>/main`, because no configured refspec maps
+it. Name the destination:
 
 ```bash
 git fetch <remote> +refs/heads/main:refs/remotes/<remote>/main
