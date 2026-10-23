@@ -367,6 +367,25 @@
                   then "findings"
                 else "unknown" end)
        end) as $cr_verdict
+    # A rate-limited block names its own reset: "Next included review available
+    # in 48 minutes." Nothing happens at that time — CodeRabbit does not resume
+    # a refused head — so the time is when to send `@coderabbitai review`, and a
+    # watch for a state change waits for ever: measured on
+    # netresearch/terraform-provider-ad#66, a watcher read "Review rate limited"
+    # for 90 minutes until a request was sent by hand. The duration counts from
+    # the summary's last edit, so a later edit only moves the time later, never
+    # earlier. Only the lines above the head are read, as for the verdict: an
+    # older head's block sits below it. null when no such line is there.
+    | ([$cr_bot[] | select((.body // "") | test($p.headRefOid))] | last) as $cr_head_comment
+    | (if $cr_verdict == "rate-limited" then
+         ([$cr_lines[0:$cr_idx][] | select(test("Next included review available in"))] | last) as $cr_next_line
+         | ([($cr_next_line // "") | scan("([0-9]+) *(hour|minute|second)")
+             | (.[0] | tonumber) * (if .[1] == "hour" then 3600 elif .[1] == "minute" then 60 else 1 end)]
+            | add) as $cr_wait
+         | (($cr_head_comment.lastEditedAt // $cr_head_comment.createdAt // "") | sub("\\.[0-9]+Z$"; "Z")) as $cr_said_at
+         | if $cr_wait == null or $cr_said_at == "" then null
+           else (($cr_said_at | fromdateiso8601) + $cr_wait | todateiso8601) end
+       else null end) as $cr_retry_at
     # SonarCloud reports in one comment headed "Quality Gate passed" or
     # "Quality Gate failed", and a PASSED gate can still list new issues: the
     # default gate fails on ratings, coverage and duplication, not on the count,
@@ -537,6 +556,8 @@
         # covers the short-sha shape, which only a checkout can resolve, and a
         # block whose marker this script does not know.
         coderabbit_on_head: $cr_verdict,
+        # When a rate-limited head may be requested again (ISO 8601 UTC), or null.
+        coderabbit_retry_at: $cr_retry_at,
         # New issues in the newest SonarCloud Quality Gate comment, or null.
         # Display only — see $sonar_new_issues above.
         sonar_new_issues: $sonar_new_issues,
@@ -696,6 +717,9 @@
          then " — note CodeRabbit posted actionable comments on THIS head; read them before anything else"
        elif $s.coderabbit_on_head == "rate-limited"
          then " — CodeRabbit refused THIS head as rate limited; it will not catch up on its own"
+              + (if $s.coderabbit_retry_at != null
+                 then ", so send `@coderabbitai review` once after \($s.coderabbit_retry_at), the reset its notice names"
+                 else "" end)
        elif $s.coderabbit_on_head == "in-progress"
          then " — CodeRabbit is still reviewing THIS head; wait for it rather than re-triggering,"
               + " and do not merge over a review in flight"
