@@ -67,7 +67,9 @@ total=\$(wc -l < "\$f")
 [ "\$i" -le "\$total" ] || i=\$total
 line=\$(head -n "\$i" "\$f" | tail -n 1)
 if [ "\$line" = FAIL ]; then
+  echo "gh: Could not resolve to a PullRequest with the number of \$n." >&2
   echo "pr-status: GraphQL query failed" >&2
+  echo "pr-status: could not read the gate for \$repo#\$n; cause on stderr above" >&2
   exit 2
 fi
 printf '%s\n' "\$line"
@@ -174,7 +176,7 @@ pr o/r 6 FAIL FAIL "$MERGED"
 run
 check "exit 3" "3" "$RC"
 check "two reads" "2" "$(calls "$D/status.log")"
-says "attention names the cause" "o/r 6 pr-status.sh unreadable on two consecutive passes: exit 2: pr-status: GraphQL query failed" "$(cat "$D/attn")"
+says "attention names the cause" "o/r 6 pr-status.sh unreadable on two consecutive passes: exit 2: gh: Could not resolve to a PullRequest with the number of 6." "$(cat "$D/attn")"
 
 echo "case 7: failures that are not consecutive keep waiting"
 setup

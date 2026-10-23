@@ -194,7 +194,7 @@ sweep_one() { # sweep_one <owner/repo#N>
   rc=0
   out=$("$SCRIPT_DIR/pr-status.sh" -R "$repo" "$num" --json 2>"$ERR") || rc=$?
   if [ "$rc" -ne 0 ]; then
-    probe_failed "$pr" "exit $rc: $(tail -n 1 "$ERR")"
+    probe_failed "$pr" "exit $rc: $(one_line "$(cat "$ERR")")"
     return
   fi
   if ! state=$(jq -er '.state' <<<"$out" 2>/dev/null) \
