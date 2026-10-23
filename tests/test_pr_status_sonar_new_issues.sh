@@ -63,7 +63,8 @@ import sys, json
 path, pr97, comments = sys.argv[1:4]
 head = "deadbeefcafe"
 body97 = open(pr97).read()
-nodes = [{"author": {"login": login, "__typename": typename}, "body": body97 if body == "@pr97" else body,
+nodes = [{"author": None if login == "@ghost" else {"login": login, "__typename": typename},
+          "body": body97 if body == "@pr97" else body,
           "url": "u", "createdAt": created, "lastEditedAt": None}
          for login, typename, created, body in json.loads(comments)]
 json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
@@ -130,5 +131,12 @@ case_ "older SonarCloud login sonarcloud is read too" \
 case_ "a User account named like the bot is ignored" \
       '[["sonarcloud-fan", "User", "2026-09-03T11:00:00Z", "[9 New issues](x)"],
         ["someone", "User", "2026-09-03T12:00:00Z", "noted"]]' absent null
+# GitHub returns author null for a comment whose account was deleted. Every
+# login test in the evaluator used to raise on it, and the report was empty.
+# The author answers afterwards for the same reason as above.
+case_ "a comment with a deleted author does not break the report" \
+      '[["@ghost", "", "2026-09-03T10:30:00Z", "old remark"],
+        ["sonarqubecloud", "Bot", "2026-09-03T11:00:00Z", "@pr97"],
+        ["someone", "User", "2026-09-03T12:00:00Z", "noted"]]' shown 1
 
 exit "$fail"

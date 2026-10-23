@@ -14,7 +14,7 @@
     # match a third error body and not the other puts the row back into
     # $head_reviews, which is exactly the merge-on-an-unread-PR bug again.
     def is_errored_copilot_review:
-      (.author.login | test("copilot"; "i"))
+      ((.author.login // "") | test("copilot"; "i"))
       and ((.body // "") | test("^Copilot\\b.*unable to review"; "i"));
     ($g.data.repository) as $repo
     | ($repo.pullRequest) as $p
@@ -227,7 +227,7 @@
     # gate, so filtering only the Copilot list would leave every repo WITHOUT
     # the copilot_code_review ruleset still merging on an error row.
     | ([$reviews_raw[] | select(is_errored_copilot_review | not)]) as $head_reviews
-    | ([$head_reviews[] | select(.author.login | test("copilot"; "i"))]) as $copilot_on_head
+    | ([$head_reviews[] | select((.author.login // "") | test("copilot"; "i"))]) as $copilot_on_head
     | ([$p.reviewThreads.nodes[]? | select(.isResolved == false)]) as $unresolved
     # Prose written under the pull request is an ISSUE comment, not a review
     # thread and not a review. It appears in neither reviewThreads nor the
@@ -274,7 +274,7 @@
     # raises the rung, which is the case the rung exists for.
     | ([$unanswered_comments[]
         | select(((.author.__typename // "") == "Bot") | not)
-        | select((.author.login | test("\\[bot\\]$|^(dependabot|renovate|copilot)"; "i")) | not)
+        | select(((.author.login // "") | test("\\[bot\\]$|^(dependabot|renovate|copilot)"; "i")) | not)
         | select($viewer == "" or .author.login != $viewer)]) as $unanswered_human
     # The CodeRabbit verdict is an ISSUE COMMENT, never a review, so every
     # review-shaped field above is blank on a pull request it cleared minutes
@@ -297,7 +297,7 @@
     # accounts count: since a verdict of in-progress holds a watch, a user
     # whose login merely starts with coderabbitai must not be able to post
     # one (raised by CodeRabbit on netresearch/git-workflow-skill#383).
-    | ([$p.comments.nodes[]? | select(.author.login | test("^coderabbitai"; "i"))]) as $cr_comments
+    | ([$p.comments.nodes[]? | select((.author.login // "") | test("^coderabbitai"; "i"))]) as $cr_comments
     | ([$cr_comments[] | select((.author.__typename // "Bot") == "Bot")]) as $cr_bot
     | ([$cr_bot[] | .body // ""]) as $cr_bodies
     # Between `@coderabbitai review` and the summary naming the head, the only
@@ -323,7 +323,7 @@
     | ([$cr_bot[] | select((.body // "") | test("Review triggered\\."))
                   | select((.createdAt // "") > $cr_head_at)] | length > 0) as $cr_reply_open
     | (($cr_bot | length) > 0 and
-       ([$p.comments.nodes[]? | select(.author.login | test("^coderabbitai"; "i") | not)
+       ([$p.comments.nodes[]? | select((.author.login // "") | test("^coderabbitai"; "i") | not)
                              | select((.body // "") | test("@coderabbitai (full )?review"))
                              | select((.createdAt // "") > $cr_head_at)
                              | select((.createdAt // "") > $cr_last_word)] | length > 0)) as $cr_request_open
@@ -377,7 +377,7 @@
     # names no commit, so it is the latest analysis, not provably this head.
     # Information only: NEXT and the merge gate never read it. null when no
     # SonarCloud comment exists or its body carries no count.
-    | ([$p.comments.nodes[]? | select(.author.login | test("^sonar(qube)?cloud"; "i"))
+    | ([$p.comments.nodes[]? | select((.author.login // "") | test("^sonar(qube)?cloud"; "i"))
                              | select((.author.__typename // "Bot") == "Bot")]
        | sort_by(.lastEditedAt // .createdAt // "") | last) as $sonar_comment
     | ([($sonar_comment.body // "") | capture("\\[(?<n>[0-9]+) New issues?\\]")]
@@ -547,7 +547,7 @@
         # an errored row after a delivered one means it is back. Asking only
         # "is there a review" would clear the marker in the second case too.
         copilot_latest_on_head_ok:
-          (([$reviews_raw[] | select(.author.login | test("copilot"; "i"))] | last)
+          (([$reviews_raw[] | select((.author.login // "") | test("copilot"; "i"))] | last)
            | if . == null then false else (is_errored_copilot_review | not) end),
         # True when Copilot answered on this head with an error body rather than
         # a review. Derived from the review body alone — see the comment above
