@@ -496,7 +496,7 @@ render() {
      else empty end),
     "  reviews     : \(if .has_review_on_head then (.reviews_on_head|to_entries|map("\(.key)=\(.value)")|join(", ")) else "NONE on current head" end)\(if .coderabbit_on_head == "none" then "" else "  coderabbit=\(.coderabbit_on_head)" end)  decision=\(if .reviewDecision=="" then "-" else .reviewDecision end)",
     (if (.sonar_new_issues // 0) > 0 then
-       "  sonar       : \(.sonar_new_issues) new issue(s) in the latest Quality Gate comment — not gating; a passed gate still lands them on the base branch"
+       "  sonar       : \(.sonar_new_issues) new issue(s) in the latest Quality Gate comment — not gating; read them before merging, a passed gate still lets them through"
      else empty end),
     "  threads     : \(.unresolved_threads) unresolved",
     (if .unanswered_comments > 0 then
