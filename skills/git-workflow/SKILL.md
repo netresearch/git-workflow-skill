@@ -77,6 +77,8 @@ Before merging: threads resolved, CI green (incl. annotations), rebased, signed,
 ./scripts/pr-status.sh [-R owner/repo] [PR] [--json] [--watch]
 # Merge; refuses when the gate is shut:
 ./scripts/pr-merge.sh [-R owner/repo] [PR] [--dry-run|--self-reviewed]
+# Many PRs (`owner/repo N` per line) to merge; stops on any NEXT it does not handle:
+./scripts/pr-sweep.sh [--interval SEC] [--timeout SEC] [--attention FILE] LISTFILE
 # What a repository expects, before the first artifact:
 ./scripts/repo-contribution-preflight.sh [--repo <dir>] [--section docs|templates|packaging|ci|tools]
 # Which copy is installed here (every script answers this):
