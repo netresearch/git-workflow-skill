@@ -160,6 +160,19 @@ These properties decide whether waiting for CodeRabbit is worth anything:
   "you've used all free OSS reviews for now" together, so a paid plan is no
   reason to assume this does not apply.
 
+- **The refusal names its reset, and nothing happens at that time.** The
+  rate-limited block in the summary carries `Next included review available in
+  48 minutes.` CodeRabbit does not come back to the refused head when the
+  allowance returns, so the time is when to send `@coderabbitai review` once —
+  wait for it with one timer, not with a watcher for a state change, which waits
+  for ever. On netresearch/terraform-provider-ad#66 such a watcher read `Review
+  rate limited` for 90 minutes until the request was sent by hand; the same
+  session had done timer-then-request three times before a context compaction
+  dropped the procedure. `pr-status.sh` reads the time from the block and prints
+  it as `coderabbit=rate-limited (request again after …)`, and in `--json` as
+  `coderabbit_retry_at`. It counts from the summary's last edit, so it can be
+  later than the real reset, never earlier.
+
 - **A clean review leaves no review object.** With nothing to report it posts a
   summary comment reading `No actionable comments were generated in the recent
   review.` and submits no review and no inline comments. `reviews[]` stays empty
@@ -289,7 +302,9 @@ two commits later.
 `pr-status.sh` runs the **range-shaped** half of this for you and reports it as
 `coderabbit_on_head` (`clean` · `findings` · `in-progress` · `rate-limited` ·
 `unknown` · `none`),
-also on the prose `reviews` line as `coderabbit=…`. It does not resolve the
+also on the prose `reviews` line as `coderabbit=…`. For `rate-limited` with a
+reset in the block, the JSON adds `coderabbit_retry_at` and the prose line adds
+`(request again after <time>)`. It does not resolve the
 short-sha shape — that needs a checkout — so it answers `unknown` when a
 `up to \`…\`` marker is the only thing naming a head, and the resolution above is
 still yours to run. Nothing gates on the field: a comment is not a review, so

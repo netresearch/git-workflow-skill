@@ -138,6 +138,65 @@ Reviewing files that changed from the base of the PR and between $OLDER and $PRE
 out="$(run_json)"
 check "coderabbit_on_head" "rate-limited" "$(jq -r .coderabbit_on_head <<<"$out")"
 check "has_review_on_head stays false" "false" "$(jq -r .has_review_on_head <<<"$out")"
+check "no reset named, no retry time" "null" "$(jq -r .coderabbit_retry_at <<<"$out")"
+
+# --- case 2b: the refusal names its reset ------------------------------------
+# The block's own line, as CodeRabbit wrote it on
+# netresearch/terraform-provider-ad#61. Nothing happens at that time, so the
+# time is when to request again; a watcher waiting for the state to change read
+# "Review rate limited" for 90 minutes on netresearch/terraform-provider-ad#66.
+# The duration counts from the summary's last edit.
+echo "case 2b: rate limited, the notice names the next included review"
+SUMMARY_EDITED_AT="2026-01-02T14:03:00Z" build_payload "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->
+> [!WARNING]
+> ## Review limit reached
+> You've used all free OSS reviews for now. Wait for the free limit to reset to keep reviewing this public repository.
+> **Next included review available in 48 minutes.**
+> Reviewing files that changed from the base of the PR and between $PREV and $HEAD.
+<!-- end of auto-generated comment: rate limited by coderabbit.ai -->"
+out="$(run_json)"
+check "coderabbit_on_head" "rate-limited" "$(jq -r .coderabbit_on_head <<<"$out")"
+check "retry time is the edit plus 48 minutes" "2026-01-02T14:51:00Z" "$(jq -r .coderabbit_retry_at <<<"$out")"
+if grep -q 'coderabbit=rate-limited (request again after 2026-01-02T14:51:00Z)' <<<"$(run_text)"; then
+    echo "  ok   the reviews line names the retry time"
+else
+    echo "  FAIL the reviews line does not name the retry time"; fail=1
+fi
+if grep -qF "send \`@coderabbitai review\` once after 2026-01-02T14:51:00Z" <<<"$(jq -r .next.why <<<"$out")"; then
+    echo "  ok   next.why says when to request again"
+else
+    echo "  FAIL next.why does not say when to request again"; fail=1
+fi
+
+echo "case 2c: the reset is given in hours and minutes"
+build_payload "<!-- rate limited by coderabbit.ai -->
+> **Next included review available in 1 hour and 5 minutes.**
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD."
+out="$(run_json)"
+check "retry time is the comment plus 65 minutes" "2026-01-02T01:05:00Z" "$(jq -r .coderabbit_retry_at <<<"$out")"
+
+# --- case 2e: a timestamp jq cannot parse -----------------------------------
+# GitHub answers in UTC with a Z; an offset must give no time, not end the run.
+echo "case 2e: the edit time carries an offset"
+SUMMARY_EDITED_AT="2026-01-02T14:03:00+01:00" build_payload "<!-- rate limited by coderabbit.ai -->
+> **Next included review available in 48 minutes.**
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD."
+out="$(run_json)"
+check "coderabbit_on_head" "rate-limited" "$(jq -r .coderabbit_on_head <<<"$out")"
+check "an unparsable time gives no retry time" "null" "$(jq -r .coderabbit_retry_at <<<"$out")"
+
+# --- case 2d: the reset line belongs to the block of another head ------------
+# The newest block refuses THIS head without naming a reset; the line below the
+# head belongs to the older block and must not answer for it.
+echo "case 2d: only an older block names a reset"
+build_payload "<!-- rate limited by coderabbit.ai -->
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD.
+<!-- rate limited by coderabbit.ai -->
+> **Next included review available in 5 minutes.**
+Reviewing files that changed from the base of the PR and between $OLDER and $PREV."
+out="$(run_json)"
+check "coderabbit_on_head" "rate-limited" "$(jq -r .coderabbit_on_head <<<"$out")"
+check "an older block's reset is not this head's" "null" "$(jq -r .coderabbit_retry_at <<<"$out")"
 
 # --- case 3: the comment covers an OLDER head only ---------------------------
 # The block naming $PREV must not be read as a verdict for $HEAD — this is the
