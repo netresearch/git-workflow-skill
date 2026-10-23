@@ -384,7 +384,8 @@
             | add) as $cr_wait
          | (($cr_head_comment.lastEditedAt // $cr_head_comment.createdAt // "") | sub("\\.[0-9]+Z$"; "Z")) as $cr_said_at
          | if $cr_wait == null or $cr_said_at == "" then null
-           else (($cr_said_at | fromdateiso8601) + $cr_wait | todateiso8601) end
+           # A timestamp in another shape answers null rather than ending the run.
+           else (try (($cr_said_at | fromdateiso8601) + $cr_wait | todateiso8601) catch null) end
        else null end) as $cr_retry_at
     # SonarCloud reports in one comment headed "Quality Gate passed" or
     # "Quality Gate failed", and a PASSED gate can still list new issues: the

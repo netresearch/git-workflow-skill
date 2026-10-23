@@ -175,6 +175,16 @@ Reviewing files that changed from the base of the PR and between $PREV and $HEAD
 out="$(run_json)"
 check "retry time is the comment plus 65 minutes" "2026-01-02T01:05:00Z" "$(jq -r .coderabbit_retry_at <<<"$out")"
 
+# --- case 2e: a timestamp jq cannot parse -----------------------------------
+# GitHub answers in UTC with a Z; an offset must give no time, not end the run.
+echo "case 2e: the edit time carries an offset"
+SUMMARY_EDITED_AT="2026-01-02T14:03:00+01:00" build_payload "<!-- rate limited by coderabbit.ai -->
+> **Next included review available in 48 minutes.**
+Reviewing files that changed from the base of the PR and between $PREV and $HEAD."
+out="$(run_json)"
+check "coderabbit_on_head" "rate-limited" "$(jq -r .coderabbit_on_head <<<"$out")"
+check "an unparsable time gives no retry time" "null" "$(jq -r .coderabbit_retry_at <<<"$out")"
+
 # --- case 2d: the reset line belongs to the block of another head ------------
 # The newest block refuses THIS head without naming a reset; the line below the
 # head belongs to the older block and must not answer for it.
