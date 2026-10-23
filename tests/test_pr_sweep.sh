@@ -87,7 +87,8 @@ if [ -f "$D/merge.rc" ]; then
   [ "\$i" -le "\$total" ] || i=\$total
   rc=\$(head -n "\$i" "$D/merge.rc" | tail -n 1)
 fi
-echo "pr-merge stub: rc \$rc"
+echo "pr-merge: stub rc \$rc"
+echo "  wait with: pr-status.sh --watch"
 exit "\$rc"
 STUB
 
@@ -231,6 +232,8 @@ check "exit 3" "3" "$RC"
 check "two merge attempts" "2" "$(calls "$D/merge.log")"
 says "rc 1 logged" "pr-merge.sh rc=1" "$OUT"
 says "rc 2 in attention" "o/r 13 pr-merge.sh rc=2" "$(cat "$D/attn")"
+says "rc 2 attention keeps the result line" "pr-merge: stub rc 2 wait with" "$(cat "$D/attn")"
+says "rc 1 log keeps the result line" "pr-merge.sh rc=1 (gate shut, reading again next pass): pr-merge: stub rc 1" "$OUT"
 
 echo "case 14: NEXT merge again after an enqueue that returned 0 stops"
 setup

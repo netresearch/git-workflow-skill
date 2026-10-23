@@ -182,6 +182,11 @@ probe_failed() { # probe_failed <pr> <reason>
   fi
 }
 
+# pr-merge.sh prints several lines: the result first, then a hint or a
+# command, and some results span two lines. The last line alone is that hint,
+# so the whole output goes into the log and the attention file, as one line.
+one_line() { tr -s '\n\t ' '   ' <<<"$1" | sed 's/^ //; s/ $//'; }
+
 sweep_one() { # sweep_one <owner/repo#N>
   local pr="$1" repo num out rc state action why mout
   repo="${pr%#*}"; num="${pr##*#}"
@@ -223,10 +228,10 @@ sweep_one() { # sweep_one <owner/repo#N>
       case "$rc" in
         0) ENQUEUED[$pr]=1
            LAST[$pr]=""
-           note "$pr" "merge-rc0" "pr-merge.sh rc=0: $(tail -n 1 <<<"$mout")" ;;
+           note "$pr" "merge-rc0" "pr-merge.sh rc=0: $(one_line "$mout")" ;;
         1) LAST[$pr]=""
-           note "$pr" "merge-rc1" "pr-merge.sh rc=1 (gate shut, reading again next pass): $(tail -n 1 <<<"$mout")" ;;
-        *) attention "$pr" "pr-merge.sh rc=$rc: $(tail -n 1 <<<"$mout")" ;;
+           note "$pr" "merge-rc1" "pr-merge.sh rc=1 (gate shut, reading again next pass): $(one_line "$mout")" ;;
+        *) attention "$pr" "pr-merge.sh rc=$rc: $(one_line "$mout")" ;;
       esac ;;
     *)
       FAILS[$pr]=0
