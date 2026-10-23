@@ -296,6 +296,17 @@ still yours to run. Nothing gates on the field: a comment is not a review, so
 `has_review_on_head` and the merge gate are unchanged, and the value exists so a
 self-review note can say what the bots did rather than claiming they said nothing.
 
+**A passed SonarCloud Quality Gate can still carry new issues.** The default gate
+fails on ratings, coverage and duplication, not on the issue count, so a code
+smell lands on the base branch with every check green: on
+`netresearch/data-tools-skill#97` the comment read "Quality Gate passed" and
+"1 New issue", and after the merge the `python:S3776` finding stood open on
+`main`. `pr-status.sh` reports the count from the newest SonarCloud comment as
+`sonar_new_issues`, and prints a `sonar` line when it is above zero. Nothing
+gates on it, and the comment names no commit, so it is the latest analysis
+rather than provably the head. Before merging, read the issues it links and fix
+them in the PR or decide to accept them; do not leave them for `main`.
+
 When *both* reviewers are walled — Copilot out of monthly quota, CodeRabbit rate
 limited — no bot review is obtainable and the documented path is to read the diff
 yourself and merge on the attestation (`pr-merge.sh --self-reviewed`), noting in
