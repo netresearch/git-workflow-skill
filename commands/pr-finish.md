@@ -94,6 +94,13 @@ description, merge only when the gate is open, clean up); only the commands chan
    reviewer commits you to waiting for it — never request one and then merge before it
    responds. You don't force a review to materialize where none is required (reviews may
    legitimately never run), but any review that *is* announced must finish.
+   **`/pr-finish` is the owner's merge instruction.** When the only blocker is a required
+   review that you cannot give as a second reader — a bot PR you fixed on its branch, a
+   takeover — `pr-status.sh` names "an explicit instruction by whoever owns that
+   decision" as the way out, and this command is that instruction. Post your review as a
+   PR comment, approve with `gh pr review --approve` and a body that names the
+   instruction and links the comment, then merge with `pr-merge.sh`. Do not stop to ask
+   the user for a manual approve; `--admin` and every other bypass stay banned.
    Dependabot/Renovate PRs auto-merge via the deps workflow — never merge those by hand.
    **Merge-queue repos: arm `gh pr merge --auto` only after this gate passes** (threads
    resolved + checks green + no pending review request) — the queue ignores review
