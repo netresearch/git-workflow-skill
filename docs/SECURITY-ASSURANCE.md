@@ -51,14 +51,14 @@ The repository ships no server component and no container image. It stores no us
 | A released archive is tampered with | The release workflow publishes a Cosign-signed `SHA256SUMS.txt` and SLSA build-provenance attestations for the archives | `.github/workflows/release.yml` (calls the skill-repo-skill release reusable) |
 | A secret is committed | Betterleaks scans every push to `main` and every pull request to `main` | `.github/workflows/security.yml` |
 | A vulnerable or malicious dependency is added | Dependency review fails on vulnerabilities of severity high or above in a pull request; Composer Audit checks the Composer dependencies; Renovate proposes updates | `.github/workflows/security.yml`, `renovate.json` |
-| Insecure code or workflow patterns | CodeQL analyses the Python code and the workflows with the `security-extended` queries; Opengrep scans the code (failure threshold: [organisation SAST rule](https://github.com/netresearch/.github/blob/main/SECURITY.md#static-analysis-sast)); zizmor analyses the workflows; ShellCheck runs on every `*.sh` file and ruff on every Python file in Skill Validation | `.github/workflows/codeql.yml`, `.github/workflows/security.yml`, `.github/workflows/lint.yml` |
+| Insecure code or workflow patterns | CodeQL analyses the Python code and the workflows with the `security-and-quality` queries (`codeql` job of `security.yml`); Opengrep scans the code (failure threshold: [organisation SAST rule](https://github.com/netresearch/.github/blob/main/SECURITY.md#static-analysis-sast)); zizmor analyses the workflows; ShellCheck runs on every `*.sh` file and ruff on every Python file in Skill Validation | `.github/workflows/security.yml`, `.github/workflows/lint.yml` |
 | A regression in a hook or script goes unnoticed | The shell and Python suites under `tests/` run in Skill Tests, the hook unit tests under `scripts/` in Hook Script Tests, on every pull request | `.github/workflows/tests.yml`, `.github/workflows/hook-tests.yml` |
 
 Which of these checks must pass before a pull request can merge is set in the branch protection of `main`, not in this repository.
 
 ## Secure design principles applied
 
-- **Least privilege:** the scripts use the user's existing `gh` login and never ask for more; workflows start from `permissions: {}` and check out code with `persist-credentials: false` (`codeql.yml`, `hook-tests.yml`).
+- **Least privilege:** the scripts use the user's existing `gh` login and never ask for more; workflows start from `permissions: {}` and check out code with `persist-credentials: false` (`hook-tests.yml`).
 - **Mediation before execution:** each Bash command the agent proposes is handed to `validate_git_command.py` before it runs (`hooks/hooks.json`).
 - **Fail-safe for the user's work:** the opt-in gates allow the command when they cannot decide (`reference-worktree-gate.py` and `conflict-marker-gate.py` state this in their headers), so a broken gate does not block work; a gate that refuses on its own failure would push users to disable it.
 - **Economy of mechanism:** the scripts need bash, git, `gh`, `jq` and Python's standard library; `spec-cleanup-guard.sh` also needs `yq` when a `.spec-cleanup.yml` exists, and refuses to run without it rather than check less.
