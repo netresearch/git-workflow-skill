@@ -302,8 +302,9 @@ two commits later.
 `pr-status.sh` runs the **range-shaped** half of this for you and reports it as
 `coderabbit_on_head` (`clean` · `findings` · `in-progress` · `rate-limited` ·
 `unknown` · `none`),
-also on the prose `reviews` line as `coderabbit=…`; for `rate-limited` it adds
-`coderabbit_retry_at`, the reset the block names. It does not resolve the
+also on the prose `reviews` line as `coderabbit=…`. For `rate-limited` with a
+reset in the block, the JSON adds `coderabbit_retry_at` and the prose line adds
+`(request again after <time>)`. It does not resolve the
 short-sha shape — that needs a checkout — so it answers `unknown` when a
 `up to \`…\`` marker is the only thing naming a head, and the resolution above is
 still yours to run. Nothing gates on the field: a comment is not a review, so
