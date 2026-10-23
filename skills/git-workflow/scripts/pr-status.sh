@@ -87,6 +87,7 @@
 #   unanswered_comments unanswered_human unanswered_by unanswered_urls
 #   body_freshness
 #   reviewDecision reviews_on_head has_review_on_head coderabbit_on_head
+#   sonar_new_issues
 #   has_copilot_review_on_head copilot_latest_on_head_ok copilot_review_errored
 #   copilot_error_count copilot_quota_hit copilot_quota_exhausted
 #   self_review_on_head self_review_url
@@ -494,6 +495,9 @@ render() {
        "  classic     : approvals>=\(.classic_protection.approvals_required)\(if .classic_protection.last_push_approval then ", last-push-approval" else "" end)\(if .classic_protection.code_owner_reviews then ", code-owner-reviews" else "" end) (classic branch protection — invisible to the rulesets endpoint)"
      else empty end),
     "  reviews     : \(if .has_review_on_head then (.reviews_on_head|to_entries|map("\(.key)=\(.value)")|join(", ")) else "NONE on current head" end)\(if .coderabbit_on_head == "none" then "" else "  coderabbit=\(.coderabbit_on_head)" end)  decision=\(if .reviewDecision=="" then "-" else .reviewDecision end)",
+    (if (.sonar_new_issues // 0) > 0 then
+       "  sonar       : \(.sonar_new_issues) new issue(s) in the latest Quality Gate comment — not gating; read them before merging, a passed gate still lets them through"
+     else empty end),
     "  threads     : \(.unresolved_threads) unresolved",
     (if .unanswered_comments > 0 then
        "  comments    : \(.unanswered_comments) unanswered (\(.unanswered_by|join(", ")))\(if .unanswered_human == 0 then " — bots only, not gating" else "" end)"
