@@ -7,7 +7,9 @@ Canonical polling loop to drive a PR to merge once review threads are handled. H
 
 ## Driving many PRs at once
 
-One `pr-status.sh --watch` per PR, all in parallel in one background command — each instance returns at *its* first actionable event, so a slow PR never delays acting on a fast one:
+`scripts/pr-sweep.sh LISTFILE` (one `owner/repo N` per line) is the shipped driver. Each pass reads every open PR with `pr-status.sh --json`, runs `pr-merge.sh` on `merge`, keeps waiting on `wait`, `await-review`, `await-checks` and `await-capacity`, and on every other `.next.action` — `request-review`, `rebase`, a closed PR, a value added in a later version — writes the PR and its full NEXT to the attention file, finishes the pass and exits 3. A gate read that fails on two consecutive passes, or `rules-unavailable` twice, stops it the same way. It logs one line per state change, exits 0 with `ALL MERGED`, and 4 on its overall timeout with each open PR's last state. It never passes `--self-reviewed`. It exists because hand-written sweeps sent unknown actions to "wait": two of them sat four hours on `NEXT: request-review` without a line of output.
+
+Without it: one `pr-status.sh --watch` per PR, all in parallel in one background command — each instance returns at *its* first actionable event, so a slow PR never delays acting on a fast one:
 
 ```bash
 d=$(mktemp -d)   # fresh dir: no interleaved writes, no stale files from a prior run
@@ -18,7 +20,7 @@ done
 wait; cat "$d"/*
 ```
 
-Then act per line: `NEXT: merge` → `pr-merge.sh` in a **new** invocation (merge-gate hooks evaluate at call time — never chain the wait and the merge in one command); `resolve-threads` / `address-review` → handle that PR individually while the rest keep going. Do not write a bespoke driver that re-reads PR state in a loop and dispatches on it — that re-implements `pr-status.sh` badly, waits for the one outcome it was told about, and sleeps through the rest (verified 2026-08-03: a 7-repo release sweep completed on this pattern with zero hand-rolled polling). The failure is silent, which is why it costs time: on 2026-10-07 a bespoke driver over 27 PRs acted only on `merge` and on red checks, and netresearch/t3x-nr-passkeys-fe#92 sat at `NEXT: rebase — branch is behind main` for about 35 minutes after its last check turned green (18:39 to 19:14 UTC) without a single log line, until the PR was read by hand. The parallel `--watch` loop above returns on that action like on any other.
+Then act per line: `NEXT: merge` → `pr-merge.sh` in a **new** invocation (merge-gate hooks evaluate at call time — never chain the wait and the merge in one command); `resolve-threads` / `address-comments` → handle that PR individually while the rest keep going. Do not write a bespoke driver that re-reads PR state in a loop and dispatches on it — use `pr-sweep.sh` above; a hand-written one re-implements `pr-status.sh` badly, waits for the one outcome it was told about, and sleeps through the rest (verified 2026-08-03: a 7-repo release sweep completed on this pattern with zero hand-rolled polling). The failure is silent, which is why it costs time: on 2026-10-07 a bespoke driver over 27 PRs acted only on `merge` and on red checks, and netresearch/t3x-nr-passkeys-fe#92 sat at `NEXT: rebase — branch is behind main` for about 35 minutes after its last check turned green (18:39 to 19:14 UTC) without a single log line, until the PR was read by hand. The parallel `--watch` loop above returns on that action like on any other.
 
 ## Check taxonomy
 
@@ -302,9 +304,13 @@ The human line is for a human; `--json` is the machine contract, and
 `.next.action` is one token from a fixed vocabulary. Do not copy that vocabulary
 into your loop — it grows with the script (18 values at 1.32.4, from `merge` and
 `ready` through `await-capacity` and `rules-unavailable`). Match the handful you
-act on by exact string, and treat every other value as "keep waiting": an
-unrecognised action then delays you, where a substring match on prose reports
-success.
+act on by exact string, name the waiting values you hold through
+(`wait`, `await-review`, `await-checks`, `await-capacity`), retry
+`rules-unavailable` once since it reports a failed read rather than a state, and
+STOP on every other value. "Keep waiting" as the
+default is the four-hour silence `pr-sweep.sh` was written against:
+`request-review` is not a value a loop over `merge` was told about, and nothing
+else ever moves it. `pr-sweep.sh` is that rule as a script.
 
 ### A watcher is armed on a head; stop it when the head moves
 

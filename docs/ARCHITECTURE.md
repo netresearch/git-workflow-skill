@@ -25,10 +25,11 @@ The skill uses a layered content architecture:
    | Preflight | `signing-preflight.sh` | Proves whether `git commit -S` writes a signature, with a probe commit on a throwaway branch and a temporary index |
    | Pull requests (GitHub) | `pr-status.sh` | Merge readiness of a pull request and the next valid action, printed as a command it does not run; `--watch` returns on the next actionable event |
    | Pull requests (GitHub) | `pr-merge.sh` | Merges a pull request with a method the repository allows, only when the gate is open, and reads the pull request back to confirm |
+   | Pull requests (GitHub) | `pr-sweep.sh` | Drives a list of pull requests to merge: reads each with `pr-status.sh --json`, calls `pr-merge.sh` on `merge`, waits on the waiting actions, and stops with an attention file on every other action |
    | Hook gates | `merge-gate.sh` | PreToolUse hook: denies `gh pr merge` while review threads are unresolved or the merge state is not `CLEAN` |
    | Hook gates | `conflict-marker-gate.py` | PreToolUse hook: denies `git commit` while staged content carries merge-conflict markers |
 
-   `pr-merge.sh` is the only script that changes remote state. The hook gates are wired by the user (see `references/claude-code-hooks.md`); the plugin's own `hooks/hooks.json` runs `scripts/validate_git_command.py` from the repository root instead.
+   `pr-merge.sh` is the only script that changes remote state; `pr-sweep.sh` changes it only by calling `pr-merge.sh`. The hook gates are wired by the user (see `references/claude-code-hooks.md`); the plugin's own `hooks/hooks.json` runs `scripts/validate_git_command.py` from the repository root instead.
 
 ## Content Flow
 
