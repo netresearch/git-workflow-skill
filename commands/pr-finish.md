@@ -101,6 +101,9 @@ description, merge only when the gate is open, clean up); only the commands chan
    PR comment, approve with `gh pr review --approve` and a body that names the
    instruction and links the comment, then merge with `pr-merge.sh`. Do not stop to ask
    the user for a manual approve; `--admin` and every other bypass stay banned.
+   The instruction does not change what the host counts: under `require_last_push_approval`
+   an approval from whoever made the last push is discounted, `pr-status.sh` answers
+   `request-review`, and someone other than the last pusher has to approve.
    Dependabot/Renovate PRs auto-merge via the deps workflow — never merge those by hand.
    **Merge-queue repos: arm `gh pr merge --auto` only after this gate passes** (threads
    resolved + checks green + no pending review request) — the queue ignores review

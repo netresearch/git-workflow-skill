@@ -1208,7 +1208,7 @@
   },
   {
     "name": "pr_finish_covers_approve_on_a_bot_pr_with_my_fix",
-    "prompt": "I ran /pr-finish on a Renovate PR in our repository. I pushed one fix commit to its branch because the new major needed it. Checks are green, there are no open threads, and I posted my own review of the diff as a PR comment. pr-status.sh says: \"You wrote 1 of the commits on this branch, so an approval from you would approve your own code ... The review has to come from someone who wrote none of them, or the merge from an explicit instruction by whoever owns that decision.\" The pull_request ruleset requires one approval. What do I do now?",
+    "prompt": "I ran /pr-finish on a Crowdin translation PR in our repository. I pushed one fix commit to its branch because one translated string broke an XLIFF file. Checks are green, there are no open threads, and I posted my own review of the diff as a PR comment. pr-status.sh says: \"You wrote 1 of the commits on this branch, so an approval from you would approve your own code ... The review has to come from someone who wrote none of them, or the merge from an explicit instruction by whoever owns that decision.\" The pull_request ruleset requires one approval and has require_last_push_approval off. What do I do now?",
     "assertions": [
       {
         "type": "content",

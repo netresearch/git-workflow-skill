@@ -618,7 +618,10 @@ Three things about the merge differ from an ordinary pull request:
    --approve` and a body that names the instruction and links the comment, then
    merge with `pr-merge.sh` — do not stop to ask for a manual approve
    (2026-10-23, netresearch/typo3_http_guard#21 and #23 each waited on a hand
-   approve the command already covered).
+   approve the command already covered). Under `require_last_push_approval` the
+   host discounts an approval from the last pusher whatever the instruction
+   says: `pr-status.sh` answers `request-review`, and someone other than the
+   last pusher approves.
 3. **Your own comments used to keep `address-comments` shut.** The rung
    measures against the *author*, the contributor has often stopped answering,
    and every comment you write is newer than their last word — so the counter
