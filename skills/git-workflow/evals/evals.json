@@ -1205,5 +1205,31 @@
         "S1172 is only a SonarCloud warning and CodeRabbit is right about callers: restore the parameter and push."
       ]
     }
+  },
+  {
+    "name": "pr_finish_covers_approve_on_a_bot_pr_with_my_fix",
+    "prompt": "I ran /pr-finish on a Crowdin translation PR in our repository. I pushed one fix commit to its branch because one translated string broke an XLIFF file. Checks are green, there are no open threads, and I posted my own review of the diff as a PR comment. pr-status.sh says: \"You wrote 1 of the commits on this branch, so an approval from you would approve your own code ... The review has to come from someone who wrote none of them, or the merge from an explicit instruction by whoever owns that decision.\" The pull_request ruleset requires one approval and has require_last_push_approval off. What do I do now?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "/pr-finish[^.]{0,120}(is|counts as|serves as|gives)[^.]{0,40}(instruction|authori[sz]ation|mandate)"
+      },
+      {
+        "type": "content",
+        "pattern": "gh pr review[^.]{0,40}--approve"
+      },
+      {
+        "type": "content",
+        "pattern": "pr-merge\\.sh"
+      }
+    ],
+    "samples": {
+      "passing": "The /pr-finish run is the explicit instruction that pr-status.sh asks for. Approve with gh pr review --approve and a body that names the instruction and links your review comment, then merge with pr-merge.sh. No --admin.",
+      "failing": [
+        "You wrote one of the commits, so you cannot approve it. Ask the user to approve the PR by hand, then run pr-merge.sh.",
+        "Merge it with gh pr merge --admin; the review rule cannot be satisfied by an agent.",
+        "Wait until Copilot's review quota resets and let Copilot approve it."
+      ]
+    }
   }
 ]
