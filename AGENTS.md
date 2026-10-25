@@ -109,7 +109,7 @@ No build system scripts defined in composer.json. Basic operations:
 
 - `bash skills/git-workflow/scripts/verify-git-workflow.sh` -- verify git workflow setup
 - `bash scripts/verify-harness.sh --status` -- check harness maturity level
-- `python3 scripts/validate_git_command.py` -- validate git commands
+- `uv run scripts/validate_git_command.py` -- validate git commands
 
 ## Rules
 

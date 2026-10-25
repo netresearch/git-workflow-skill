@@ -171,7 +171,7 @@ chmod +x ~/.claude/hooks/conflict-marker-gate.py
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "python3 $HOME/.claude/hooks/conflict-marker-gate.py" }
+          { "type": "command", "command": "uv run $HOME/.claude/hooks/conflict-marker-gate.py || true" }
         ]
       }
     ]
@@ -204,7 +204,7 @@ chmod +x ~/.claude/hooks/reference-worktree-gate.py
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "python3 $HOME/.claude/hooks/reference-worktree-gate.py" }
+          { "type": "command", "command": "uv run $HOME/.claude/hooks/reference-worktree-gate.py || true" }
         ]
       }
     ]
@@ -233,7 +233,7 @@ directory test is three lines (`basename in {main,master}`, parent under a known
 root, `.bare` sibling exists) and reusing one hook keeps the denial messages in
 one place.
 
-Verify both directions before relying on it: `python3 scripts/test_reference_worktree_gate.py`
+Verify both directions before relying on it: `uv run --python 3.11 python scripts/test_reference_worktree_gate.py`
 builds a throwaway layout and checks that a commit in `main/` denies while
 `git -C <branch> commit` and a commit in a branch worktree pass.
 
