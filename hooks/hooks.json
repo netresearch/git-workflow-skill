@@ -7,8 +7,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/validate_git_command.py",
-            "timeout": 2
+            "command": "uv run ${CLAUDE_PLUGIN_ROOT}/scripts/validate_git_command.py",
+            "timeout": 30,
+            "onFailure": "block"
           }
         ]
       }
