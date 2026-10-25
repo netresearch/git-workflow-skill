@@ -4,7 +4,7 @@
 name: git-workflow
 description: "Use when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, verifying a merge didn't silently drop changes, syncing a long-diverged branch (e.g. master into integration), rebasing a long-lived branch onto a moved base or splitting one into several PRs, integrating Git with CI/CD, setting up git hooks (lefthook, captainhook, husky, pre-commit), debugging hook-install failures in git worktrees, or working in a bare-repo plus per-branch-worktree layout, including consolidating a directory that holds both a plain clone and a .bare. The pull-request tooling is GitHub-only; references/pull-request-workflow.md carries the GitLab equivalents. Not for creating releases (use github-release) or diagnosing BLOCKED/won't-merge PRs (use github-project)."
 license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
-compatibility: "Requires uv (runs the scripts on Python 3.11 or later), git, gh CLI; yq for .spec-cleanup.yml."
+compatibility: "Requires uv (runs the scripts on Python 3.11 or later), git, gh CLI; yq for .spec-cleanup.yml. The plugin hook fails closed from Claude Code v2.1.295 (onFailure)."
 metadata:
   author: Netresearch DTT GmbH
   version: "1.38.0"
