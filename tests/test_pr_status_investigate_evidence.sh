@@ -29,6 +29,7 @@ export XDG_CACHE_HOME="$STUB_DIR/cache"
 
 fail=0
 HEAD="cddd6f7cf8cedba97886c14dfb65387c53efd2ba"
+readonly CANDIDATES_SELECTOR='.next.evidence.candidates[]'
 
 # Each REST read the investigate path makes has its own fixture; a fixture
 # holding the word FAIL makes that call exit non-zero, as a 403 would.
@@ -226,10 +227,10 @@ check "pull_request rule: approvals counted on head vs required" "1/1:true" \
 check "two candidates" "2" "$(jq -r '.next.evidence.candidates | length' <<<"$out")"
 check_grep "unattributed-changes rule stated as not evaluable" \
       "require_extra_approval_for_unattributed_changes — rule set, not evaluable by this script" \
-      "$(jq -r '.next.evidence.candidates[]' <<<"$out")"
+      "$(jq -r "$CANDIDATES_SELECTOR" <<<"$out")"
 check_grep "hidden Copilot suite is a candidate, not a cause" \
       "copilot-pull-request-reviewer — whether it gates the merge is not determined" \
-      "$(jq -r '.next.evidence.candidates[]' <<<"$out")"
+      "$(jq -r "$CANDIDATES_SELECTOR" <<<"$out")"
 check "no candidate on a passing required context" "0" \
       "$(jq -r '[.next.evidence.candidates[] | select(test("Composer Audit"))] | length' <<<"$out")"
 text="$(run_text)"
@@ -258,7 +259,7 @@ check "behind_by read from the compare API" "3" \
       "$(jq -r '.next.evidence.status_check_rules[] | select(.strict) | .behind_by' <<<"$out")"
 check_grep "behind is listed as a candidate" \
       "ruleset 20441891 requires the branch to be up to date (strict) and the head is 3 commit(s) behind main" \
-      "$(jq -r '.next.evidence.candidates[]' <<<"$out")"
+      "$(jq -r "$CANDIDATES_SELECTOR" <<<"$out")"
 check_grep "compare is asked by head sha, not branch name" "compare/main...$HEAD" "$(cat "$STUB_DIR/calls")"
 
 # --- case 4: a required context reported by the wrong app --------------------
@@ -269,7 +270,7 @@ check "flagged as integration-mismatch" "integration-mismatch" \
       "$(jq -r '.next.evidence.required_contexts[] | select(.context == "security / Composer Audit") | .flag' <<<"$out")"
 check_grep "mismatch is a candidate naming both apps" \
       "required context security / Composer Audit (ruleset 14253254): integration-mismatch, state reported only by another app, required app 15368, reported by 99999" \
-      "$(jq -r '.next.evidence.candidates[]' <<<"$out")"
+      "$(jq -r "$CANDIDATES_SELECTOR" <<<"$out")"
 
 # --- case 5: a read that fails is not an empty result ------------------------
 echo "case 5: the check-runs read fails"
@@ -280,7 +281,7 @@ check "fetched.check_runs" "false" "$(jq -r .next.evidence.fetched.check_runs <<
 check "contexts marked unknown, not ok" "unknown" \
       "$(jq -r '[.next.evidence.required_contexts[].flag] | unique | join(",")' <<<"$out")"
 check_grep "the failed read is a candidate" "the check-runs of the head could not be read" \
-      "$(jq -r '.next.evidence.candidates[]' <<<"$out")"
+      "$(jq -r "$CANDIDATES_SELECTOR" <<<"$out")"
 
 # --- case 6: the common path pays nothing extra ------------------------------
 echo "case 6: a CLEAN pull request makes none of the extra reads"
@@ -321,7 +322,7 @@ check "classic context listed with its app and source" "15368|success|null" \
 check "classic strict rule carries behind_by" "classic protection:true:3" \
       "$(jq -r '.next.evidence.status_check_rules[] | select(.source == "classic protection") | "\(.source):\(.strict):\(.behind_by)"' <<<"$out")"
 check_grep "compare is read for a classic strict rule alone" "compare/main...$HEAD" "$(cat "$STUB_DIR/calls")"
-cands="$(jq -r '.next.evidence.candidates[]' <<<"$out")"
+cands="$(jq -r "$CANDIDATES_SELECTOR" <<<"$out")"
 check_grep "classic approvals are a candidate" \
       "classic branch protection requires 2 approving review(s); 1 on the head as counted by this script" "$cands"
 check_grep "classic code-owner reviews stated as not evaluable" \
@@ -357,7 +358,7 @@ check "classic protection not fetched" "failed" "$(jq -r .next.evidence.classic_
 check_grep "the error is kept" "Not Found (HTTP 404)" \
       "$(jq -r .next.evidence.classic_protection.error <<<"$out")"
 check_grep "the failed read is a candidate" "classic branch protection of main could not be read" \
-      "$(jq -r '.next.evidence.candidates[]' <<<"$out")"
+      "$(jq -r "$CANDIDATES_SELECTOR" <<<"$out")"
 check_grep "text says not fetched" "classic prot: not fetched" "$(run_text)"
 build BLOCKED no false 0 15368
 out="$(run_json)"
@@ -374,7 +375,7 @@ check "the failed suite is still listed" "3:failure:null" \
       "$(jq -r '.next.evidence.failed_suites_outside_rollup[] | "\(.suite_id):\(.conclusion):\(.outside_rollup)"' <<<"$out")"
 check_grep "and is a candidate, rollup comparison not possible" \
       "check suite 3 (github-actions) concluded failure; its check-runs could not be read, so whether they are in the GraphQL rollup is not determined" \
-      "$(jq -r '.next.evidence.candidates[]' <<<"$out")"
+      "$(jq -r "$CANDIDATES_SELECTOR" <<<"$out")"
 text="$(run_text)"
 check "text does not call the suites unreadable" "0" "$(grep -c 'check suites could not be read' <<<"$text" || true)"
 check "unknown contexts are not printed as FLAG" "0" "$(grep -c 'FLAG' <<<"$text" || true)"
@@ -387,7 +388,7 @@ out="$(run_json)"
 check "fetched.check_suites" "false" "$(jq -r .next.evidence.fetched.check_suites <<<"$out")"
 check "suites null, not empty" "null" "$(jq -r .next.evidence.failed_suites_outside_rollup <<<"$out")"
 check_grep "the failed read is a candidate" "the check suites of the head could not be read" \
-      "$(jq -r '.next.evidence.candidates[]' <<<"$out")"
+      "$(jq -r "$CANDIDATES_SELECTOR" <<<"$out")"
 check_grep "text says not fetched" "suites      : check suites could not be read" "$(run_text)"
 
 echo "case 12: compare fails while a strict rule exists"
@@ -399,7 +400,7 @@ check "behind_by null" "null" \
       "$(jq -r '.next.evidence.status_check_rules[] | select(.strict) | .behind_by' <<<"$out")"
 check_grep "the failed read is a candidate" \
       "ruleset 20441891 requires the branch to be up to date (strict) and whether the head is behind main could not be read" \
-      "$(jq -r '.next.evidence.candidates[]' <<<"$out")"
+      "$(jq -r "$CANDIDATES_SELECTOR" <<<"$out")"
 check_grep "text shows it unreadable" "ruleset 20441891 strict=true behind_by=unreadable" "$(run_text)"
 
 # --- case 13: code-owner review rule ------------------------------------------
@@ -408,7 +409,7 @@ CODE_OWNER=true build BLOCKED no false 0 15368
 out="$(run_json)"
 check_grep "stated as not evaluable" \
       "ruleset 20547668 sets require_code_owner_review — rule set, not evaluable by this script" \
-      "$(jq -r '.next.evidence.candidates[]' <<<"$out")"
+      "$(jq -r "$CANDIDATES_SELECTOR" <<<"$out")"
 
 # --- case 14: the evidence block cannot be built -----------------------------
 # A jq that fails only for the evidence program: the verdict must stand and the

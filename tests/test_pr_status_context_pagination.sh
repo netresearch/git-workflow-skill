@@ -17,9 +17,10 @@ fail=0
 checks=0
 
 check() {
+    local label="$1" expected="$2" actual="$3"
     checks=$((checks + 1))
-    if [[ "$2" == "$3" ]]; then echo "  ok   $1"; else
-        echo "  FAIL $1: expected '$2', got '$3'"; fail=1
+    if [[ "$expected" == "$actual" ]]; then echo "  ok   $label"; else
+        echo "  FAIL $label: expected '$expected', got '$actual'"; fail=1
     fi
 }
 
@@ -182,7 +183,9 @@ build api-error
 rc=0
 out=$(PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 1 --watch --interval 1 --max-wait 1 2>"$STUB_DIR/err") || rc=$?
 check 'watch does not settle an unreadable continuation' 1 "$rc"
-check 'watch exposes the unreadable continuation' true "$(case "$out" in *UNREADABLE*|*unreadable*) echo true;; *) echo false;; esac)"
+unreadable=false
+case "$out" in *UNREADABLE*|*unreadable*) unreadable=true;; esac
+check 'watch exposes the unreadable continuation' true "$unreadable"
 
 printf '%s checks; failure=%s\n' "$checks" "$fail"
 exit "$fail"

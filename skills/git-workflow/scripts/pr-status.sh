@@ -389,9 +389,9 @@ collect_raw() {
 # names the same object as the initial snapshot, including for a fork head.
 collect_context_page() {
   local head="$1" cursor="${2:-}" args=()
-  [ -z "$cursor" ] || args=(-f cursor="$cursor")
+  [[ -z "$cursor" ]] || args=(-f cursor="$cursor")
   # shellcheck disable=SC2016  # These are GraphQL variables.
-  gh api graphql -f owner="$OWNER" -f name="$NAME" -f head="$head" "${args[@]}" -f query='
+  gh api graphql -f owner="$OWNER" -f name="$NAME" -f head="$head" ${args[@]+"${args[@]}"} -f query='
   query StatusContextsPage($owner:String!,$name:String!,$head:GitObjectID!,$cursor:String){
     repository(owner:$owner,name:$name){object(oid:$head){... on Commit{oid
       statusCheckRollup{contexts(first:100,after:$cursor){totalCount pageInfo{hasNextPage endCursor} nodes{
@@ -419,7 +419,7 @@ complete_contexts() {
   jq -e '(.errors // []) | type == "array" and length == 0' <<<"$g" >/dev/null || return 1
   conn=$(jq -c '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts // null' <<<"$g") || return 1
   # A commit with no checks legitimately has no rollup.
-  if [ "$conn" = null ]; then printf '%s\n' "$g"; return 0; fi
+  if [[ "$conn" == null ]]; then printf '%s\n' "$g"; return 0; fi
   jq -e '.pageInfo.hasNextPage | type == "boolean"' <<<"$conn" >/dev/null || return 1
   # A single page needs no assembly. When membership metadata is present,
   # also reject an early exhaustion flag; multiple pages require that metadata.
@@ -439,7 +439,7 @@ complete_contexts() {
   while jq -e '.pageInfo.hasNextPage' <<<"$conn" >/dev/null; do
     cursor=$(jq -er '.pageInfo.endCursor | select(type == "string" and length > 0
       and (test("[\\x00-\\x1f\\x7f]") | not))' <<<"$conn") || return 1
-    for old in "${seen[@]}"; do [ "$cursor" != "$old" ] || return 1; done
+    for old in ${seen[@]+"${seen[@]}"}; do [[ "$cursor" != "$old" ]] || return 1; done
     seen+=("$cursor")
     page=$(collect_context_page "$head" "$cursor") || return 1
     jq -e --arg head "$head" '((.errors // []) | type == "array" and length == 0)
@@ -450,14 +450,14 @@ complete_contexts() {
     # A terminal page must also advance its cursor, not silently repeat a page.
     old=$(jq -er '.pageInfo.endCursor | select(type == "string" and length > 0
       and (test("[\\x00-\\x1f\\x7f]") | not))' <<<"$next") || return 1
-    for cursor in "${seen[@]}"; do [ "$old" != "$cursor" ] || return 1; done
+    for cursor in ${seen[@]+"${seen[@]}"}; do [[ "$old" != "$cursor" ]] || return 1; done
     conn=$(printf '%s\n' "$conn" "$next" | jq -n 'input as $a | input as $b | $b | .nodes = ($a.nodes + $b.nodes)') || return 1
     jq -e "$shape" <<<"$conn" >/dev/null || return 1
     jq -e '(.nodes | length) <= .totalCount
       and (.pageInfo.hasNextPage == ((.nodes | length) < .totalCount))' <<<"$conn" >/dev/null || return 1
     paged=true
   done
-  if [ "$paged" = true ]; then
+  if [[ "$paged" == true ]]; then
     # A bounded final probe detects additions after the last page and movement
     # of the initial page. It checks membership, not atomic status values.
     page=$(collect_context_page "$head") || return 1
