@@ -2061,6 +2061,8 @@ The head SHA never changes, so nothing else is dismissed and the existing green 
 
 Observed 2026-08-21 on netresearch/t3x-nr-llm#871: `update-branch` would have re-run 93 checks to recover one dismissed approval on a two-file documentation PR whose tree was already correct.
 
+**The cheap recovery does not hold when the dismissal message is "The merge-base changed after approval."** The cause is that the merge base changed after the approval — in a merge-queue repository typically because a sibling PR merged into the base — and the branch still forks from the older base. Every later approval on that fork is dismissed again with the same message — also one on a new head pushed without a rebase — so rebase the branch onto the current base (or run `gh pr update-branch`) instead of re-running the approver. Observed once, 2026-10-28 on netresearch/t3x-nr-vault#480: after #479 merged, the approvals on three new heads pushed within eleven minutes were each dismissed with that message, and the first approval after the rebase held.
+
 **A trap in the diagnosis, not the fix.** `pr-merge.sh` reports the gate it knows how to name, and a dismissed approval is not one of them — on #871 it answered "Copilot is OUT OF REVIEW QUOTA" and asked for a self-review attestation that was already posted, correctly, for the current head. Both statements were true and neither was the cause. The cause is only visible in the timeline:
 
 ```bash
