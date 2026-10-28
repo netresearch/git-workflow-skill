@@ -11,9 +11,11 @@
     | ($p.commits.nodes[0].commit.oid) as $head
     | ($p.commits.nodes[0].commit.statusCheckRollup.contexts) as $rollup_conn
     | ($rollup_conn.nodes // []) as $rollup
-    # The rollup is read with contexts(first:100). Past that, a run absent from
-    # the first page may be on the next one, so nothing is claimed absent.
-    | (($rollup_conn.pageInfo.hasNextPage // false) or (($rollup | length) >= 100)) as $truncated
+    # The collector completes this connection before evaluation. A completed
+    # rollup may contain 100 or more nodes; its explicit pagination flag wins.
+    # Retain the conservative size fallback only for raw legacy inputs.
+    | (if ($rollup_conn.pageInfo.hasNextPage | type) == "boolean"
+       then $rollup_conn.pageInfo.hasNextPage else (($rollup | length) >= 100) end) as $truncated
     | ([$rollup[] | (.name // .context)]) as $rollup_names
     | (($prot | type) == "object") as $has_prot
     | ([$p.reviews.nodes[]? | select(.commit.oid == $head)

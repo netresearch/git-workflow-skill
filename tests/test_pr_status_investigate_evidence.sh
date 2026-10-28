@@ -431,17 +431,12 @@ check_grep "why says the block could not be built" "the evidence block could not
 check "why does not promise evidence below" "0" \
       "$(jq -r .next.why <<<"$out" | grep -c 'evidence below' || true)"
 
-# --- case 15: a rollup truncated at 100 is not compared ----------------------
-echo "case 15: the GraphQL rollup is truncated at 100 contexts"
+# --- case 15: an unfinishable rollup cannot produce an evidence verdict ------
+echo "case 15: a truncated rollup without pagination metadata is unreadable"
 ROLLUP_FILLER=150 build BLOCKED yes false 0 15368
-out="$(run_json)"
-check "next.action" "investigate" "$(jq -r .next.action <<<"$out")"
-check "rollup_truncated" "true" "$(jq -r .next.evidence.rollup_truncated <<<"$out")"
-check "the suite is listed, not compared" "3:null" \
-      "$(jq -r '.next.evidence.failed_suites_outside_rollup[] | "\(.suite_id):\(.outside_rollup)"' <<<"$out")"
-check "no claim of absence from the rollup" "0" \
-      "$(jq -r '.next.evidence.candidates[]' <<<"$out" | grep -c 'absent from the GraphQL rollup' || true)"
-check_grep "text says not compared" "not compared (rollup truncated at 100)" "$(run_text)"
+rc=0; out=$(run_json 2>/dev/null) || rc=$?
+check "incomplete collection exits 2" "2" "$rc"
+check "no absence verdict on incomplete data" "" "$out"
 
 # --- case 18: a suite that never started ------------------------------------
 echo "case 18: a check suite concluded startup_failure (the workflow did not start)"

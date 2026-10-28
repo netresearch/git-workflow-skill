@@ -110,7 +110,7 @@ json.dump({"data": {"viewer": {"login": os.environ.get("VIEWER", author["login"]
         "reviewRequests": {"nodes": requests},
         "reviewThreads": {"nodes": []},
         "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
-            "state": "SUCCESS", "contexts": {"nodes": checks}}}}]},
+            "state": "SUCCESS", "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": checks}}}}]},
         "allCommits": {"nodes": [{"commit": {"oid": head,
                                              "signature": {"isValid": signed}}}]},
     }}}}, open(out, "w"))
@@ -178,7 +178,7 @@ json.dump({"data": {"viewer": {"login": os.environ.get("VIEWER", author["login"]
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
         "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
-            "state": "SUCCESS", "contexts": {"nodes": [
+            "state": "SUCCESS", "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": [
                 {"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS",
                  "status": "COMPLETED", "detailsUrl": "u",
                  "startedAt": "2026-01-01T00:00:00Z"}]}}}}]},

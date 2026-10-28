@@ -94,7 +94,7 @@ json.dump({"data": {"repository": {
         "comments": {"nodes": []},
         "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
             "state": {"SUCCESS": "SUCCESS", "QUEUED": "PENDING"}.get(newest, "FAILURE"),
-            "contexts": {"nodes": checks}}}}]},
+            "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": checks}}}}]},
         "allCommits": {"nodes": [{"commit": {"oid": head,
                                              "signature": {"isValid": True}}}]},
     }}}}, open(out, "w"))

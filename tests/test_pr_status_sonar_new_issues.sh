@@ -86,7 +86,7 @@ json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
         "reviewThreads": {"nodes": []},
         "commits": {"nodes": [{"commit": {"oid": head, "committedDate": "2026-09-03T10:00:00Z",
             "statusCheckRollup": {
-            "state": "SUCCESS", "contexts": {"nodes": [
+            "state": "SUCCESS", "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": [
                 {"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS",
                  "status": "COMPLETED", "detailsUrl": "u",
                  "startedAt": "2026-01-01T00:00:00Z"}]}}}}]},

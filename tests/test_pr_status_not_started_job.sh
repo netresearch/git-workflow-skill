@@ -145,7 +145,7 @@ json.dump({"data": {"repository": {
                                     "body": "please fix"}]}}] if os.environ.get("THREAD") == "1" else []},
         "comments": {"nodes": []},
         "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
-            "state": "FAILURE", "contexts": {"nodes": checks}}}}]},
+            "state": "FAILURE", "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": checks}}}}]},
         "allCommits": {"nodes": [{"commit": {"oid": head,
                                              "signature": {"isValid": True}}}]},
     }}}}, open(out, "w"))

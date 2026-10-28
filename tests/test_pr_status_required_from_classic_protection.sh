@@ -84,7 +84,7 @@ json.dump({"data": {
             "reviewRequests": {"nodes": []},
             "reviewThreads": {"nodes": []},
             "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
-                "state": "SUCCESS", "contexts": {"nodes": [
+                "state": "SUCCESS", "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": [
                     {"__typename": "StatusContext", "context": "DCO", "state": "SUCCESS",
                      "targetUrl": "u"}]}}}}]},
             "allCommits": {"nodes": [{"commit": {"oid": head,

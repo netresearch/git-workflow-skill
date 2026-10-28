@@ -163,8 +163,10 @@ echo "case 4: the newer run has a different event (push) -> not flagged"
 NEWEST_EVENT=push build
 check "next.action" "investigate" "$(jq -r .next.action <<<"$(run_json)")"
 
-echo "case 5: the rollup is truncated -> absence unproven, not flagged"
+echo "case 5: a truncated rollup without pagination metadata is unreadable"
 TRUNCATED=yes build
-check "next.action" "investigate" "$(jq -r .next.action <<<"$(run_json)")"
+rc=0; out=$(run_json 2>/dev/null) || rc=$?
+check "incomplete collection exits 2" "2" "$rc"
+check "no absence verdict on incomplete data" "" "$out"
 
 exit "$fail"
