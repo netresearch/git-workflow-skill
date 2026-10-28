@@ -52,7 +52,7 @@ cat <<'JSON'
   "reviewRequests":{"nodes":[]},"reviewThreads":{"nodes":[]},
   "comments":{"nodes":[]},"latestReviews":{"nodes":[]},"reviews":{"nodes":[]},
   "commits":{"nodes":[{"commit":{"oid":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-    "signature":null,"statusCheckRollup":{"state":"SUCCESS","contexts":{"nodes":[]}}}}]}
+    "signature":null,"statusCheckRollup":{"state":"SUCCESS","contexts":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}]}
 }}}}
 JSON
 STUB

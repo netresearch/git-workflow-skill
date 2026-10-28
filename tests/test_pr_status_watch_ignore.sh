@@ -105,7 +105,7 @@ json.dump({"data": {"repository": {
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
         "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
-            "state": "SUCCESS", "contexts": {"nodes": checks}}}}]},
+            "state": "SUCCESS", "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": checks}}}}]},
         "allCommits": {"nodes": [{"commit": {"oid": head,
                                              "signature": {"isValid": True}}}]},
     }}}}, open(out, "w"))

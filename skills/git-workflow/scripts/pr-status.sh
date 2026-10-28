@@ -12,7 +12,9 @@
 # Two API calls on the green path: one GraphQL document for the PR, its
 # checks, reviews, threads and the repository's merge configuration; one REST
 # call for the effective branch rules (which is the only place rulesets show
-# up). A review-blocked PR costs a third, admin-only call for classic branch
+# up). A status rollup over 100 contexts costs one call per further page and
+# one final membership probe, all bound to the original head SHA. A
+# review-blocked PR costs a third, admin-only call for classic branch
 # protection, whose review gates (require_last_push_approval, approval count,
 # code-owner reviews) no other endpoint exposes. Only a PR that ends the ladder
 # at `investigate` pays for more REST reads: check-runs and check-suites, both
@@ -363,7 +365,7 @@ collect_raw() {
         allCommits: commits(first:100){ totalCount nodes{ commit{ oid signature{ isValid }
           parents{ totalCount } authors(first:10){ totalCount nodes{ user{ login } } } } } }
         commits(last:1){ nodes{ commit{ oid committedDate statusCheckRollup{ state
-          contexts(first:100){ pageInfo{ hasNextPage } nodes{
+          contexts(first:100){ totalCount pageInfo{ hasNextPage endCursor } nodes{
             __typename
             # checkSuite.workflowRun names the Actions run each row came from.
             # It is what tells a required context reported only by an OLDER
@@ -371,16 +373,104 @@ collect_raw() {
             # $stale_required below. Null for a check run of any other app.
             # steps and annotations identify a failed Actions job that no
             # runner ever picked up; see NOSTART below.
-            ... on CheckRun{ name conclusion status detailsUrl startedAt
+            ... on CheckRun{ id name conclusion status detailsUrl startedAt
               steps(first:1){ totalCount }
               annotations(first:10){ nodes{ message } }
               checkSuite{ status workflowRun{ databaseId runNumber event createdAt url
                 workflow{ databaseId name } } } }
-            ... on StatusContext{ context state targetUrl }
+            ... on StatusContext{ id context state targetUrl }
           } } } } } }
       }
     }
   }'
+}
+
+# Further pages must never follow a moving PR branch. The immutable commit SHA
+# names the same object as the initial snapshot, including for a fork head.
+collect_context_page() {
+  local head="$1" cursor="${2:-}" args=()
+  [[ -z "$cursor" ]] || args=(-f cursor="$cursor")
+  # shellcheck disable=SC2016  # These are GraphQL variables.
+  gh api graphql -f owner="$OWNER" -f name="$NAME" -f head="$head" ${args[@]+"${args[@]}"} -f query='
+  query StatusContextsPage($owner:String!,$name:String!,$head:GitObjectID!,$cursor:String){
+    repository(owner:$owner,name:$name){object(oid:$head){... on Commit{oid
+      statusCheckRollup{contexts(first:100,after:$cursor){totalCount pageInfo{hasNextPage endCursor} nodes{
+        __typename
+        ... on CheckRun{id name conclusion status detailsUrl startedAt
+          steps(first:1){totalCount} annotations(first:10){nodes{message}}
+          checkSuite{status workflowRun{databaseId runNumber event createdAt url workflow{databaseId name}}}}
+        ... on StatusContext{id context state targetUrl}
+      }}}
+    }}}
+  }'
+}
+
+# Assemble only the status-context connection. Count and identity checks detect
+# observable membership drift; they do not make changing check states atomic.
+# Payloads stay on stdin, preserving the large-response/Windows argv guards.
+complete_contexts() {
+  local g conn head total page next cursor old first_ids paged=false seen=()
+  local shape='type == "object" and (.nodes | type == "array")
+    and (.totalCount | type == "number" and . >= 0 and . == floor)
+    and (.pageInfo.hasNextPage | type == "boolean")
+    and all(.nodes[]; (.id | type == "string" and length > 0))
+    and (([.nodes[].id] | unique | length) == (.nodes | length))'
+  g=$(cat) || return 1
+  jq -e '(.errors // []) | type == "array" and length == 0' <<<"$g" >/dev/null || return 1
+  conn=$(jq -c '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts // null' <<<"$g") || return 1
+  # A commit with no checks legitimately has no rollup.
+  if [[ "$conn" == null ]]; then printf '%s\n' "$g"; return 0; fi
+  jq -e '.pageInfo.hasNextPage | type == "boolean"' <<<"$conn" >/dev/null || return 1
+  # A single page needs no assembly. When membership metadata is present,
+  # also reject an early exhaustion flag; multiple pages require that metadata.
+  if jq -e 'has("totalCount")' <<<"$conn" >/dev/null; then
+    jq -e "$shape" <<<"$conn" >/dev/null || return 1
+    total=$(jq '.totalCount' <<<"$conn")
+    jq -e '(.nodes | length) <= .totalCount
+      and (.pageInfo.hasNextPage == ((.nodes | length) < .totalCount))' <<<"$conn" >/dev/null || return 1
+  fi
+  if ! jq -e '.pageInfo.hasNextPage' <<<"$conn" >/dev/null; then printf '%s\n' "$g"; return 0; fi
+  jq -e "$shape" <<<"$conn" >/dev/null || return 1
+  total=$(jq '.totalCount' <<<"$conn")
+  first_ids=$(jq -c '[.nodes[].id]' <<<"$conn")
+  head=$(jq -er '.data.repository.pullRequest.commits.nodes[0].commit.oid
+    | select(type == "string" and test("^[a-fA-F0-9]{40}$"))' <<<"$g") || return 1
+  jq -e --arg head "$head" '.data.repository.pullRequest.headRefOid == $head' <<<"$g" >/dev/null || return 1
+  while jq -e '.pageInfo.hasNextPage' <<<"$conn" >/dev/null; do
+    cursor=$(jq -er '.pageInfo.endCursor | select(type == "string" and length > 0
+      and (test("[\\x00-\\x1f\\x7f]") | not))' <<<"$conn") || return 1
+    for old in ${seen[@]+"${seen[@]}"}; do [[ "$cursor" != "$old" ]] || return 1; done
+    seen+=("$cursor")
+    page=$(collect_context_page "$head" "$cursor") || return 1
+    jq -e --arg head "$head" '((.errors // []) | type == "array" and length == 0)
+      and .data.repository.object.oid == $head' <<<"$page" >/dev/null || return 1
+    next=$(jq -c '.data.repository.object.statusCheckRollup.contexts' <<<"$page") || return 1
+    jq -e "$shape" <<<"$next" >/dev/null || return 1
+    jq -e --argjson total "$total" '.totalCount == $total and (.nodes | length) > 0' <<<"$next" >/dev/null || return 1
+    # A terminal page must also advance its cursor, not silently repeat a page.
+    old=$(jq -er '.pageInfo.endCursor | select(type == "string" and length > 0
+      and (test("[\\x00-\\x1f\\x7f]") | not))' <<<"$next") || return 1
+    for cursor in ${seen[@]+"${seen[@]}"}; do [[ "$old" != "$cursor" ]] || return 1; done
+    conn=$(printf '%s\n' "$conn" "$next" | jq -n 'input as $a | input as $b | $b | .nodes = ($a.nodes + $b.nodes)') || return 1
+    jq -e "$shape" <<<"$conn" >/dev/null || return 1
+    jq -e '(.nodes | length) <= .totalCount
+      and (.pageInfo.hasNextPage == ((.nodes | length) < .totalCount))' <<<"$conn" >/dev/null || return 1
+    paged=true
+  done
+  if [[ "$paged" == true ]]; then
+    # A bounded final probe detects additions after the last page and movement
+    # of the initial page. It checks membership, not atomic status values.
+    page=$(collect_context_page "$head") || return 1
+    jq -e --arg head "$head" '((.errors // []) | type == "array" and length == 0)
+      and .data.repository.object.oid == $head' <<<"$page" >/dev/null || return 1
+    next=$(jq -c '.data.repository.object.statusCheckRollup.contexts' <<<"$page") || return 1
+    jq -e "$shape" <<<"$next" >/dev/null || return 1
+    jq -e '.pageInfo.hasNextPage == ((.nodes | length) < .totalCount)' <<<"$next" >/dev/null || return 1
+    printf '%s\n' "$next" "$first_ids" | jq -ne --argjson total "$total" 'input as $p | input as $ids
+      | $p.totalCount == $total and ([$p.nodes[].id] == $ids)' >/dev/null || return 1
+  fi
+  printf '%s\n' "$g" "$conn" | jq -n 'input as $g | input as $c | $g
+    | .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts = $c'
 }
 
 # A branch legitimately has no rules and answers `[]`, so an empty result is NOT
@@ -561,6 +651,8 @@ snapshot() {
     sleep 2
     g=$(collect) || die "GraphQL query failed"
   fi
+
+  g=$(printf '%s\n' "$g" | complete_contexts) || die "status contexts are incomplete or changed while reading"
 
   base=$(jq -r '.data.repository.pullRequest.baseRefName // "main"' <<<"$g")
 
