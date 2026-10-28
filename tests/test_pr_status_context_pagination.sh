@@ -184,7 +184,7 @@ rc=0
 out=$(PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 1 --watch --interval 1 --max-wait 1 2>"$STUB_DIR/err") || rc=$?
 check 'watch does not settle an unreadable continuation' 1 "$rc"
 unreadable=false
-case "$out" in *UNREADABLE*|*unreadable*) unreadable=true;; esac
+case "$out" in *UNREADABLE*|*unreadable*) unreadable=true;; *) unreadable=false;; esac
 check 'watch exposes the unreadable continuation' true "$unreadable"
 
 printf '%s checks; failure=%s\n' "$checks" "$fail"
