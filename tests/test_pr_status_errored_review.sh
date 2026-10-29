@@ -75,8 +75,12 @@ author = {"login": os.environ.get("PR_AUTHOR", "someone"),
 # VIEWER: the account the run is authenticated as (default: the PR author).
 # COMMENTS_JSON: issue comments on the PR, as [{"author": ..., "body": ...}] —
 # the surface the Self-review attestation (#203) is read from.
-comments = [{"author": {"login": c["author"]}, "body": c["body"],
-             "url": "https://example.test/c"}
+# An optional "type" sets the author's __typename (CodeRabbit is read only
+# from a Bot account).
+comments = [{"author": {"login": c["author"],
+                        **({"__typename": c["type"]} if c.get("type") else {})},
+             "body": c["body"], "url": "https://example.test/c",
+             **({"createdAt": c["at"]} if c.get("at") else {})}
             for c in json.loads(os.environ.get("COMMENTS_JSON", "[]"))]
 # Env overrides so the signature/settled ladder branches are testable:
 #   MERGE_STATE (default CLEAN), SIGNED (default 1),
@@ -225,6 +229,22 @@ check "next.action"                "request-review" "$(run_next)"
 echo "case 2: Copilot errored (quota exhausted) — same"
 make_stub "$ERR_QUOTA"
 check "copilot_review_errored"     "true"           "$(run_flag copilot_review_errored)"
+check "next.action"                "request-review" "$(run_next)"
+
+# The state pr-sweep.sh stopped on for six pull requests within 30 seconds
+# (2026-10-29, netresearch/assetpicker-bundle#12 and five siblings): Copilot out
+# of quota, CodeRabbit still reviewing the head. request-review there sent the
+# sweep to its attention file while the one live review was minutes from
+# landing; one of the six then carried a finding.
+echo "case 2a: Copilot out of quota, CodeRabbit still reviewing — await-review"
+COMMENTS_JSON='[{"author":"coderabbitai","type":"Bot","at":"2026-01-02T00:00:00Z","body":"> [!NOTE]\n> Currently processing new changes in this PR. This may take a few minutes, please wait...\nReviewing files that changed from the base of the PR and between 0dcc7ea19bbf and deadbeefcafe."}]' \
+    make_stub "$ERR_QUOTA"
+check "coderabbit_on_head"         "in-progress"    "$(run_flag coderabbit_on_head)"
+check "next.action"                "await-review"   "$(run_next)"
+
+echo "case 2b: Copilot out of quota, CodeRabbit finished — request-review"
+COMMENTS_JSON='[{"author":"coderabbitai","type":"Bot","at":"2026-01-02T00:00:00Z","body":"<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\nNo actionable comments were generated in the recent review.\nReviewing files that changed from the base of the PR and between 0dcc7ea19bbf and deadbeefcafe."}]' \
+    make_stub "$ERR_QUOTA"
 check "next.action"                "request-review" "$(run_next)"
 
 echo "case 3: a real Copilot review — still counts, gate opens"
