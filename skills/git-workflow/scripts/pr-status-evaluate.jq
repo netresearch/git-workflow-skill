@@ -1043,6 +1043,22 @@
          # including a COMMENTED one, and the Copilot error rows ARE COMMENTED,
          # so testing it would let a failed bot review satisfy the policy. The
          # approval list is the one predicate an error row cannot answer.
+         #
+         # While CodeRabbit is still reviewing this head, the one review
+         # path left is in flight, so the action is await-review, not
+         # request-review: a caller that dispatches on .next.action
+         # (pr-sweep.sh) otherwise stops on the PR before that review lands.
+         # --watch already holds on the same state (cr_busy in pr-status.sh).
+         elif ($needs_copilot and $s.copilot_review_errored
+               and $no_current_approval
+               and ($s.has_copilot_review_on_head | not)
+               and ($self_attested | not)
+               and (($s.requested_reviewers|map(test("copilot";"i"))|any) | not)
+               and $s.coderabbit_on_head == "in-progress") then
+           {action:"await-review",
+            why:($unreviewed
+                 + "Copilot cannot review \($s.headOid[0:8]) and CodeRabbit is still reviewing it"
+                 + " — waiting for CodeRabbit, which may still raise findings")}
          elif ($needs_copilot and $s.copilot_review_errored
                and $no_current_approval
                and ($s.has_copilot_review_on_head | not)
