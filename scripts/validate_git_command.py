@@ -1223,6 +1223,110 @@ def git_write_without_named_dir(cmd: str) -> str | None:
     )
 
 
+# --- `git rev-parse --short` with more than one revision (#380) -------------
+# `--short` implies `--verify`, and both accept exactly one revision. Handing
+# them two — usually to compare a local and a remote head in one call — always
+# exits 128 with `fatal: Needed a single revision` (git 2.56.0). The slip
+# recurred across sessions, several times a day, while the rule was documented.
+# Advisory, not a gate: the command fails harmlessly on its own; what is
+# missing is the working alternative at the moment the failure is read.
+_REV_PARSE_SINGLE_FLAGS = frozenset({"--short", "--verify"})
+# These take their value as a separate word. `--short --default HEAD
+# origin/main` exits 0: HEAD is the default, origin/main the one revision.
+_REV_PARSE_OPTIONS_WITH_VALUE = frozenset(
+    {"--default", "--prefix", "--git-path", "--resolve-git-dir"}
+)
+# Modes in which the operands are not revisions at all.
+_REV_PARSE_OTHER_MODES = frozenset({"--parseopt", "--sq-quote"})
+_REDIRECTION = re.compile(r"\d*(?:>\||>>?|<|&>)")
+# One word that names two endpoints: `A..B`, `A...B`, `A^!`, `A^@`, `A^-`.
+_MULTI_REVISION_WORD = re.compile(r"\.\.|\^[!@-]\d*$")
+
+
+def _rev_parse_revisions(args: list[str]) -> tuple[set[str], int] | None:
+    """The single-revision flags present and the revisions counted, or None.
+
+    `args` come from `_git_invocations`, which splits at `;|&` and newlines
+    but not at a closing parenthesis, so `x=$(git rev-parse --short HEAD)`
+    arrives as `HEAD)`. Parentheses are therefore tracked: an operand that is
+    itself a command substitution counts once, and a `)` closing the scope the
+    invocation sits in ends it.
+    """
+    flags: set[str] = set()
+    revisions = 0
+    end_of_options = False
+    skip_next = False
+    depth = 0
+    for word in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if depth > 0:
+            depth += word.count("(") - word.count(")")
+            if depth < 0:
+                break  # the operand's `)` also closed the enclosing scope
+            continue
+        if word == "--":
+            break  # paths follow: `--short HEAD -- x y` exits 0
+        if _REDIRECTION.match(word):
+            # `>out` carries its target; a bare `>` takes the next word.
+            skip_next = bool(_REDIRECTION.fullmatch(word))
+            continue
+        balance = word.count("(") - word.count(")")
+        closes_scope = balance < 0
+        if closes_scope:
+            word = word[: word.find(")")]
+        if word.startswith("-") and not end_of_options:
+            option = word.split("=", 1)[0]
+            if option in _REV_PARSE_OTHER_MODES:
+                return None
+            if option == "--end-of-options":
+                end_of_options = True
+            elif option in _REV_PARSE_SINGLE_FLAGS:
+                flags.add(option)
+            elif word in _REV_PARSE_OPTIONS_WITH_VALUE:
+                skip_next = True
+        elif word:
+            revisions += 2 if _MULTI_REVISION_WORD.search(word) else 1
+            if balance > 0:
+                depth = balance
+        if closes_scope:
+            break
+    return flags, revisions
+
+
+def rev_parse_short_many_revisions(cmd: str) -> str | None:
+    """Advise when `git rev-parse --short|--verify` is given several revisions."""
+    cmd = _mask_heredoc_bodies(cmd or "")
+    for subcommand, args, _start, _named in _git_invocations(cmd):
+        if subcommand != "rev-parse":
+            continue
+        parsed = _rev_parse_revisions(args)
+        if parsed is None:
+            continue
+        flags, revisions = parsed
+        if not flags or revisions < 2:
+            continue
+        if "--short" in flags:
+            flag, implied, cut = (
+                "--short",
+                " (`--short` implies `--verify`)",
+                " | cut -c1-7",
+            )
+        else:
+            flag, implied, cut = "--verify", "", ""
+        return (
+            f"`git rev-parse {flag}` takes exactly one revision. Given "
+            f"{revisions}, it exits 128 with `fatal: Needed a single revision`"
+            f"{implied}. For several heads, drop the flag from the one call, "
+            "or call it once per revision:\n\n"
+            f'  git -C "$REPO" rev-parse HEAD origin/main{cut}\n'
+            '  for r in HEAD origin/main; do git -C "$REPO" rev-parse '
+            f'{flag} "$r"; done'
+        )
+    return None
+
+
 def check_conventional_commit(message: str) -> str | None:
     """Validate commit message follows conventional commits."""
     if not re.match(CONVENTIONAL_COMMIT_PATTERN, message):
@@ -1325,9 +1429,10 @@ ADVISORY_REARM_SECONDS = 6 * 60 * 60
 def _advisory_already_fired(data, name: str) -> bool:
     """True if this advisory has already fired recently in this session.
 
-    Both advisories restate a general rule rather than reporting a fact about
-    the particular command in hand. Repeating one on every matching call is
-    noise: the first has already told the author what to check, and the message
+    Both advisories routed through here restate a general rule rather than
+    reporting a fact about the particular command in hand (the rev-parse
+    advisory reports a certain failure and is deliberately not routed here).
+    Repeating one on every matching call is noise: the first has already told the author what to check, and the message
     reaches the user's transcript via systemMessage, so the cost is paid in
     their attention rather than ours. Fire once per session per advisory, and
     once more per ADVISORY_REARM_SECONDS window in a long-running session.
@@ -1432,6 +1537,30 @@ def main():
     reason = git_write_without_named_dir(command)
     if reason:
         deny(reason)
+        return
+
+    # Advisory that reports a fact about this very command: it will exit 128.
+    # So it is not deduplicated per session — the issue that asked for it
+    # (#380) saw the slip several times a day — and it comes first, because a
+    # bare `git rev-parse` also matches the named-directory advisory and only
+    # one message goes out per call. systemMessage reaches the user;
+    # additionalContext is the field the model reads, and the model is who
+    # has to pick the alternative. No permissionDecision: the permission flow
+    # stays exactly as it would be without this hook.
+    note = rev_parse_short_many_revisions(command)
+    if note:
+        print(
+            json.dumps(
+                {
+                    "systemMessage": f"git-workflow: {note}",
+                    "suppressOutput": True,
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "additionalContext": f"git-workflow: {note}",
+                    },
+                }
+            )
+        )
         return
 
     # Advisory: the command is usually right, and only its author knows whether
