@@ -1226,7 +1226,8 @@ def git_write_without_named_dir(cmd: str) -> str | None:
 # --- `git rev-parse --short` with more than one revision (#380) -------------
 # `--short` implies `--verify`, and both accept exactly one revision. Handing
 # them two — usually to compare a local and a remote head in one call — always
-# exits 128 with `fatal: Needed a single revision` (git 2.56.0). The slip
+# exits 128 with `fatal: Needed a single revision`, or 1 and silently with
+# `--quiet` (git 2.56.0). The slip
 # recurred across sessions, several times a day, while the rule was documented.
 # Advisory, not a gate: the command fails harmlessly on its own; what is
 # missing is the working alternative at the moment the failure is read.
@@ -1240,58 +1241,95 @@ _REV_PARSE_OPTIONS_WITH_VALUE = frozenset(
 _REV_PARSE_OTHER_MODES = frozenset({"--parseopt", "--sq-quote"})
 _REDIRECTION = re.compile(r"\d*(?:>\||>>?|<|&>)")
 # One word that names two endpoints: `A..B`, `A...B`, `A^!`, `A^@`, `A^-`.
-_MULTI_REVISION_WORD = re.compile(r"\.\.|\^[!@-]\d*$")
+_MULTI_REVISION_WORD = re.compile(r"(?:\.\.)|(?:\^[!@-]\d*$)")
+
+
+def _paren_balance(word: str) -> int:
+    return word.count("(") - word.count(")")
+
+
+def _close_substitution(words, depth: int) -> bool:
+    """Consume the rest of an open `$(`; False if its `)` also closed the scope."""
+    for word in words:
+        depth += _paren_balance(word)
+        if depth <= 0:
+            return depth == 0
+    return False
+
+
+def _close_backticks(words) -> bool:
+    """Consume the rest of an open backtick operand; False if it never closes."""
+    return any("`" in word for word in words)
+
+
+def _rev_parse_words(args: list[str]):
+    """The words of one `rev-parse` call that git itself would see.
+
+    `args` come from `_git_invocations`, which splits at `;|&` and newlines
+    but not at a closing parenthesis or backtick, so `x=$(git rev-parse
+    --short HEAD)` arrives as `HEAD)`. Both are therefore tracked: an operand
+    that is itself a command substitution comes out as one word, and a `)` or
+    backtick closing the scope the call sits in ends it — without that,
+    ``echo `git rev-parse --short HEAD` done`` counted `done` as a second
+    revision. Redirections are dropped, and `--` ends the words too, because
+    paths follow (`--short HEAD -- x y` exits 0).
+    """
+    words = iter(args)
+    for word in words:
+        if word == "--":
+            return
+        if _REDIRECTION.match(word):
+            # `>out` carries its target; a bare `>` takes the next word.
+            if _REDIRECTION.fullmatch(word):
+                next(words, None)
+            continue
+        ticks = word.count("`")
+        if ticks and not word.startswith("`"):
+            yield word[: word.find("`")]
+            return
+        if ticks == 1:
+            yield word
+            if not _close_backticks(words):
+                return
+            continue
+        balance = _paren_balance(word)
+        if balance < 0:
+            yield word[: word.find(")")]
+            return
+        yield word
+        if balance > 0 and not _close_substitution(words, balance):
+            return
 
 
 def _rev_parse_revisions(args: list[str]) -> tuple[set[str], int] | None:
-    """The single-revision flags present and the revisions counted, or None.
+    """The flags that matter and the revisions they apply to, or None.
 
-    `args` come from `_git_invocations`, which splits at `;|&` and newlines
-    but not at a closing parenthesis, so `x=$(git rev-parse --short HEAD)`
-    arrives as `HEAD)`. Parentheses are therefore tracked: an operand that is
-    itself a command substitution counts once, and a `)` closing the scope the
-    invocation sits in ends it.
+    The flags are `--short`/`--verify` and, normalised, `--quiet`. Only
+    revisions AFTER the first `--short`/`--verify` count: the flag applies to
+    what follows it, so `git rev-parse HEAD --short origin/main` prints the
+    full and then the short hash and exits 0.
     """
     flags: set[str] = set()
     revisions = 0
     end_of_options = False
-    skip_next = False
-    depth = 0
-    for word in args:
-        if skip_next:
-            skip_next = False
+    skip_value = False
+    for word in _rev_parse_words(args):
+        if skip_value or not word:
+            skip_value = False
             continue
-        if depth > 0:
-            depth += word.count("(") - word.count(")")
-            if depth < 0:
-                break  # the operand's `)` also closed the enclosing scope
+        if end_of_options or not word.startswith("-"):
+            if flags & _REV_PARSE_SINGLE_FLAGS:
+                revisions += 2 if _MULTI_REVISION_WORD.search(word) else 1
             continue
-        if word == "--":
-            break  # paths follow: `--short HEAD -- x y` exits 0
-        if _REDIRECTION.match(word):
-            # `>out` carries its target; a bare `>` takes the next word.
-            skip_next = bool(_REDIRECTION.fullmatch(word))
-            continue
-        balance = word.count("(") - word.count(")")
-        closes_scope = balance < 0
-        if closes_scope:
-            word = word[: word.find(")")]
-        if word.startswith("-") and not end_of_options:
-            option = word.split("=", 1)[0]
-            if option in _REV_PARSE_OTHER_MODES:
-                return None
-            if option == "--end-of-options":
-                end_of_options = True
-            elif option in _REV_PARSE_SINGLE_FLAGS:
-                flags.add(option)
-            elif word in _REV_PARSE_OPTIONS_WITH_VALUE:
-                skip_next = True
-        elif word:
-            revisions += 2 if _MULTI_REVISION_WORD.search(word) else 1
-            if balance > 0:
-                depth = balance
-        if closes_scope:
-            break
+        option = word.split("=", 1)[0]
+        if option in _REV_PARSE_OTHER_MODES:
+            return None
+        end_of_options = option == "--end-of-options"
+        if option in _REV_PARSE_SINGLE_FLAGS:
+            flags.add(option)
+        elif option in ("-q", "--quiet"):
+            flags.add("--quiet")
+        skip_value = word in _REV_PARSE_OPTIONS_WITH_VALUE
     return flags, revisions
 
 
@@ -1305,7 +1343,7 @@ def rev_parse_short_many_revisions(cmd: str) -> str | None:
         if parsed is None:
             continue
         flags, revisions = parsed
-        if not flags or revisions < 2:
+        if revisions < 2:
             continue
         if "--short" in flags:
             flag, implied, cut = (
@@ -1315,9 +1353,16 @@ def rev_parse_short_many_revisions(cmd: str) -> str | None:
             )
         else:
             flag, implied, cut = "--verify", "", ""
+        # With --quiet, git prints nothing and exits 1 instead.
+        failure = (
+            "fails silently with exit 1 (`--quiet` suppresses "
+            "`fatal: Needed a single revision`)"
+            if "--quiet" in flags
+            else "exits 128 with `fatal: Needed a single revision`"
+        )
         return (
             f"`git rev-parse {flag}` takes exactly one revision. Given "
-            f"{revisions}, it exits 128 with `fatal: Needed a single revision`"
+            f"{revisions}, it {failure}"
             f"{implied}. For several heads, drop the flag from the one call, "
             "or call it once per revision:\n\n"
             f'  git -C "$REPO" rev-parse HEAD origin/main{cut}\n'

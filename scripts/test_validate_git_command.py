@@ -886,6 +886,12 @@ class RevParseShortManyRevisions(unittest.TestCase):
         "x=$(git -C /x rev-parse --short HEAD origin/main)",
         # A payload a local shell runs is a command, not text.
         "bash -c 'git -C /x rev-parse --short A B'",
+        # A repeated flag does not reset anything (exits 128).
+        "git -C /x rev-parse --verify HEAD --verify origin/main",
+        # Inside backticks, the closing one ends the call, not the revisions.
+        "echo `git -C /x rev-parse --short HEAD origin/main` done",
+        # A backtick operand is one revision, the next word another.
+        "git -C /x rev-parse --short `git -C /x rev-parse HEAD` origin/main",
     ]
 
     QUIET: ClassVar[list[str]] = [
@@ -915,6 +921,15 @@ class RevParseShortManyRevisions(unittest.TestCase):
         "git -C /x rev-parse --short $(git -C /x rev-parse HEAD)",
         'git -C /x rev-parse --short "$(git -C /x rev-parse HEAD)"',
         "x=$(git -C /x rev-parse --short HEAD) && echo $x",
+        # The same for backticks: both commands exit 0.
+        "echo sha: `git -C /x rev-parse --short HEAD` branch: `git -C /x branch`",
+        "echo `git -C /x rev-parse --short HEAD` done",
+        "git -C /x rev-parse --short `git -C /x rev-parse HEAD`",
+        # The flag applies to what follows it: full hash, then short (exits 0).
+        "git -C /x rev-parse HEAD --short origin/main",
+        "git -C /x rev-parse HEAD --verify origin/main",
+        # Nothing after the flag fails too, but not with two revisions.
+        "git -C /x rev-parse HEAD origin/main --short",
         # Text about the command is not the command.
         "echo 'git rev-parse --short HEAD origin/main'",
         'git -C /x commit -m "docs: git rev-parse --short takes one revision A B"',
@@ -954,6 +969,18 @@ class RevParseShortManyRevisions(unittest.TestCase):
         self.assertEqual("PreToolUse", specific["hookEventName"])
         self.assertIn(self.MARK, specific["additionalContext"])
         self.assertNotIn("permissionDecision", specific)
+
+    def test_with_quiet_the_message_names_the_silent_failure(self) -> None:
+        # `--quiet` turns the fatal into a bare exit 1. Telling the model to
+        # expect a message it will never see would mislead it.
+        for command in (
+            "git -C /x rev-parse --short=8 --quiet A B",
+            "git -C /x rev-parse --verify -q HEAD origin/main",
+        ):
+            with self.subTest(command=command):
+                text = self._context(json.loads(run_hook(command)))
+                self.assertIn("fails silently with exit 1", text)
+                self.assertNotIn("exits 128", text)
 
     def test_verify_alone_names_verify(self) -> None:
         note = json.loads(run_hook("git -C /x rev-parse --verify HEAD origin/main"))
