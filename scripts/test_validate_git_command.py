@@ -890,6 +890,11 @@ class RevParseShortManyRevisions(unittest.TestCase):
         "git -C /x rev-parse --verify HEAD --verify origin/main",
         # Inside backticks, the closing one ends the call, not the revisions.
         "echo `git -C /x rev-parse --short HEAD origin/main` done",
+        # A quoted or escaped `#` is an argument, not a comment (exits 128).
+        'git -C /x rev-parse --short HEAD "#x"',
+        "git -C /x rev-parse --short HEAD \\#x",
+        # A comment ends the line, not the command after the newline.
+        "git -C /x status  # look first\ngit -C /x rev-parse --short HEAD origin/main",
         # A backtick operand is one revision, the next word another.
         "git -C /x rev-parse --short `git -C /x rev-parse HEAD` origin/main",
     ]
@@ -928,6 +933,9 @@ class RevParseShortManyRevisions(unittest.TestCase):
         # The flag applies to what follows it: full hash, then short (exits 0).
         "git -C /x rev-parse HEAD --short origin/main",
         "git -C /x rev-parse HEAD --verify origin/main",
+        # A trailing shell comment is not part of the command (exits 0).
+        "git -C /x rev-parse --short HEAD  # compare with remote",
+        "git -C /x rev-parse --short HEAD # vs origin/main",
         # Nothing after the flag fails too, but not with two revisions.
         "git -C /x rev-parse HEAD origin/main --short",
         # Text about the command is not the command.

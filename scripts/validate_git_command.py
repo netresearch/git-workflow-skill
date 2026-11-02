@@ -1352,9 +1352,29 @@ def _rev_parse_revisions(args: list[str]) -> tuple[set[str], int] | None:
     return flags, revisions
 
 
+def _mask_comments(cmd: str) -> str:
+    """`cmd` with every unquoted, unescaped `# …` comment blanked.
+
+    Length-preserving. `git rev-parse --short HEAD  # compare with remote`
+    exits 0, but the comment words reached the scan as revisions. A quoted or
+    escaped `#` (`"#x"`, `\\#x`) is an argument and stays.
+    """
+    out = list(cmd)
+    i, n = 0, len(cmd)
+    while i < n:
+        j = _skip_quoted(cmd, i)
+        if j == i and cmd[i] == "\\":
+            j = i + 2
+        elif j == i:
+            j = _skip_comment(cmd, i)
+            out[i:j] = " " * (j - i)
+        i = max(j, i + 1)
+    return "".join(out)
+
+
 def rev_parse_short_many_revisions(cmd: str) -> str | None:
     """Advise when `git rev-parse --short|--verify` is given several revisions."""
-    cmd = _mask_heredoc_bodies(cmd or "")
+    cmd = _mask_comments(_mask_heredoc_bodies(cmd or ""))
     for subcommand, args, _start, _named in _git_invocations(cmd):
         if subcommand != "rev-parse":
             continue
