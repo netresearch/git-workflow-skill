@@ -1240,7 +1240,7 @@ _REV_PARSE_OPTIONS_WITH_VALUE = frozenset(
 # Modes in which the operands are not revisions at all.
 _REV_PARSE_OTHER_MODES = frozenset({"--parseopt", "--sq-quote"})
 _REDIRECTION = re.compile(r"\d*(?:>\||>>?|<|&>)")
-# A suffix that makes one word name two endpoints: `A^!`, `A^@`, `A^-`.
+# Parent shorthands that expand to a range: `A^!`, `A^@`, `A^-`.
 # (`A..B` and `A...B` are caught by their `..`.)
 _ENDPOINT_SUFFIX = re.compile(r"\^[!@-]\d*$")
 # The flags the advisory keys on, normalised.
@@ -1253,8 +1253,14 @@ _REV_PARSE_TRACKED_FLAGS = {
 
 
 def _revision_weight(word: str) -> int:
-    """How many revisions one word names: two for a range, else one."""
-    return 2 if ".." in word or _ENDPOINT_SUFFIX.search(word) else 1
+    """How many revisions one word adds to `--verify`'s count of one.
+
+    A range or parent shorthand adds none: git prints it but does not count
+    it, so `--short HEAD..origin/main HEAD` and `--short HEAD^! HEAD` exit 0
+    (git 2.56.0). Alone, such a word fails for having no revision at all,
+    which is not what this advisory reports.
+    """
+    return 0 if ".." in word or _ENDPOINT_SUFFIX.search(word) else 1
 
 
 def _paren_balance(word: str) -> int:
@@ -1301,21 +1307,26 @@ def _rev_parse_words(args: list[str]):
     backtick closing the scope the call sits in ends it — without that,
     ``echo `git rev-parse --short HEAD` done`` counted `done` as a second
     revision. Redirections are dropped, and `--` ends the words too, because
-    paths follow (`--short HEAD -- x y` exits 0).
+    paths follow (`--short HEAD -- x y` exits 0). The scope check comes
+    before the redirection check: in `$(git rev-parse --short HEAD
+    2>/dev/null)` the closing `)` sits on the redirection's word.
     """
     words = iter(args)
     for word in words:
         if word == "--":
             return
-        if _REDIRECTION.match(word):
-            # `>out` carries its target; a bare `>` takes the next word.
-            if _REDIRECTION.fullmatch(word):
-                next(words, None)
-            continue
         head = _scope_end(word)
         if head is not None:
-            yield head
+            if not _REDIRECTION.match(head):
+                yield head
             return
+        if _REDIRECTION.match(word):
+            # `>out` carries its target; a bare `>` takes the next word,
+            # which can itself close the scope (`> /dev/null)`).
+            target = next(words, "") if _REDIRECTION.fullmatch(word) else ""
+            if _scope_end(target) is not None:
+                return
+            continue
         yield word
         if not _close_operand(word, words):
             return

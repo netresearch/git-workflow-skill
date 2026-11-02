@@ -911,9 +911,9 @@ class RevParseShortManyRevisions(unittest.TestCase):
         "git -C /x rev-parse --short --symbolic HEAD origin/main",
         # `--end-of-options` is not `--`: revisions still follow it.
         "git -C /x rev-parse --short --end-of-options HEAD origin/main",
-        # One word, two endpoints.
-        "git -C /x rev-parse --short HEAD~1..HEAD",
-        "git -C /x rev-parse --short HEAD^!",
+        # A range is printed but not counted; the two plain revisions still
+        # are (exits 128).
+        "git -C /x rev-parse --short HEAD..origin/main HEAD origin/main",
         # `--verify` alone has the same contract and the same failure.
         "git -C /x rev-parse --verify HEAD origin/main",
         # Compound commands: the invocation that fails is not the first one.
@@ -957,6 +957,17 @@ class RevParseShortManyRevisions(unittest.TestCase):
         "git -C /x rev-parse --short HEAD 2>/dev/null",
         "git -C /x rev-parse --short HEAD > out.txt",
         "git -C /x rev-parse --short HEAD 2>&1",
+        # ... also when the `)` or backtick closing the call sits on it.
+        "echo $(git -C /x rev-parse --short HEAD 2>/dev/null) done",
+        "echo $(git -C /x rev-parse --short HEAD > /dev/null) done",
+        "echo `git -C /x rev-parse --short HEAD 2>/dev/null` `git -C /x log -1`",
+        # A range or parent shorthand is printed, not counted, in --verify
+        # mode (exit 0); alone it fails for having no revision at all.
+        "git -C /x rev-parse --short HEAD..origin/main HEAD",
+        "git -C /x rev-parse --short HEAD^! HEAD",
+        "git -C /x rev-parse --verify HEAD HEAD^@",
+        "git -C /x rev-parse --short HEAD...origin/main HEAD",
+        "git -C /x rev-parse --short HEAD~1..HEAD",
         # A command substitution operand is one revision, and the `)` closing
         # the substitution the call sits in is not a second one.
         "git -C /x rev-parse --short $(git -C /x rev-parse HEAD)",
