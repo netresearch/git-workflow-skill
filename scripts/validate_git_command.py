@@ -1575,6 +1575,31 @@ def _advisory_already_fired(data, name: str) -> bool:
     return False
 
 
+def advise(note: str) -> None:
+    """Emit an advisory to both readers, leaving the permission flow alone.
+
+    PreToolUse delivers `systemMessage` to the user only, and writes plain
+    stdout to the debug log; `hookSpecificOutput.additionalContext` is the
+    field added to the model's context, alongside the tool result
+    (code.claude.com/docs/en/hooks). Until #380 every advisory and reminder
+    here went out by the first two routes, so none reached the agent whose
+    command it was about. No permissionDecision: whether the command runs is
+    decided exactly as it would be without this hook.
+    """
+    print(
+        json.dumps(
+            {
+                "systemMessage": f"git-workflow: {note}",
+                "suppressOutput": True,
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "additionalContext": f"git-workflow: {note}",
+                },
+            }
+        )
+    )
+
+
 def main():
     try:
         input_data = sys.stdin.read()
@@ -1633,18 +1658,7 @@ def main():
     # stays exactly as it would be without this hook.
     note = rev_parse_short_many_revisions(command)
     if note:
-        print(
-            json.dumps(
-                {
-                    "systemMessage": f"git-workflow: {note}",
-                    "suppressOutput": True,
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "additionalContext": f"git-workflow: {note}",
-                    },
-                }
-            )
-        )
+        advise(note)
         return
 
     # Advisory: the command is usually right, and only its author knows whether
@@ -1656,15 +1670,11 @@ def main():
                 # This advisory is spent, but the other one may still owe the
                 # session its first warning — keep looking instead of exiting.
                 continue
-            print(
-                json.dumps(
-                    {"systemMessage": f"git-workflow: {note}", "suppressOutput": True}
-                )
-            )
-            # One message per call: mixing this JSON line with check_command's
-            # plain-text reminder on the same stdout would be ambiguous to the
-            # harness. Only a SPENT advisory falls through (continue above), so
-            # a suppressed advisory no longer swallows unrelated warnings.
+            advise(note)
+            # One message per call: stdout must hold a single JSON object, so
+            # this and check_command's reminder cannot both go out. Only a
+            # SPENT advisory falls through (continue above), so a suppressed
+            # advisory no longer swallows unrelated warnings.
             return
 
     if "git" not in command.lower():
@@ -1679,12 +1689,11 @@ def main():
             icon = severity_icons.get(w["severity"], "•")
             output_lines.append(f"{icon} {w['message']}")
 
-        print(f"""<system-reminder>
-Git workflow check:
-{chr(10).join(output_lines)}
-
-See git-workflow skill for best practices.
-</system-reminder>""")
+        advise(
+            "Git workflow check:\n"
+            + "\n".join(output_lines)
+            + "\n\nSee git-workflow skill for best practices."
+        )
 
 
 if __name__ == "__main__":

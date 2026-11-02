@@ -848,6 +848,42 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         self.assertIn("cd /abs/path && git <subcommand>", out)
 
 
+class AdvisoriesReachTheModel(unittest.TestCase):
+    """Every advisory and reminder is one JSON object the model can read.
+
+    On PreToolUse, `systemMessage` is shown to the user only and plain stdout
+    goes to the debug log; `hookSpecificOutput.additionalContext` is what is
+    added to the model's context (code.claude.com/docs/en/hooks). Until #380
+    the advisories used only the first route and the reminders the second,
+    so the agent never saw any of them.
+    """
+
+    CASES: ClassVar[list[tuple[str, str, str]]] = [
+        ("named-directory advisory", "git status", "inherits its working directory"),
+        (
+            "run-poll advisory",
+            "while true; do gh run list --limit 5; sleep 30; done",
+            "Waiting on workflow runs",
+        ),
+        ("force-push reminder", "cd /repo && git push -f origin main", "Force push"),
+        (
+            "conventional-commit reminder",
+            'cd /repo && git commit -m "fixed stuff"',
+            "onventional",
+        ),
+    ]
+
+    def test_each_reaches_user_and_model_without_a_decision(self) -> None:
+        for name, command, text in self.CASES:
+            with self.subTest(name):
+                note = json.loads(run_hook(command))
+                self.assertIn(text, note["systemMessage"])
+                specific = note["hookSpecificOutput"]
+                self.assertEqual("PreToolUse", specific["hookEventName"])
+                self.assertIn(text, specific["additionalContext"])
+                self.assertNotIn("permissionDecision", specific)
+
+
 class RevParseShortManyRevisions(unittest.TestCase):
     """`--short` (and the `--verify` it implies) take exactly one revision.
 
