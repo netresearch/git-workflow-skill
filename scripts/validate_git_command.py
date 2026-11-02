@@ -1240,8 +1240,21 @@ _REV_PARSE_OPTIONS_WITH_VALUE = frozenset(
 # Modes in which the operands are not revisions at all.
 _REV_PARSE_OTHER_MODES = frozenset({"--parseopt", "--sq-quote"})
 _REDIRECTION = re.compile(r"\d*(?:>\||>>?|<|&>)")
-# One word that names two endpoints: `A..B`, `A...B`, `A^!`, `A^@`, `A^-`.
-_MULTI_REVISION_WORD = re.compile(r"(?:\.\.)|(?:\^[!@-]\d*$)")
+# A suffix that makes one word name two endpoints: `A^!`, `A^@`, `A^-`.
+# (`A..B` and `A...B` are caught by their `..`.)
+_ENDPOINT_SUFFIX = re.compile(r"\^[!@-]\d*$")
+# The flags the advisory keys on, normalised.
+_REV_PARSE_TRACKED_FLAGS = {
+    "--short": "--short",
+    "--verify": "--verify",
+    "--quiet": "--quiet",
+    "-q": "--quiet",
+}
+
+
+def _revision_weight(word: str) -> int:
+    """How many revisions one word names: two for a range, else one."""
+    return 2 if ".." in word or _ENDPOINT_SUFFIX.search(word) else 1
 
 
 def _paren_balance(word: str) -> int:
@@ -1257,9 +1270,25 @@ def _close_substitution(words, depth: int) -> bool:
     return False
 
 
-def _close_backticks(words) -> bool:
-    """Consume the rest of an open backtick operand; False if it never closes."""
-    return any("`" in word for word in words)
+def _scope_end(word: str) -> str | None:
+    """The part before a `)` or backtick closing the call's own scope, or None.
+
+    A backtick at the start opens an operand instead; one anywhere else closes
+    the backticks the call sits in.
+    """
+    if "`" in word and not word.startswith("`"):
+        return word[: word.find("`")]
+    if _paren_balance(word) < 0:
+        return word[: word.find(")")]
+    return None
+
+
+def _close_operand(word: str, words) -> bool:
+    """Consume the rest of a substitution `word` opens; False if the call ends."""
+    if word.count("`") == 1:
+        return any("`" in later for later in words)
+    balance = _paren_balance(word)
+    return balance <= 0 or _close_substitution(words, balance)
 
 
 def _rev_parse_words(args: list[str]):
@@ -1283,21 +1312,12 @@ def _rev_parse_words(args: list[str]):
             if _REDIRECTION.fullmatch(word):
                 next(words, None)
             continue
-        ticks = word.count("`")
-        if ticks and not word.startswith("`"):
-            yield word[: word.find("`")]
-            return
-        if ticks == 1:
-            yield word
-            if not _close_backticks(words):
-                return
-            continue
-        balance = _paren_balance(word)
-        if balance < 0:
-            yield word[: word.find(")")]
+        head = _scope_end(word)
+        if head is not None:
+            yield head
             return
         yield word
-        if balance > 0 and not _close_substitution(words, balance):
+        if not _close_operand(word, words):
             return
 
 
@@ -1318,17 +1338,16 @@ def _rev_parse_revisions(args: list[str]) -> tuple[set[str], int] | None:
             skip_value = False
             continue
         if end_of_options or not word.startswith("-"):
-            if flags & _REV_PARSE_SINGLE_FLAGS:
-                revisions += 2 if _MULTI_REVISION_WORD.search(word) else 1
+            armed = bool(flags & _REV_PARSE_SINGLE_FLAGS)
+            revisions += _revision_weight(word) if armed else 0
             continue
         option = word.split("=", 1)[0]
         if option in _REV_PARSE_OTHER_MODES:
             return None
         end_of_options = option == "--end-of-options"
-        if option in _REV_PARSE_SINGLE_FLAGS:
-            flags.add(option)
-        elif option in ("-q", "--quiet"):
-            flags.add("--quiet")
+        tracked = _REV_PARSE_TRACKED_FLAGS.get(option)
+        if tracked:
+            flags.add(tracked)
         skip_value = word in _REV_PARSE_OPTIONS_WITH_VALUE
     return flags, revisions
 
