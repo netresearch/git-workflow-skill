@@ -1297,6 +1297,16 @@ def _close_operand(word: str, words) -> bool:
     return balance <= 0 or _close_substitution(words, balance)
 
 
+def _redirection_ends_scope(word: str, words) -> bool:
+    """Consume a redirection's target; True if that target closes the scope.
+
+    `>out` carries its target; a bare `>` takes the next word, which can
+    itself close the scope (`> /dev/null)`).
+    """
+    target = next(words, "") if _REDIRECTION.fullmatch(word) else ""
+    return _scope_end(target) is not None
+
+
 def _rev_parse_words(args: list[str]):
     """The words of one `rev-parse` call that git itself would see.
 
@@ -1321,10 +1331,7 @@ def _rev_parse_words(args: list[str]):
                 yield head
             return
         if _REDIRECTION.match(word):
-            # `>out` carries its target; a bare `>` takes the next word,
-            # which can itself close the scope (`> /dev/null)`).
-            target = next(words, "") if _REDIRECTION.fullmatch(word) else ""
-            if _scope_end(target) is not None:
+            if _redirection_ends_scope(word, words):
                 return
             continue
         yield word
