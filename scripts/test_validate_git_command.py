@@ -848,5 +848,249 @@ class NamedDirectoryWriteGate(unittest.TestCase):
         self.assertIn("cd /abs/path && git <subcommand>", out)
 
 
+class AdvisoriesReachTheModel(unittest.TestCase):
+    """Every advisory and reminder is one JSON object the model can read.
+
+    On PreToolUse, `systemMessage` is shown to the user only and plain stdout
+    goes to the debug log; `hookSpecificOutput.additionalContext` is what is
+    added to the model's context (code.claude.com/docs/en/hooks). Until #380
+    the advisories used only the first route and the reminders the second,
+    so the agent never saw any of them.
+    """
+
+    CASES: ClassVar[list[tuple[str, str, str]]] = [
+        ("named-directory advisory", "git status", "inherits its working directory"),
+        (
+            "run-poll advisory",
+            "while true; do gh run list --limit 5; sleep 30; done",
+            "Waiting on workflow runs",
+        ),
+        ("force-push reminder", "cd /repo && git push -f origin main", "Force push"),
+        (
+            "conventional-commit reminder",
+            'cd /repo && git commit -m "fixed stuff"',
+            "onventional",
+        ),
+    ]
+
+    def test_each_reaches_user_and_model_without_a_decision(self) -> None:
+        for name, command, text in self.CASES:
+            with self.subTest(name):
+                note = json.loads(run_hook(command))
+                self.assertIn(text, note["systemMessage"])
+                specific = note["hookSpecificOutput"]
+                self.assertEqual("PreToolUse", specific["hookEventName"])
+                self.assertIn(text, specific["additionalContext"])
+                self.assertNotIn("permissionDecision", specific)
+
+
+class RevParseShortManyRevisions(unittest.TestCase):
+    """`--short` (and the `--verify` it implies) take exactly one revision.
+
+    Two revisions always exit 128 with `fatal: Needed a single revision`, and
+    agents kept writing that to compare a local and a remote head (#380). Each
+    WARNS case was run against git 2.56.0 and failed; each QUIET case succeeds
+    there, or fails for an unrelated reason the advisory must not claim.
+    """
+
+    MARK = "takes exactly one revision"
+
+    WARNS: ClassVar[list[str]] = [
+        # The two cases #380 names.
+        "git rev-parse --short HEAD origin/main",
+        "git -C /x rev-parse --short=8 A B",
+        # The shape from the issue text, with a quoted directory.
+        'git -C "$REPO" rev-parse --short HEAD origin/main',
+        # Global options before the subcommand are skipped, not read as it.
+        "git -c core.abbrev=9 rev-parse --short HEAD origin/main",
+        "git --no-pager rev-parse --short HEAD origin/main",
+        # Other flags do not count as revisions, and do not rescue the call.
+        "git -C /x rev-parse --short --verify HEAD origin/main",
+        "git -C /x rev-parse --short=8 --quiet A B",
+        "git -C /x rev-parse --short --abbrev-ref HEAD origin/main",
+        "git -C /x rev-parse --short --symbolic HEAD origin/main",
+        # `--end-of-options` is not `--`: revisions still follow it.
+        "git -C /x rev-parse --short --end-of-options HEAD origin/main",
+        # A range is printed but not counted; the two plain revisions still
+        # are (exits 128).
+        "git -C /x rev-parse --short HEAD..origin/main HEAD origin/main",
+        # `--verify` alone has the same contract and the same failure.
+        "git -C /x rev-parse --verify HEAD origin/main",
+        # Compound commands: the invocation that fails is not the first one.
+        "git -C /x fetch origin && git -C /x rev-parse --short HEAD origin/main",
+        "git -C /x status -sb; git -C /x rev-parse --short HEAD origin/main",
+        "x=$(git -C /x rev-parse --short HEAD origin/main)",
+        # A payload a local shell runs is a command, not text.
+        "bash -c 'git -C /x rev-parse --short A B'",
+        # A repeated flag does not reset anything (exits 128).
+        "git -C /x rev-parse --verify HEAD --verify origin/main",
+        # Inside backticks, the closing one ends the call, not the revisions.
+        "echo `git -C /x rev-parse --short HEAD origin/main` done",
+        # A quoted or escaped `#` is an argument, not a comment (exits 128).
+        'git -C /x rev-parse --short HEAD "#x"',
+        "git -C /x rev-parse --short HEAD \\#x",
+        # A comment ends the line, not the command after the newline.
+        "git -C /x status  # look first\ngit -C /x rev-parse --short HEAD origin/main",
+        # A backtick operand is one revision, the next word another.
+        "git -C /x rev-parse --short `git -C /x rev-parse HEAD` origin/main",
+    ]
+
+    QUIET: ClassVar[list[str]] = [
+        # The three silent cases #380 names.
+        "git -C /x rev-parse --short HEAD",
+        "git -C /x rev-parse HEAD origin/main",
+        "git -C /x rev-parse --abbrev-ref HEAD",
+        # Without --short/--verify, several revisions are fine.
+        "git -C /x rev-parse --abbrev-ref HEAD origin/main",
+        "git -C /x rev-parse --verify --short HEAD",
+        # The two alternatives the advisory recommends.
+        "git -C /x rev-parse HEAD origin/main | cut -c1-7",
+        'for r in HEAD origin/main; do git -C /x rev-parse --short "$r"; done',
+        # One revision per call, in a compound command.
+        "git -C /x rev-parse --short HEAD; git -C /x rev-parse --short origin/main",
+        # `--default` takes HEAD as its value; origin/main is the one revision
+        # (exits 0).
+        "git -C /x rev-parse --short --default HEAD origin/main",
+        # After `--` come paths (exits 0).
+        "git -C /x rev-parse --short HEAD -- x y",
+        # A redirection is not a revision.
+        "git -C /x rev-parse --short HEAD 2>/dev/null",
+        "git -C /x rev-parse --short HEAD > out.txt",
+        "git -C /x rev-parse --short HEAD 2>&1",
+        # ... also when the `)` or backtick closing the call sits on it.
+        "echo $(git -C /x rev-parse --short HEAD 2>/dev/null) done",
+        "echo $(git -C /x rev-parse --short HEAD > /dev/null) done",
+        "echo `git -C /x rev-parse --short HEAD 2>/dev/null` `git -C /x log -1`",
+        # A range or parent shorthand is printed, not counted, in --verify
+        # mode (exit 0); alone it fails for having no revision at all.
+        "git -C /x rev-parse --short HEAD..origin/main HEAD",
+        "git -C /x rev-parse --short HEAD^! HEAD",
+        "git -C /x rev-parse --verify HEAD HEAD^@",
+        "git -C /x rev-parse --short HEAD...origin/main HEAD",
+        "git -C /x rev-parse --short HEAD~1..HEAD",
+        # A command substitution operand is one revision, and the `)` closing
+        # the substitution the call sits in is not a second one.
+        "git -C /x rev-parse --short $(git -C /x rev-parse HEAD)",
+        'git -C /x rev-parse --short "$(git -C /x rev-parse HEAD)"',
+        "x=$(git -C /x rev-parse --short HEAD) && echo $x",
+        # The same for backticks: both commands exit 0.
+        "echo sha: `git -C /x rev-parse --short HEAD` branch: `git -C /x branch`",
+        "echo `git -C /x rev-parse --short HEAD` done",
+        "git -C /x rev-parse --short `git -C /x rev-parse HEAD`",
+        # The flag applies to what follows it: full hash, then short (exits 0).
+        "git -C /x rev-parse HEAD --short origin/main",
+        "git -C /x rev-parse HEAD --verify origin/main",
+        # A trailing shell comment is not part of the command (exits 0).
+        "git -C /x rev-parse --short HEAD  # compare with remote",
+        "git -C /x rev-parse --short HEAD # vs origin/main",
+        # Nothing after the flag fails too, but not with two revisions.
+        "git -C /x rev-parse HEAD origin/main --short",
+        # Text about the command is not the command.
+        "echo 'git rev-parse --short HEAD origin/main'",
+        'git -C /x commit -m "docs: git rev-parse --short takes one revision A B"',
+        "cat > /tmp/note.md <<'EOF'\ngit rev-parse --short HEAD origin/main\nEOF",
+        # A mode in which the operands are not revisions.
+        "git -C /x rev-parse --sq-quote --short a b",
+    ]
+
+    def test_warns(self) -> None:
+        for command in self.WARNS:
+            with self.subTest(command=command):
+                out = run_hook(command)
+                self.assertIn(self.MARK, out)
+                self.assertNotEqual("deny", decision(out), "advisory, never deny")
+
+    def test_stays_quiet(self) -> None:
+        for command in self.QUIET:
+            with self.subTest(command=command):
+                self.assertNotIn(self.MARK, run_hook(command))
+
+    def test_the_message_names_the_failure_and_both_alternatives(self) -> None:
+        note = json.loads(run_hook("git -C /x rev-parse --short HEAD origin/main"))
+        for text in (note["systemMessage"], self._context(note)):
+            self.assertIn("fatal: Needed a single revision", text)
+            self.assertIn("rev-parse HEAD origin/main | cut -c1-7", text)
+            self.assertIn(
+                'for r in HEAD origin/main; do git -C "$REPO" rev-parse --short "$r"',
+                text,
+            )
+
+    def test_it_reaches_the_model_without_touching_the_permission_flow(self) -> None:
+        # systemMessage is shown to the user; additionalContext is what the
+        # model reads, and the model has to pick the alternative. Setting a
+        # permissionDecision would change whether the command runs at all.
+        note = json.loads(run_hook("git -C /x rev-parse --short HEAD origin/main"))
+        specific = note["hookSpecificOutput"]
+        self.assertEqual("PreToolUse", specific["hookEventName"])
+        self.assertIn(self.MARK, specific["additionalContext"])
+        self.assertNotIn("permissionDecision", specific)
+
+    def test_with_quiet_the_message_names_the_silent_failure(self) -> None:
+        # `--quiet` turns the fatal into a bare exit 1. Telling the model to
+        # expect a message it will never see would mislead it.
+        for command in (
+            "git -C /x rev-parse --short=8 --quiet A B",
+            "git -C /x rev-parse --verify -q HEAD origin/main",
+        ):
+            with self.subTest(command=command):
+                text = self._context(json.loads(run_hook(command)))
+                self.assertIn("fails silently with exit 1", text)
+                self.assertNotIn("exits 128", text)
+
+    def test_verify_alone_names_verify(self) -> None:
+        note = json.loads(run_hook("git -C /x rev-parse --verify HEAD origin/main"))
+        text = self._context(note)
+        self.assertIn("`git rev-parse --verify`", text)
+        self.assertIn('rev-parse --verify "$r"', text)
+        # Shortening is not what a --verify caller asked for.
+        self.assertNotIn("cut -c1-7", text)
+        self.assertNotIn("--short", text)
+
+    def test_it_wins_over_the_named_directory_advisory(self) -> None:
+        # A bare `git rev-parse` also matches the named-directory advisory, and
+        # only one message goes out per call. The certain failure goes first.
+        out = run_hook("git rev-parse --short HEAD origin/main")
+        self.assertIn(self.MARK, out)
+        self.assertNotIn("inherits its working directory", out)
+
+    def test_it_repeats_within_a_session(self) -> None:
+        # The once-per-session marker is for advisories that restate a general
+        # rule. This one reports a certain exit 128, and #380 saw the slip
+        # several times a day: a second slip needs the same help as the first.
+        with tempfile.TemporaryDirectory() as runtime:
+            env = dict(os.environ, XDG_RUNTIME_DIR=runtime, TMPDIR=runtime)
+            payload = json.dumps(
+                {
+                    "command": "git -C /x rev-parse --short HEAD origin/main",
+                    "session_id": "sess-380",
+                }
+            )
+            for attempt in (1, 2):
+                with self.subTest(attempt=attempt):
+                    result = subprocess.run(
+                        [sys.executable, str(HOOK)],
+                        input=payload,
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                        timeout=30,
+                        check=False,
+                    )
+                    self.assertIn(self.MARK, result.stdout)
+
+    def test_a_substitution_inside_double_quotes_is_not_seen(self) -> None:
+        # Characterization, not a goal: the shared invocation parser masks
+        # double-quoted runs whole, so a `$(…)` inside one is invisible to every
+        # check that uses it, the named-directory write gate included. Recorded
+        # so a widening of that parser has to face this case.
+        self.assertNotIn(
+            self.MARK, run_hook('echo "$(git -C /x rev-parse --short A B)"')
+        )
+
+    @staticmethod
+    def _context(note: dict) -> str:
+        return note["hookSpecificOutput"]["additionalContext"]
+
+
 if __name__ == "__main__":
     unittest.main()

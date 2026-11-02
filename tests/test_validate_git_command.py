@@ -128,10 +128,13 @@ def run(command: str) -> str:
     out = proc.stdout.strip()
     if not out:
         return "PASS"
-    if out.startswith("{"):
-        decision = json.loads(out)["hookSpecificOutput"]["permissionDecision"]
-        return "DENY" if decision == "deny" else "PASS"
-    return "REMINDER"
+    # Advisories and reminders are JSON too since #380 (so they reach the
+    # model through additionalContext); only a permissionDecision makes one a
+    # decision rather than a reminder.
+    specific = json.loads(out).get("hookSpecificOutput", {})
+    if "permissionDecision" not in specific:
+        return "REMINDER"
+    return "DENY" if specific["permissionDecision"] == "deny" else "PASS"
 
 
 def fifo_case() -> bool:
