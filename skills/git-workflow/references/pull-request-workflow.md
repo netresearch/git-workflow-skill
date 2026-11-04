@@ -3776,6 +3776,14 @@ glab api "projects/$P" | jq '{merge_method,squash_option,
 flag. That is the most common "the MR refuses to merge and nothing looks wrong"
 case — check it before hunting for approvals or failing jobs.
 
+`detailed_merge_status` is recomputed asynchronously after every push and
+server-side rebase. Read right after one, it can say `unchecked`, or even
+`conflict` while `has_conflicts` is `false`: one force-pushed MR showed exactly
+that pair while its new pipeline ran, and `mergeable` once the pipeline had
+finished. A status read in that window is not a finding. Re-read it after the
+head pipeline for the new SHA has finished, and take `has_conflicts` as the
+cross-check before rebasing anything.
+
 ### Replying to and resolving a thread
 
 Reply *into* the thread, never as a new top-level comment, then resolve and
@@ -3854,6 +3862,29 @@ git push --force-with-lease origin <source-branch>
 
 Re-run the preflight afterwards: the rebase produces a new head SHA, so the
 pipeline result you looked at no longer applies.
+
+### Stacked MRs: retarget the child first
+
+An MR that targets another MR's source branch is a stack, and
+`remove_source_branch_after_merge: true` (a common project default) deletes
+that branch when the parent merges. GitLab documents that it then retargets up
+to four open MRs to the branch the parent merged into, but only when the source
+branch is deleted as part of the merge; a branch deleted afterwards leaves the
+children pointing at nothing. The order below does not depend on either case,
+and it is the GitLab form of [Stacked PRs: retarget before you merge](#stacked-prs-retarget-before-you-merge---delete-branch-only-at-the-end):
+
+```bash
+glab mr update <child> --target-branch main   # 1. child off the parent's branch
+glab mr merge  <parent> --yes                 # 2. parent lands
+glab mr rebase <child>                        # 3. child onto the new main
+```
+
+After step 1 the child's diff temporarily includes the parent's commits. The
+rebase in step 3 drops them again, because the parent's patches are already on
+`main`. Check that `changes_count` and the commit list show only the child's
+own work, then wait for the new pipeline before merging. Observed on a two-MR
+stack in a `rebase_merge` project: after step 3 the child's diff held only its
+own commit.
 
 ## Upstream and Community PRs: the Maintainer Is Watching Every Push
 
