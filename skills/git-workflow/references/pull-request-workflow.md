@@ -36,7 +36,7 @@ classic branch protection, whose review gates like `require_last_push_approval`
 are invisible to the rules endpoint; the same gate set in a *ruleset* is a
 parameter of the `pull_request` rule and needs no admin token), and the output
 ends in a computed `NEXT:` — rebase, fix-ci,
-triage-ci, rerun-ci (every red job never got a runner), resolve-threads, address-comments, request-review, wait, or merge (with the method
+triage-ci, rerun-ci (every red job never got a runner), resolve-threads, address-comments, request-review, wait, stuck-queue-entry (a merge-queue entry that hangs in `AWAITING_CHECKS` after its queue runs finished green), or merge (with the method
 this repo actually allows and a warning when a merge queue is active). The
 JSON form carries each unresolved thread's `threadId` *and* `commentId`, which
 is everything needed to reply and resolve without another query.
@@ -3129,6 +3129,11 @@ for it. `pr-status.sh` reports both, as `queue=` and an `in queue` line, and
 answers `wait` rather than `merge` while an entry is held; `pr-merge.sh`
 refuses on that same verdict. Enqueueing an entry that already exists only
 restarts its checks and pushes the merge further out.
+The exception is an entry that stays `AWAITING_CHECKS` after every queue run
+finished green and nothing is in flight: there one dequeue + enqueue is the
+documented recovery, and `pr-status.sh` names it `stuck-queue-entry` — see
+`merge-gate-watcher.md`, "An entry stuck in AWAITING_CHECKS after its queue
+runs finished green".
 
 **`--delete-branch` is rejected while a merge queue is enabled.** `gh pr merge`
 fails outright with:

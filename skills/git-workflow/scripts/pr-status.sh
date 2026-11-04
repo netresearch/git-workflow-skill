@@ -22,6 +22,11 @@
 # status-check rule exists, and classic protection when it was not read yet.
 # They feed the evidence block printed under that NEXT line; with
 # `--watch --ignore-action investigate` they are skipped on every poll.
+# A PR holding a merge-queue entry in AWAITING_CHECKS that was enqueued at
+# least --stuck-after minutes ago pays one more REST read per snapshot: the
+# merge_group workflow runs of the queue commit (actions/runs, by head_sha).
+# Below that age the read is skipped, so a queue that moves normally costs
+# nothing extra.
 #
 # Usage:
 #   pr-status.sh                      # PR for the current branch
@@ -32,6 +37,11 @@
 #   pr-status.sh --watch --ignore-action request-review
 #                                     # hold through a standing action you have
 #                                     # decided not to take (repeatable)
+#   pr-status.sh --stuck-after 30     # minutes a merge-queue entry may sit in
+#                                     # AWAITING_CHECKS after its last queue run
+#                                     # completed green before NEXT names
+#                                     # stuck-queue-entry (default 15, or
+#                                     # PR_STATUS_STUCK_AFTER_MINUTES)
 #
 # --watch deliberately does not wait for every check to finish. It returns as
 # soon as something can be worked on: a failing check, a new annotation, or all
@@ -172,6 +182,14 @@ done
 SCRIPT_DIR="$(CDPATH='' cd -P "$(dirname "$script_path")" && pwd)"
 
 REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
+# Minutes a merge-queue entry may stay in AWAITING_CHECKS after every
+# merge_group run of its queue commit has completed green, before NEXT names
+# stuck-queue-entry instead of wait (t3x-nr-image-optimize#238 sat 75 min in
+# that state, while the PR before it merged 20 s after its last queue run).
+# An environment value that is not a positive integer gets the default; a bad
+# --stuck-after value is refused below.
+STUCK_AFTER="${PR_STATUS_STUCK_AFTER_MINUTES:-15}"
+[[ "$STUCK_AFTER" =~ ^[1-9][0-9]*$ ]] || STUCK_AFTER=15
 
 # Every action the watch loop returns on. --ignore-action accepts exactly
 # these: any other value could never have fired the loop, so accepting one
@@ -180,7 +198,7 @@ REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
 # are deliberately not in here. tests/test_pr_status_draft_watch.sh pins the
 # two lists against every action literal this script and its .jq programs can
 # emit — a new action must land in one of them.
-ACTIONABLE="fix-ci triage-ci rerun-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs fix-required-context"
+ACTIONABLE="fix-ci triage-ci rerun-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs fix-required-context stuck-queue-entry"
 
 die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
 
@@ -196,6 +214,10 @@ while [ $# -gt 0 ]; do
     --watch)    WATCH=1; shift ;;
     --interval) need "$@"; INTERVAL="$2"; shift 2 ;;
     --max-wait) need "$@"; MAXWAIT="$2"; shift 2 ;;
+    --stuck-after) need "$@"
+                   [[ "$2" =~ ^[1-9][0-9]*$ ]] \
+                     || die "--stuck-after: a positive number of minutes (got '$2')"
+                   STUCK_AFTER="$2"; shift 2 ;;
     --ignore-action) need "$@"
                      # Whitespace first: "fix-ci triage-ci" happens to be a
                      # substring of ACTIONABLE and would slip past in_list.
@@ -336,9 +358,11 @@ collect_raw() {
       # is the queue of its base branch; it rides along here at no extra call.
       # No apostrophes in these comments: the query is a single-quoted string.
       pullRequest(number:$pr){
-        number title state isDraft mergeable mergeStateStatus reviewDecision
+        id number title state isDraft mergeable mergeStateStatus reviewDecision
         mergeQueue{ id }
-        mergeQueueEntry{ state position estimatedTimeToMerge }
+        # enqueuedAt and the queue commit feed the stuck-queue-entry check in
+        # snapshot(); id is what dequeuePullRequest and enqueuePullRequest take.
+        mergeQueueEntry{ state position estimatedTimeToMerge enqueuedAt headCommit{ oid } }
         author{login __typename}
         baseRefName headRefName headRefOid isCrossRepository
         # When the body was last written, against committedDate of the head
@@ -481,7 +505,7 @@ complete_contexts() {
 # would discard the status flag.
 
 evaluate() {
-  local gql="$1" rules="$2" ok="$3" marker="$4" prot="${5:-null}" runs="${6:-[]}"
+  local gql="$1" rules="$2" ok="$3" marker="$4" prot="${5:-null}" runs="${6:-[]}" qruns="${7:-null}"
   # The jq program comes from a file and the JSON payloads from stdin, not
   # argv. Linux caps one argument at 128 KiB, which a pull request with long
   # comments passes; Windows caps the whole command line at 32767 characters,
@@ -490,6 +514,7 @@ evaluate() {
   # error instead of reading as "no rules".
   printf '%s\n' "$gql" "$rules" "$prot" "$runs" \
     | jq -n --argjson ok "$ok" --argjson marker "$marker" --arg marker_path "$QUOTA_MARKER" \
+         --argjson queue_runs "$qruns" --argjson stuck_after "$STUCK_AFTER" \
          -f "$SCRIPT_DIR/pr-status-evaluate.jq"
 }
 
@@ -772,7 +797,36 @@ snapshot() {
     fi
   fi
 
-  out=$(evaluate "$g" "$r" "$ok" "$(quota_marker_seen)" "$PROT" "$runs")
+  # A merge-queue entry can sit in AWAITING_CHECKS after every merge_group run
+  # of its queue commit has completed green, and GitHub never advances it
+  # (t3x-nr-image-optimize#238: 75 min, then one dequeue + enqueue merged it).
+  # The queue runs are read only for an entry in that state that is already
+  # older than the threshold: before then the runs cannot have been finished
+  # for that long, so the call would buy nothing. Filtered by head_sha, not by
+  # the pr-<n>- branch prefix, which also matches an earlier queue attempt.
+  # A failed read leaves `fetched: false` and the ladder keeps answering
+  # `wait` -- it understates rather than invents.
+  local qruns='null' q_oid q_age rq
+  if [[ "$(jq -r '.data.repository.pullRequest.mergeQueueEntry.state // ""' <<<"$g")" == "AWAITING_CHECKS" ]]; then
+    q_oid=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.headCommit.oid // ""' <<<"$g")
+    q_age=$(jq -r '(.data.repository.pullRequest.mergeQueueEntry.enqueuedAt // "") as $t
+                   | if $t == "" then -1 else (((now - ($t | fromdateiso8601)) / 60) | floor) end' <<<"$g" 2>/dev/null) || q_age=-1
+    if [[ -n "$q_oid" && "$q_age" =~ ^[0-9]+$ ]] && (( q_age >= STUCK_AFTER )); then
+      if rq=$(gh api "repos/$REPO/actions/runs?event=merge_group&head_sha=$q_oid&per_page=100" 2>/dev/null) \
+         && qruns=$(jq -c '{fetched: true,
+                            total: ([.workflow_runs[]?] | length),
+                            unfinished: ([.workflow_runs[]? | select(.status != "completed")] | length),
+                            not_green: ([.workflow_runs[]? | select(.status == "completed")
+                                         | select(.conclusion as $c | ["success", "skipped", "neutral"] | index($c) | not)
+                                         | "\(.name)=\(.conclusion)"]),
+                            names: ([.workflow_runs[]? | .name]),
+                            last_completed_at: ([.workflow_runs[]? | select(.status == "completed") | .updated_at] | max)}' \
+                     <<<"$rq" 2>/dev/null); then :
+      else qruns='{"fetched":false}'; fi
+    fi
+  fi
+
+  out=$(evaluate "$g" "$r" "$ok" "$(quota_marker_seen)" "$PROT" "$runs" "$qruns")
   # Written from the EVIDENCE field, never from the verdict: with
   # copilot_quota_exhausted the marker would re-assert itself, and the PR named
   # inside it would be whichever one read the file rather than the one that

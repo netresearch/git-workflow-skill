@@ -34,7 +34,9 @@
 #   pr-status.sh read                keep waiting once; on the second
 #                                    consecutive pass: attention
 #   anything else                    attention — request-review, a closed PR,
-#                                    an action this script does not know
+#                                    stuck-queue-entry (re-enqueue once is a
+#                                    judgement call, not a loop step), an
+#                                    action this script does not know
 #
 # A second `merge` for a PR whose earlier pr-merge.sh returned 0 is also an
 # attention stop: the entry most likely left the merge queue, and re-queuing
