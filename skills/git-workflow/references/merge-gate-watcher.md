@@ -321,6 +321,33 @@ indistinguishable from a flapping gate. Stop the old one when you rewrite the
 branch (`TaskStop`, or whatever ends the producer), and name the head in the
 watcher's description so a stale event is recognisable as stale.
 
+### The push landed, the pull request did not move
+
+The reverse case: the branch moved and the pull request did not. GitHub
+accepted the push (`git ls-remote` shows the new commit) but never processed it
+for the PR — `headRefOid` stays on the old commit and no workflow run exists for
+the new one. Every gate field then describes the old head, and the ladder
+answers `ready` or `merge` for a state that is gone
+(netresearch/typo3-core-contributions-skill#108: branch at `4c3a415`, PR head
+`465042a`, zero runs for `4c3a415` five minutes after the push).
+
+Run inside a checkout of the head branch, `pr-status.sh` compares the local
+HEAD with the PR head. Pushed but not on the PR: `NEXT: wait`, naming both
+commits. Not pushed yet: the verdict stands and a note says it covers the
+pushed head only. Outside such a checkout nothing is compared — run it from the
+worktree you pushed from.
+
+When the PR stays on the old head for several minutes and
+`gh api "repos/<o>/<r>/actions/runs?head_sha=<new sha>" --jq .total_count`
+answers `0`, the push event was lost — on that day during an open GitHub
+incident (see *A GitHub server error* in pull-request-workflow.md for the
+status check). Re-stamp the commit and push again; that produces a new push
+event, and the PR picked it up within seconds:
+
+```bash
+git commit --amend --no-edit && git push --force-with-lease
+```
+
 ## Check the producer is switched on before arming the watcher
 
 A watch whose event can never be produced is indistinguishable from one whose

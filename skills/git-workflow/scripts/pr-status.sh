@@ -637,6 +637,51 @@ render() {
   '
 }
 
+# ------------------------------------------------------ local head sync -----
+# A push can land on the branch while the PR keeps its old head: GitHub took the
+# ref update and never processed it for the pull request, so no workflow ran
+# for the new commit and every field above describes the OLD head. This ladder
+# then answered `ready` and `merge` for a state that no longer existed
+# (netresearch/typo3-core-contributions-skill#108: branch at 4c3a415, PR head
+# 465042a, zero runs for 4c3a415 five minutes after the push).
+#
+# The PR alone cannot show this; the checkout can. Run inside a checkout of the
+# head branch of a same-repository PR, the local HEAD is compared with the PR
+# head, and the remote branch is read once (only when the two differ):
+#   remote == local  -> pushed, PR not updated: NEXT becomes `wait`;
+#   remote == PR     -> local commits not pushed: NEXT kept, a note says so;
+#   anything else    -> nothing claimed.
+# Outside such a checkout, or when no remote points at $REPO, it is silent.
+local_head_sync() {
+  local out="$1" head head_oid local_oid remote url remote_oid note r
+  [ "$(jq -r '.cross_repository' <<<"$out")" = "false" ] || { printf '%s\n' "$out"; return; }
+  head=$(jq -r '.head' <<<"$out"); head_oid=$(jq -r '.headOid' <<<"$out")
+  if [ "$(git branch --show-current 2>/dev/null)" != "$head" ] \
+     || ! local_oid=$(git rev-parse HEAD 2>/dev/null) \
+     || [ "$local_oid" = "$head_oid" ]; then
+    printf '%s\n' "$out"; return
+  fi
+  remote=""
+  for r in $(git remote 2>/dev/null); do
+    url=$(git remote get-url "$r" 2>/dev/null) || continue
+    url="${url%/}"; url="${url%.git}"
+    case "$url" in (*[/:]"$REPO") remote="$r"; break ;; esac
+  done
+  [ -n "$remote" ] || { printf '%s\n' "$out"; return; }
+  remote_oid=$(git ls-remote "$remote" "refs/heads/$head" 2>/dev/null | cut -f1)
+  if [ "$remote_oid" = "$local_oid" ]; then
+    jq -c --arg l "${local_oid:0:8}" --arg p "${head_oid:0:8}" --arg b "$head" '
+      .next = {action: "wait",
+               why: "the branch \($b) is at \($l), but the PR still shows \($p): GitHub has not processed the push, so every line above describes the old head. Wait a minute and ask again; if the PR stays on \($p) and no workflow run exists for \($l), the push event was lost — re-stamp the commit and push again",
+               cmd: "git commit --amend --no-edit && git push --force-with-lease"}' <<<"$out"
+  elif [ "$remote_oid" = "$head_oid" ]; then
+    note="local HEAD ${local_oid:0:8} is not pushed yet; this verdict covers the pushed head ${head_oid:0:8} only"
+    jq -c --arg n "$note" '.next.note = (if .next.note then "\(.next.note); \($n)" else $n end)' <<<"$out"
+  else
+    printf '%s\n' "$out"
+  fi
+}
+
 snapshot() {
   local g r base st
   g=$(collect) || die "GraphQL query failed"
@@ -711,6 +756,7 @@ snapshot() {
   elif [ "$(jq -r '.copilot_quota_hit // false' <<<"$out")" = "true" ]; then
     remember_quota_hit
   fi
+  out=$(local_head_sync "$out")
   # The extra reads happen only here, on the one rung that explains nothing.
   # If building the evidence fails, the verdict still stands, and the why says
   # the evidence is absent rather than pointing at a block that is not there.

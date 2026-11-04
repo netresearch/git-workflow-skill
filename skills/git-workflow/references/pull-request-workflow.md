@@ -104,6 +104,35 @@ rollout hit each of them three times before the detection was written down
 once. Squash is never used — it discards the atomic commits and their
 signatures.
 
+### A GitHub server error: read the state, then retry once
+
+Three errors that come from GitHub's side, not from the request, all seen
+within half an hour on one pull request (netresearch/typo3-core-contributions-skill#108,
+2026-11-04), and each cleared by exactly one retry:
+
+| Where | Message |
+|---|---|
+| `git push` | `! [remote rejected] HEAD -> <branch> (fatal error in commit_refs_rules)` |
+| `gh` GraphQL, also inside `pr-status.sh` | `GraphQL: Something went wrong while executing your query` |
+| `pr-merge.sh` / `gh pr merge` | `non-200 OK status code: 502 Bad Gateway` |
+
+Before the retry, read what the failed call left behind: `git ls-remote origin
+refs/heads/<branch>` after a push, `pr-status.sh` after a merge. A failed call
+can still have done its work, and a 502 on the merge left the PR outside the
+queue — retrying blind would have hidden either outcome. Retry once; when the
+same message comes back, read GitHub's own status before anything else:
+
+```bash
+curl -s https://www.githubstatus.com/api/v2/summary.json \
+  | jq -r '.status.description, (.incidents[] | "\(.name) [\(.status)]"),
+           (.components[] | select(.status != "operational") | "\(.name): \(.status)")'
+```
+
+All four errors of that day fell inside one open incident ("Pull Requests,
+Git Operations and Issues", Pull Requests at `partial_outage`), the lost push
+event in *merge-gate-watcher.md* included. During an incident, stop and report
+it; a workaround built then fixes nothing that is yours.
+
 ### `--watch` returns on the first actionable event, not at full settle
 
 An `until [ pending == 0 ]` loop learns nothing until the slowest matrix job
