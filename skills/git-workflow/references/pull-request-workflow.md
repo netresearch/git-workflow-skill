@@ -3867,9 +3867,11 @@ pipeline result you looked at no longer applies.
 
 An MR that targets another MR's source branch is a stack, and
 `remove_source_branch_after_merge: true` (a common project default) deletes
-that branch when the parent merges. Whether GitLab then retargets the child on
-its own has not been measured here; the order below does not depend on it, and
-it is the GitLab form of [Stacked PRs: retarget before you merge](#stacked-prs-retarget-before-you-merge---delete-branch-only-at-the-end):
+that branch when the parent merges. GitLab documents that it then retargets up
+to four open MRs to the branch the parent merged into, but only when the source
+branch is deleted as part of the merge; a branch deleted afterwards leaves the
+children pointing at nothing. The order below does not depend on either case,
+and it is the GitLab form of [Stacked PRs: retarget before you merge](#stacked-prs-retarget-before-you-merge---delete-branch-only-at-the-end):
 
 ```bash
 glab mr update <child> --target-branch main   # 1. child off the parent's branch
