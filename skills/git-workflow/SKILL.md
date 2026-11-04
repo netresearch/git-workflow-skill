@@ -7,7 +7,7 @@ license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
 compatibility: "Requires uv (runs the scripts on Python 3.11 or later), git, gh CLI; yq for .spec-cleanup.yml. The plugin hook fails closed from Claude Code v2.1.295 (onFailure)."
 metadata:
   author: Netresearch DTT GmbH
-  version: "1.38.0"
+  version: "1.39.0"
   repository: https://github.com/netresearch/git-workflow-skill
 allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 ---
