@@ -93,6 +93,7 @@
 #
 #   state mergeable mergeState draft number title repo author author_is_bot
 #   viewer viewer_is_author attestation_available viewer_commits viewer_committed
+#   viewer_permission viewer_is_contributor
 #   authorship_complete commits_read commits_total
 #   base head headOid cross_repository
 #   checks checks_settled threads unresolved_threads
@@ -198,7 +199,7 @@ STUCK_AFTER="${PR_STATUS_STUCK_AFTER_MINUTES:-15}"
 # are deliberately not in here. tests/test_pr_status_draft_watch.sh pins the
 # two lists against every action literal this script and its .jq programs can
 # emit — a new action must land in one of them.
-ACTIONABLE="fix-ci triage-ci rerun-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs fix-required-context stuck-queue-entry"
+ACTIONABLE="fix-ci triage-ci rerun-ci resolve-threads address-comments request-review rebase resolve-conflicts merge blocked none fix-signatures ready investigate approve-workflow-runs fix-required-context stuck-queue-entry handed-over"
 
 die() { printf 'pr-status: %s\n' "$1" >&2; exit 2; }
 
@@ -351,6 +352,9 @@ collect_raw() {
     repository(owner:$owner,name:$name){
       nameWithOwner
       mergeCommitAllowed rebaseMergeAllowed squashMergeAllowed autoMergeAllowed
+      # READ or TRIAGE: a contributor, who can neither review into the gate
+      # nor merge, so the review and merge advice below does not apply.
+      viewerPermission
       # A merge queue set up through classic branch protection has no ruleset,
       # so the rules endpoint never lists it, queue_active read false, and
       # pr-merge.sh passed --delete-branch into a queue that refuses it

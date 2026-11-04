@@ -599,6 +599,11 @@
         attestation_available: $attestation_available,
         viewer_commits: $viewer_commits,
         viewer_committed: $viewer_committed,
+        # Empty when the response carries no permission (an older gh, a
+        # stub); unknown then counts as able to merge, the behaviour before
+        # this field was read.
+        viewer_permission: ($repo.viewerPermission // ""),
+        viewer_is_contributor: (($repo.viewerPermission // "") | IN("READ", "TRIAGE", "NONE")),
         authorship_complete: $authorship_complete,
         commits_read: $commits_read,
         commits_total: $commits_total,
@@ -897,6 +902,9 @@
                why:("draft — nothing running, mark ready when the work is done"
                     + (if ($s.undispatched|length) > 0
                        then " (\($s.undispatched|length) required context(s) not reported — dispatch happens on ready, or the runs await approval)"
+                       else "" end)
+                    + (if $s.viewer_is_contributor
+                       then ". This is your last step: you have \($s.viewer_permission) access to \($s.repo), so review and merge belong to its maintainers"
                        else "" end)),
                cmd:"gh pr ready \($s.number) --repo \($s.repo)"}
             end)
@@ -961,7 +969,9 @@
          # the failure mode this tool exists to prevent (#310, observed on
          # netresearch/simple-ldap-go#227: 29 check runs before a force-push,
          # 6 after, eight runs waiting).
-         elif (($s.awaiting_approval|length) > 0) then
+         # A contributor cannot approve the runs; the branch for them below
+         # names the waiting runs instead.
+         elif (($s.awaiting_approval|length) > 0) and ($s.viewer_is_contributor | not) then
            {action:"approve-workflow-runs",
             why:("\($s.awaiting_approval|length) workflow run(s) on \($s.headOid[0:8]) await maintainer approval"
                  + " — \([$s.awaiting_approval[].name]|unique|join(", "))."
@@ -1029,6 +1039,28 @@
                  + " Note: gh pr update-branch re-writes the head UNSIGNED;"
                  + " rebase locally instead"),
             cmd:"git rebase --exec \"git commit --amend --no-edit -S\" $(git merge-base HEAD origin/\($s.base)) ; git push --force-with-lease"}
+         # A contributor (READ or TRIAGE on the base repository) has done all
+         # there is to do once the branches above are clear: a review from
+         # them does not count toward the gate, requesting reviewers and
+         # approving runs need write access, and the merge is refused. Every
+         # branch below hands over one of those, so they end here.
+         # Observed on FriendsOfTYPO3/fractor#443: READ access, and NEXT told
+         # the author to review the diff themselves and merge with
+         # pr-merge.sh --self-reviewed.
+         # Running checks hold the wait, as in the draft branch: a red one
+         # is still the contributor's to fix. Only RUNNING ones, because runs
+         # awaiting approval or contexts never dispatched wait on a maintainer.
+         elif $s.viewer_is_contributor then
+           (if ($s.checks.pending > 0) or (($s.checks.not_started_busy_runs|length) > 0) then
+              {action:"wait",
+               why:"\($s.checks.pending) check(s) still running — after that, review and merge belong to the maintainers of \($s.repo) (you have \($s.viewer_permission) access)"}
+            else
+              {action:"handed-over",
+               why:("you have \($s.viewer_permission) access to \($s.repo), so review, workflow-run approval and merge belong to its maintainers — nothing left to do on \($s.headOid[0:8]) until one of them answers"
+                    + (if (($s.awaiting_approval|length) > 0)
+                       then "; \($s.awaiting_approval|length) workflow run(s) await their approval (\([$s.awaiting_approval[].name]|unique|join(", ")))"
+                       else "" end))}
+            end)
          # An approval that does not count: classic protection with
          # require_last_push_approval discounts an approval from whoever
          # pushed last, so reviewDecision sits at REVIEW_REQUIRED with an

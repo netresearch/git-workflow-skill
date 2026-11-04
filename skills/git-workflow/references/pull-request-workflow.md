@@ -602,6 +602,24 @@ head, and `pr-merge.sh` refusing.
 The guarantee that does not change: a comment posted by somebody else *after*
 your last word still raises the rung, on a bot pull request as anywhere else.
 
+### Your pull request to a repository you cannot write to
+
+With `READ` or `TRIAGE` access to the base repository (`viewerPermission`,
+read by `pr-status.sh`), review, reviewer requests, workflow-run approval and
+the merge all belong to the maintainers. Your part ends earlier:
+
+1. Fix what is yours: conflicts, a stale base, red checks, open threads,
+   unanswered comments, unsigned commits.
+2. Take the pull request out of draft. This is the last step; `NEXT: ready`
+   says so in its reason.
+3. `NEXT: handed-over` follows. Nothing is left to do until a maintainer
+   answers. `--watch` returns on it, and still holds while checks run.
+
+The review and merge advice of the rungs below never reaches you: it named
+`pr-merge.sh --self-reviewed` on FriendsOfTYPO3/fractor#443, where the author
+had `READ` access and could merge nothing. An unknown permission (an older
+`gh`) keeps the previous advice.
+
 ### Taking over a contributor's fork pull request (#308)
 
 A contributor opens a pull request from their fork, CI cannot be satisfied from
