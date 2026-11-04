@@ -648,38 +648,67 @@ render() {
 # The PR alone cannot show this; the checkout can. Run inside a checkout of the
 # head branch of a same-repository PR, the local HEAD is compared with the PR
 # head, and the remote branch is read once (only when the two differ):
-#   remote == local  -> pushed, PR not updated: NEXT becomes `wait`;
-#   remote == PR     -> local commits not pushed: NEXT kept, a note says so;
+#   remote == local  -> pushed, PR not updated: NEXT becomes `wait`, with a
+#                       re-push command that names remote and branch, and no
+#                       command at all while the index holds staged changes
+#                       (the amend would fold them into the pushed commit);
+#   remote == PR     -> NEXT kept, a note says whether local HEAD is ahead
+#                       (not pushed yet), behind or diverged; when the PR head
+#                       is not in the local object store, it says it cannot tell;
 #   anything else    -> nothing claimed.
-# Outside such a checkout, or when no remote points at $REPO, it is silent.
+# Only a remote on the GitHub host (GH_HOST, default github.com) whose path is
+# $REPO counts, compared case-insensitively as GitHub does; a mirror with the
+# same owner/repo on another host proves nothing about this PR. Outside such a
+# checkout, or without such a remote, it is silent.
 local_head_sync() {
-  local out="$1" head head_oid local_oid remote url remote_oid note r
-  [ "$(jq -r '.cross_repository' <<<"$out")" = "false" ] || { printf '%s\n' "$out"; return; }
-  head=$(jq -r '.head' <<<"$out"); head_oid=$(jq -r '.headOid' <<<"$out")
-  if [ "$(git branch --show-current 2>/dev/null)" != "$head" ] \
-     || ! local_oid=$(git rev-parse HEAD 2>/dev/null) \
-     || [ "$local_oid" = "$head_oid" ]; then
+  local out="$1" head head_oid local_oid remote="" url want host r remote_oid note cmd why
+  if [[ "$(jq -r '.cross_repository' <<<"$out")" != "false" ]]; then
     printf '%s\n' "$out"; return
   fi
-  remote=""
+  head=$(jq -r '.head' <<<"$out"); head_oid=$(jq -r '.headOid' <<<"$out")
+  if [[ "$(git branch --show-current 2>/dev/null)" != "$head" ]] \
+     || ! local_oid=$(git rev-parse HEAD 2>/dev/null) \
+     || [[ "$local_oid" == "$head_oid" ]]; then
+    printf '%s\n' "$out"; return
+  fi
+  want=$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')
+  host=$(printf '%s' "${GH_HOST:-github.com}" | tr '[:upper:]' '[:lower:]')
   for r in $(git remote 2>/dev/null); do
     url=$(git remote get-url "$r" 2>/dev/null) || continue
-    url="${url%/}"; url="${url%.git}"
-    case "$url" in (*[/:]"$REPO") remote="$r"; break ;; esac
+    url=$(printf '%s' "${url%/}" | tr '[:upper:]' '[:lower:]'); url="${url%.git}"
+    case "$url" in
+      (*"$host"[/:]"$want") remote="$r"; break ;;
+      (*) ;;
+    esac
   done
-  [ -n "$remote" ] || { printf '%s\n' "$out"; return; }
-  remote_oid=$(git ls-remote "$remote" "refs/heads/$head" 2>/dev/null | cut -f1)
-  if [ "$remote_oid" = "$local_oid" ]; then
-    jq -c --arg l "${local_oid:0:8}" --arg p "${head_oid:0:8}" --arg b "$head" '
-      .next = {action: "wait",
-               why: "the branch \($b) is at \($l), but the PR still shows \($p): GitHub has not processed the push, so every line above describes the old head. Wait a minute and ask again; if the PR stays on \($p) and no workflow run exists for \($l), the push event was lost — re-stamp the commit and push again",
-               cmd: "git commit --amend --no-edit && git push --force-with-lease"}' <<<"$out"
-  elif [ "$remote_oid" = "$head_oid" ]; then
-    note="local HEAD ${local_oid:0:8} is not pushed yet; this verdict covers the pushed head ${head_oid:0:8} only"
-    jq -c --arg n "$note" '.next.note = (if .next.note then "\(.next.note); \($n)" else $n end)' <<<"$out"
-  else
-    printf '%s\n' "$out"
+  if [[ -z "$remote" ]]; then
+    printf '%s\n' "$out"; return
   fi
+  remote_oid=$(git ls-remote "$remote" "refs/heads/$head" 2>/dev/null | cut -f1)
+  if [[ -n "$remote_oid" && "$remote_oid" == "$local_oid" ]]; then
+    why="the branch $head is at ${local_oid:0:8}, but the PR still shows ${head_oid:0:8}: GitHub has not processed the push, so every line above describes the old head. Wait a minute and ask again; if the PR stays on ${head_oid:0:8} and no workflow run exists for ${local_oid:0:8}, the push event was lost — re-stamp the commit and push again"
+    cmd="git commit --amend --no-edit && git push --force-with-lease $remote HEAD:refs/heads/$head"
+    if ! git diff --cached --quiet 2>/dev/null; then
+      why="$why. The index holds staged changes an amend would fold into the commit: commit or unstage them first"
+      cmd=""
+    fi
+    jq -c --arg why "$why" --arg cmd "$cmd" \
+      '.next = ({action: "wait", why: $why} + (if $cmd == "" then {} else {cmd: $cmd} end))' <<<"$out"
+    return
+  fi
+  if [[ -z "$remote_oid" || "$remote_oid" != "$head_oid" ]]; then
+    printf '%s\n' "$out"; return
+  fi
+  if ! git cat-file -e "${head_oid}^{commit}" 2>/dev/null; then
+    note="local HEAD ${local_oid:0:8} differs from the PR head ${head_oid:0:8}, which is not in this checkout; fetch to tell whether it is ahead or behind"
+  elif git merge-base --is-ancestor "$local_oid" "$head_oid" 2>/dev/null; then
+    note="local checkout is behind the PR head (${local_oid:0:8} < ${head_oid:0:8}); pull before working on it"
+  elif git merge-base --is-ancestor "$head_oid" "$local_oid" 2>/dev/null; then
+    note="local HEAD ${local_oid:0:8} is not pushed yet; this verdict covers the pushed head ${head_oid:0:8} only"
+  else
+    note="local HEAD ${local_oid:0:8} has diverged from the PR head ${head_oid:0:8}; this verdict covers the pushed head only"
+  fi
+  jq -c --arg n "$note" '.next.note = (if .next.note then "\(.next.note); \($n)" else $n end)' <<<"$out"
 }
 
 snapshot() {

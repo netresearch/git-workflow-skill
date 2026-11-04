@@ -31,7 +31,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.org
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.org
 
-mkdir -p "$WORK/stub" "$WORK/remote/o"
+mkdir -p "$WORK/stub" "$WORK/remote/github.com/o" "$WORK/remote/git.example.org/o"
 printf '%s\n' '[]' > "$WORK/rules.json"
 cat > "$WORK/stub/gh" <<STUB
 #!/usr/bin/env bash
@@ -44,17 +44,20 @@ cat "$WORK/graphql.json"
 STUB
 chmod +x "$WORK/stub/gh"
 
-# The remote's path ends in o/r.git, as a GitHub URL for -R o/r would.
-git init -q --bare "$WORK/remote/o/r.git"
+# The remote's path ends in github.com/o/r.git, as git@github.com:o/r.git
+# does; the remote on another host carries the same owner/repo path.
+git init -q --bare "$WORK/remote/github.com/o/r.git"
+git init -q --bare "$WORK/remote/git.example.org/o/r.git"
 git init -q -b f "$WORK/clone"
-git -C "$WORK/clone" remote add origin "$WORK/remote/o/r.git"
+git -C "$WORK/clone" remote add origin "$WORK/remote/github.com/o/r.git"
 git -C "$WORK/clone" commit -q --allow-empty -m one
 git -C "$WORK/clone" push -q origin f
 FIRST="$(git -C "$WORK/clone" rev-parse HEAD)"
 
 # graphql <head oid> — a clean, approved, green PR whose head is <head oid>.
 graphql() {
-  python3 - "$WORK/graphql.json" "$1" <<'PY'
+  local head="$1"
+  python3 - "$WORK/graphql.json" "$head" <<'PY'
 import sys, json
 path, head = sys.argv[1:3]
 json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
@@ -85,10 +88,10 @@ json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
 PY
 }
 
-# check <name> <want action> <jq predicate on the --json output>
+# check <name> <want action> <jq predicate on the --json output> [<-R value>]
 check() {
-  local name="$1" want="$2" pred="$3" json got
-  json="$(cd "$WORK/clone" && PATH="$WORK/stub:$PATH" bash "$SCRIPT" -R o/r 7 --json)"
+  local name="$1" want="$2" pred="$3" repo="${4:-o/r}" json got
+  json="$(cd "$WORK/clone" && PATH="$WORK/stub:$PATH" bash "$SCRIPT" -R "$repo" 7 --json)"
   got="$(jq -r '.next.action' <<<"$json")"
   if [[ "$got" == "$want" ]] && jq -e "$pred" <<<"$json" >/dev/null; then
     echo "  ok   $name"
@@ -112,7 +115,33 @@ check "local commit not pushed yet: verdict kept, note added" merge \
 git -C "$WORK/clone" push -q origin f
 check "pushed but the PR still shows the old head: wait" wait \
       '(.next.why | test("not processed") and test("'"${SECOND:0:8}"'") and test("'"${FIRST:0:8}"'"))
-       and (.next.cmd | test("--force-with-lease"))'
+       and (.next.cmd | test("--force-with-lease origin HEAD:refs/heads/f$"))'
+
+# GitHub compares owner and repo names case-insensitively, so must this.
+check "-R in other letter case still finds the remote" wait \
+      '.next.why | test("not processed")' O/R
+
+# Following the command would fold staged, unrelated work into the commit.
+echo x > "$WORK/clone/unrelated"
+git -C "$WORK/clone" add unrelated
+check "staged changes: no amend command, why says so" wait \
+      '(.next.cmd == null) and (.next.why | test("staged"))'
+git -C "$WORK/clone" rm -q --cached unrelated
+rm "$WORK/clone/unrelated"
+
+# A remote on another host with the same owner/repo path is not the PR's.
+git -C "$WORK/clone" remote set-url origin "$WORK/remote/git.example.org/o/r.git"
+git -C "$WORK/clone" push -q origin f
+check "the same path on another host is not the GitHub remote: unchanged" merge \
+      '(.next.why | test("not processed") | not) and (.next.note // "" | test("not pushed") | not)'
+git -C "$WORK/clone" remote set-url origin "$WORK/remote/github.com/o/r.git"
+
+# Local checkout behind the PR head: nothing is unpushed.
+graphql "$SECOND"
+git -C "$WORK/clone" reset -q --hard "$FIRST"
+check "local checkout behind the PR head: note says behind, not unpushed" merge \
+      '(.next.note | test("behind")) and (.next.note | test("not pushed") | not)'
+git -C "$WORK/clone" reset -q --hard "$SECOND"
 
 git -C "$WORK/clone" checkout -q -b other
 check "a different branch is checked out: unchanged" merge \

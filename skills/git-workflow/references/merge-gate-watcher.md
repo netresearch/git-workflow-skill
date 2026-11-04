@@ -332,20 +332,24 @@ answers `ready` or `merge` for a state that is gone
 `465042a`, zero runs for `4c3a415` five minutes after the push).
 
 Run inside a checkout of the head branch, `pr-status.sh` compares the local
-HEAD with the PR head. Pushed but not on the PR: `NEXT: wait`, naming both
-commits. Not pushed yet: the verdict stands and a note says it covers the
-pushed head only. Outside such a checkout nothing is compared — run it from the
-worktree you pushed from.
+HEAD with the PR head, through the remote on the GitHub host whose path is the
+`-R` repository (case-insensitive; a mirror on another host does not count).
+Pushed but not on the PR: `NEXT: wait`, naming both commits, with the re-push
+below as `cmd` — left out while the index holds staged changes, which the
+amend would fold into the commit. Local HEAD ahead of, behind or diverged from
+the pushed head: the verdict stands and a note says which. Outside such a
+checkout nothing is compared — run it from the worktree you pushed from.
 
 When the PR stays on the old head for several minutes and
 `gh api "repos/<o>/<r>/actions/runs?head_sha=<new sha>" --jq .total_count`
 answers `0`, the push event was lost — on that day during an open GitHub
 incident (see *A GitHub server error* in pull-request-workflow.md for the
 status check). Re-stamp the commit and push again; that produces a new push
-event, and the PR picked it up within seconds:
+event, and the PR picked it up within seconds. Check `git diff --cached` is
+empty first, and name remote and branch, since the branch may have no upstream:
 
 ```bash
-git commit --amend --no-edit && git push --force-with-lease
+git commit --amend --no-edit && git push --force-with-lease <remote> HEAD:refs/heads/<branch>
 ```
 
 ## Check the producer is switched on before arming the watcher

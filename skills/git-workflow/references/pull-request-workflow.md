@@ -116,8 +116,9 @@ within half an hour on one pull request (netresearch/typo3-core-contributions-sk
 | `gh` GraphQL, also inside `pr-status.sh` | `GraphQL: Something went wrong while executing your query` |
 | `pr-merge.sh` / `gh pr merge` | `non-200 OK status code: 502 Bad Gateway` |
 
-Before the retry, read what the failed call left behind: `git ls-remote origin
-refs/heads/<branch>` after a push, `pr-status.sh` after a merge. A failed call
+Before the retry, read what the failed call left behind: `git ls-remote <remote>
+refs/heads/<branch>` after a push, with `<remote>` the one you pushed to, and
+`pr-status.sh` after a merge. A failed call
 can still have done its work, and a 502 on the merge left the PR outside the
 queue — retrying blind would have hidden either outcome. Retry once; when the
 same message comes back, read GitHub's own status before anything else:
