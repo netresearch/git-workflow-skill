@@ -9,16 +9,42 @@ When waiting on PR CI from the command line (or an agent), use the native
 watchers — do not hand-roll a poll loop:
 
 ```bash
-# Wait for all PR checks; exits non-zero if any required check fails.
+# Block until the checks visible on the PR stop being pending.
 gh pr checks <pr> --repo <owner/repo> --watch --fail-fast
+
+# Then read the verdict: checks, required contexts, reviews, rulesets, threads.
+pr-status.sh -R <owner/repo> <pr>
 
 # Watch a single workflow run by ID (when you have the run, not the PR).
 gh run watch <run-id> --repo <owner/repo> --exit-status
 ```
 
-Gate on the **exit code**, not on parsed output. `gh pr checks` and
-`gh run watch` already handle pending-state representation, the appearance of
-newly-triggered runs, and refresh.
+**The exit code of `gh pr checks --watch` is not a merge-readiness verdict.**
+Use it to block, never as the evidence for "green". In gh 2.102.0
+(`pkg/cmd/pr/checks/checks.go`) the watch loop re-reads the PR's status-check
+rollup every interval and stops as soon as *no check in that rollup* is
+pending (or, with `--fail-fast`, at the first failed one). It then exits 1 if
+a check in that set failed and 0 otherwise; exit 8 ("checks pending") can only
+come from a run without `--watch`. Two things follow:
+
+- It only knows the checks that have **reported** at that moment. A required
+  context that has not registered yet (a workflow still being queued, a check
+  started by another workflow's completion, a context the ruleset expects but
+  nothing ever posts) is not in the rollup, so it is neither pending nor failed.
+- Without `--required` it counts every visible check, required or not; with
+  `--required` it counts the required ones *that have reported*. Neither form
+  compares the result against the ruleset's list of required contexts.
+
+Observed: `gh pr checks <n> --watch --fail-fast` exited **0** on a docs-only PR
+while eight required unit-test cells were red. Reading the exit code alone
+would have reported the PR as green.
+
+So block on the watcher, then take the answer from `pr-status.sh`, which
+reports checks, required contexts, reviews, rulesets and unresolved threads
+together and ends with a `NEXT:` line (its `checks_settled` field is described
+below). `gh run watch <id> --exit-status` is a sound gate for **one** run whose
+id you already resolved — but only for that run; see `merge-gate-watcher.md`
+for why a hand-written watcher settles early on an empty or incomplete set.
 
 ### `$(gh api … || echo "")` captures the ERROR BODY as data
 

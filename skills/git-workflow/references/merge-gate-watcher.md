@@ -524,6 +524,16 @@ RID=$(gh api "repos/$R/actions/runs?head_sha=$SHA&per_page=100" \
 gh run watch "$RID" --repo "$R" --exit-status
 ```
 
+The same trap without a SHA: a post-merge deploy watcher that polls "the latest run of workflow X" (`gh run list --workflow update.yml --limit 1`) gets the **previous** deploy until the new run is created, and reports a deploy from an hour ago as finished. Bind it to the merge — by the merge commit's SHA as above, or for a workflow that does not run on that commit (a `workflow_run` or scheduled deploy) by a cutoff at the PR's `mergedAt`, keeping only runs created after it:
+
+```bash
+CUT=$(gh pr view "$PR" --repo "$R" --json mergedAt --jq .mergedAt)
+gh run list --repo "$R" --workflow update.yml --limit 20 --json databaseId,createdAt,status,conclusion \
+  --jq "[.[] | select(.createdAt > \"$CUT\")] | sort_by(.createdAt) | last"
+```
+
+An empty answer (`gh` prints nothing for the `null` of an empty list) means the deploy has not started yet, not that it finished. Before believing any watcher, ask what it would report if the work had not started.
+
 ### A file read right after a merge can still return the pre-merge content
 
 `contents/<path>?ref=<branch>` has been observed answering with pre-merge content immediately after a merge. A post-merge verification that reads the branch ref can therefore report the merged change as **absent** — an invented regression, produced by measuring too early rather than by anything being wrong. The mechanism is not established here (no attempt was made to reproduce it against a controlled merge); what is established is that the branch ref answered stale and the merge commit answered correctly. Address the merge commit, the same way the rest of this section does:
