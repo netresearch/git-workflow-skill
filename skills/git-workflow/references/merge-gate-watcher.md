@@ -527,10 +527,13 @@ gh run watch "$RID" --repo "$R" --exit-status
 The same trap without a SHA: a post-merge deploy watcher that polls "the latest run of workflow X" (`gh run list --workflow update.yml --limit 1`) gets the **previous** deploy until the new run is created, and reports a deploy from an hour ago as finished. Bind it to the merge — by the merge commit's SHA as above, or for a workflow that does not run on that commit (a `workflow_run` or scheduled deploy) by a cutoff at the PR's `mergedAt`, keeping only runs created after it:
 
 ```bash
-CUT=$(gh pr view "$PR" --repo "$R" --json mergedAt --jq .mergedAt)
+CUT=$(gh pr view "$PR" --repo "$R" --json mergedAt --jq .mergedAt) || exit 1
+[ -n "$CUT" ] || { echo "PR $PR is not merged" >&2; exit 1; }   # an empty cutoff keeps every run
 gh run list --repo "$R" --workflow update.yml --limit 20 --json databaseId,createdAt,status,conclusion \
-  --jq "[.[] | select(.createdAt > \"$CUT\")] | sort_by(.createdAt) | last"
+  --jq "[.[] | select(.createdAt >= \"$CUT\")] | sort_by(.createdAt) | last"
 ```
+
+Both timestamps have whole seconds, so `>=` keeps a run created in the merge's own second; such a run can belong to an earlier trigger, so confirm it by its `event` or `headSha` where the workflow runs on the merge commit.
 
 An empty answer (`gh` prints nothing for the `null` of an empty list) means the deploy has not started yet, not that it finished. Before believing any watcher, ask what it would report if the work had not started.
 

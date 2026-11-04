@@ -9,11 +9,13 @@ When waiting on PR CI from the command line (or an agent), use the native
 watchers — do not hand-roll a poll loop:
 
 ```bash
-# Block until the checks visible on the PR stop being pending.
-gh pr checks <pr> --repo <owner/repo> --watch --fail-fast
+# Block until the checks visible on the PR stop being pending. Its exit code
+# is not the verdict, so it must not stop a `set -e` script either.
+gh pr checks <pr> --repo <owner/repo> --watch --fail-fast || true
 
 # Then read the verdict: checks, required contexts, reviews, rulesets, threads.
-pr-status.sh -R <owner/repo> <pr>
+# The script is not on PATH; bind $GW as in pull-request-workflow.md.
+bash "$GW/scripts/pr-status.sh" -R <owner/repo> <pr>
 
 # Watch a single workflow run by ID (when you have the run, not the PR).
 gh run watch <run-id> --repo <owner/repo> --exit-status
