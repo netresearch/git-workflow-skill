@@ -645,7 +645,14 @@
         queue_entry: (if $p.mergeQueueEntry then
                         {state: $p.mergeQueueEntry.state,
                          position: $p.mergeQueueEntry.position,
-                         eta: $p.mergeQueueEntry.estimatedTimeToMerge}
+                         eta: $p.mergeQueueEntry.estimatedTimeToMerge,
+                         enqueued_at: ($p.mergeQueueEntry.enqueuedAt // null),
+                         head_oid: ($p.mergeQueueEntry.headCommit.oid // null),
+                         # The merge_group runs of the queue commit, read by
+                         # pr-status.sh only for an AWAITING_CHECKS entry older
+                         # than --stuck-after; null when not read. Passed as a
+                         # file (--slurpfile), so it arrives wrapped in an array.
+                         runs: ($queue_runs_f[0] // null)}
                       else null end)
       }
     # ---- next valid action, highest-priority first -------------------------
@@ -899,6 +906,39 @@
          # every review and merge branch: GitHub already let this PR past the
          # rulesets when it accepted the entry, so "request a review" or
          # "merge" here is advice that would dequeue it and start over.
+         #
+         # One exception, checked first: the entry still says AWAITING_CHECKS
+         # although every merge_group run of its queue commit completed green
+         # at least --stuck-after minutes ago and none is queued or running.
+         # Waiting did not move such an entry (t3x-nr-image-optimize#238, 75
+         # min); one dequeue + enqueue did. Nothing is in flight, so the
+         # re-enqueue cancels no queue run. Zero runs is NOT this case: "every
+         # run has finished" is vacuously true before any run exists. Only
+         # Actions runs are read; a required context from another app is not
+         # checked here, which the why says.
+         elif ($s.queue_entry != null and $s.queue_entry.state == "AWAITING_CHECKS"
+               and ($s.queue_entry.runs | type) == "object"
+               and $s.queue_entry.runs.fetched == true
+               and $s.queue_entry.runs.total > 0
+               and $s.queue_entry.runs.unfinished == 0
+               and ($s.queue_entry.runs.not_green | length) == 0
+               and $s.queue_entry.runs.last_completed_at != null
+               and (((now - ($s.queue_entry.runs.last_completed_at | fromdateiso8601)) / 60) | floor) >= $stuck_after) then
+           ((((now - ($s.queue_entry.runs.last_completed_at | fromdateiso8601)) / 60) | floor) as $idle
+            | ($p.id // "<PR node id>") as $prid
+            | {action:"stuck-queue-entry",
+               why:("in the merge queue (AWAITING_CHECKS) since \($s.queue_entry.enqueued_at // "unknown"),"
+                    + " but all \($s.queue_entry.runs.total) merge_group run(s) on queue commit"
+                    + " \(($s.queue_entry.head_oid // "")[0:8]) (\($s.queue_entry.runs.names | join(", ")))"
+                    + " completed green \($idle) min ago and none is queued or running."
+                    + " This tool cannot see the required contexts: compare them with the check runs"
+                    + " and commit statuses on that commit first. Only if every required context"
+                    + " reported green, re-enqueue ONCE: dequeue + enqueue (cmd); if one has no check run"
+                    + " from its app and no commit status, fix that producer and do not re-enqueue."
+                    + " If it hangs again, diagnose instead of looping;"
+                    + " cause not determined (references/merge-gate-watcher.md, stuck in AWAITING_CHECKS)"),
+               cmd:("gh api graphql -f id=\($prid) -f query='mutation($id:ID!){dequeuePullRequest(input:{id:$id}){clientMutationId}}'"
+                    + " && gh api graphql -f id=\($prid) -f query='mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{state}}}'")})
          elif ($s.queue_entry != null) then
            {action:"wait",
             why:("already in the merge queue at position \($s.queue_entry.position)"

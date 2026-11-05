@@ -639,11 +639,56 @@ Re-adding a PR to the merge queue **cancels the queue run in progress**, so a re
 
 The loop's trigger was a false ejection: the GraphQL `mergeQueue.entries` list reads **transiently empty** for an entry that is still queued. Requiring two consecutive empty reads did not fix it; the signal is wrong, not noisy. Let one queue attempt run to completion, and re-queue only when the latest queue event on the timeline is `removed_from_merge_queue`, with no `added_to_merge_queue` or `merged` after it, never because the entry is missing from the queue list. When a required check on the queue branch never reports, diff required against reported contexts, and check whether something you are doing is cancelling the run.
 
+### An entry stuck in AWAITING_CHECKS after its queue runs finished green
+
+This is neither of the cases above: the entry formed (unlike [a PR that never enters the queue](#auto-merge-armed--clean-but-never-enqueued-disablere-enable-to-nudge)) and was not dropped (unlike [a queued PR that silently leaves](#a-queued-pr-can-silently-leave-the-merge-queue)). It stays in the queue with `mergeQueueEntry.state` `AWAITING_CHECKS`, although every `merge_group` run of its queue commit has completed green and nothing is queued or running, and GitHub does not advance it.
+
+Measured 2026-11-04 on [netresearch/t3x-nr-image-optimize#238](https://github.com/netresearch/t3x-nr-image-optimize/pull/238): enqueued 10:55:24Z, queue commit `e16d08a3e53d275231b38e635841b847d9b3fbc6` on `gh-readonly-queue/main/pr-238-…`; its three `merge_group` runs (CI, Checks, Template Drift) completed `success` by 10:59:14Z, and all 12 required contexts of the `required_status_checks` rules had a successful check run on that commit. The entry stayed `AWAITING_CHECKS` until 12:11, 75 minutes; the queue's `check_response_timeout_minutes` was 180, so the timeout would not have released it for hours. PR #236 in the same repository, same setup, merged 20 s after its last queue run finished that morning. `pr-status.sh --watch` printed `waiting: already in the merge queue … (AWAITING_CHECKS)` for 3600 s and ended in `TIMEOUT` without a hint. One `dequeuePullRequest` + `enqueuePullRequest` mutation pair at 12:12 produced new queue runs, and the PR merged.
+
+**The cause was not determined.** No missing required context was found. The base branch also has a `code_scanning` rule, but no code-scanning analyses existed for #236's queue ref either, and #236 merged. Do not write a cause into a report from this section.
+
+Diagnose before acting — both reads target the queue commit, not the PR head:
+
+```bash
+R=owner/repo; PR=238
+# The entry, its queue commit and when it was enqueued:
+gh api graphql -F o="${R%/*}" -F r="${R#*/}" -F p=$PR -f query='query($o:String!,$r:String!,$p:Int!){repository(owner:$o,name:$r){pullRequest(number:$p){id mergeQueueEntry{state enqueuedAt headCommit{oid}}}}}'
+QSHA=<headCommit.oid from above>
+# 1. The queue runs: all `completed`, none `queued`/`in_progress`? By head_sha, so an
+#    earlier queue attempt for the same PR (same `pr-<n>-` branch prefix) is not mixed in.
+gh api --paginate "repos/$R/actions/runs?event=merge_group&head_sha=$QSHA&per_page=100" \
+  --jq '.workflow_runs[] | "\(.name) \(.status)/\(.conclusion) \(.head_branch) \(.updated_at)"'
+# 2. Required contexts vs. what reported on the queue commit, every list paginated
+#    (30 is not "all"). A context bound to an app (integration_id) is satisfied only
+#    by that app, so compare the app, not just the name; and a context can report as
+#    a commit status instead of a check run.
+gh api --paginate "repos/$R/rules/branches/main?per_page=100" \
+  --jq '[.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[] | "\(.context) app=\(.integration_id // "any")"] | unique[]'
+gh api --paginate "repos/$R/commits/$QSHA/check-runs?per_page=100" \
+  --jq '.check_runs[] | "\(.name) app=\(.app.id) \(.status)/\(.conclusion)"'
+gh api --paginate "repos/$R/commits/$QSHA/status?per_page=100" \
+  --jq '.statuses[] | "\(.context) \(.state)"'
+```
+
+A required context with neither a check run from its app nor a commit status on the queue commit is a different problem: the queue is waiting for something that never reports (see [Re-queuing cancels the run already in flight](#re-queuing-cancels-the-run-already-in-flight), last paragraph); fix the producer, do not re-enqueue. A queue run that is still `queued` is runner starvation ([above](#a-queue-entry-also-drops-when-its-jobs-never-start)).
+
+When every required context reported green and no queue run is in flight, **re-enqueue once**: dequeue, then enqueue. This does not contradict the cancel rule above — that rule is about re-adding while a queue run is still going; here nothing is going, so nothing is cancelled. `DequeuePullRequestInput` takes `id:`, `EnqueuePullRequestInput` takes `pullRequestId:`, both the PR node id:
+
+```bash
+PRID=<pullRequest.id from above>
+gh api graphql -f id="$PRID" -f query='mutation($id:ID!){dequeuePullRequest(input:{id:$id}){clientMutationId}}' \
+  && gh api graphql -f id="$PRID" -f query='mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{state}}}'
+```
+
+If the new entry hangs the same way, stop re-enqueueing and diagnose; a second hang is evidence about the repository's queue configuration, not a reason for a loop.
+
+`pr-status.sh` reports this state as `NEXT: stuck-queue-entry`, carrying that command, once the entry is in `AWAITING_CHECKS`, at least one `merge_group` run exists for its queue commit, all of them completed green, and the last finished at least `--stuck-after` minutes ago (default 15, or `PR_STATUS_STUCK_AFTER_MINUTES`). Zero runs stays `wait` — "every run has finished" is true before any run exists. The script reads only Actions runs, so check step 2 above yourself before running the command. Under `--watch` the state returns as `ACTIONABLE: stuck-queue-entry`, which the [Monitor filter](#running-pr-statussh---watch-under-a-monitor) keeps. The runs are read only for an entry older than the threshold, so a queue that moves normally costs no extra call.
+
 ### Watching a queued PR: ask git
 
 What the PR-scoped tools do once the PR is queued:
 
-- `pr-status.sh --watch` keeps polling. `wait` is not an actionable NEXT, so every interval (default 20 s) it prints `waiting: already in the merge queue at position …` — a heartbeat, not a hang. It returns when the entry leaves the queue: `ACTIONABLE: none` with `PR is MERGED` after the merge, the next actionable step (for example `merge`) after a silent drop, or `TIMEOUT` after `--max-wait` (default 3600 s). Each poll is a GraphQL read, so a long queue wait spends GraphQL budget (see [Watcher cost](#watcher-cost-graphql-and-rest-rate-limits-are-separate-budgets)).
+- `pr-status.sh --watch` keeps polling. `wait` is not an actionable NEXT, so every interval (default 20 s) it prints `waiting: already in the merge queue at position …` — a heartbeat, not a hang. It returns when the entry leaves the queue: `ACTIONABLE: none` with `PR is MERGED` after the merge, the next actionable step (for example `merge`) after a silent drop, `ACTIONABLE: stuck-queue-entry` for an entry that sits in `AWAITING_CHECKS` after its queue runs finished green ([above](#an-entry-stuck-in-awaiting_checks-after-its-queue-runs-finished-green)), or `TIMEOUT` after `--max-wait` (default 3600 s). Each poll is a GraphQL read, so a long queue wait spends GraphQL budget (see [Watcher cost](#watcher-cost-graphql-and-rest-rate-limits-are-separate-budgets)).
 - `gh pr view --json isInMergeQueue` fails with `Unknown JSON field`. The field exists only in GraphQL, as `repository.pullRequest.isInMergeQueue`.
 
 The git ancestry check in ["Has it merged yet?" costs nothing — ask git, not the API](#has-it-merged-yet-costs-nothing--ask-git-not-the-api) answers "has it merged" without any API budget.
