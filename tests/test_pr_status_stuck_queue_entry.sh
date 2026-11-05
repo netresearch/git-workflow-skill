@@ -44,8 +44,9 @@ chmod +x "$STUB_DIR/gh"
 # fixture <entry-state> <enqueued N min ago> <runs spec>
 # runs spec: comma-separated name:status:conclusion:updated-N-min-ago, or "none"
 fixture() {
+  local entry_state=$1 enqueued_min=$2 runs_spec=$3
   rm -f "$STUB_DIR/runs-called"
-  python3 - "$STUB_DIR" "$1" "$2" "$3" "$QHEAD" <<'PY'
+  python3 - "$STUB_DIR" "$entry_state" "$enqueued_min" "$runs_spec" "$QHEAD" <<'PY'
 import sys, json, datetime
 d, state, enq, spec, qhead = sys.argv[1:6]
 now = datetime.datetime.now(datetime.timezone.utc)
@@ -93,18 +94,26 @@ status() { PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 238 --json "$@"; }
 watch()  { PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 238 --watch --interval 1 "$@"; }
 
 check() {
-  if [[ "$3" == "$2" ]]; then echo "  ok   $1"
-  else echo "  FAIL $1: got '$3', expected '$2'"; fail=1; fi
+  local label=$1 want=$2 got=$3
+  if [[ "$got" == "$want" ]]; then echo "  ok   $label"
+  else echo "  FAIL $label: got '$got', expected '$want'"; fail=1; fi
 }
 check_contains() {
-  if [[ "$3" == *"$2"* ]]; then echo "  ok   $1"
-  else echo "  FAIL $1: '$2' not in output:"; printf '%s\n' "$3" | sed 's/^/       /'; fail=1; fi
+  local label=$1 needle=$2 haystack=$3
+  if [[ "$haystack" == *"$needle"* ]]; then echo "  ok   $label"
+  else echo "  FAIL $label: '$needle' not in output:"; printf '%s\n' "$haystack" | sed 's/^/       /'; fail=1; fi
 }
 check_absent() {
-  if [[ "$3" != *"$2"* ]]; then echo "  ok   $1"
-  else echo "  FAIL $1: '$2' unexpectedly in output"; fail=1; fi
+  local label=$1 needle=$2 haystack=$3
+  if [[ "$haystack" != *"$needle"* ]]; then echo "  ok   $label"
+  else echo "  FAIL $label: '$needle' unexpectedly in output"; fail=1; fi
 }
 runs_called() { [[ -f "$STUB_DIR/runs-called" ]] && echo yes || echo no; }
+
+NEXT_ACTION='.next.action'
+# next_action [status args…] — the NEXT action of one pr-status.sh --json run.
+next_action() { status "$@" | jq -r "$NEXT_ACTION"; }
+expect_wait() { check "NEXT is wait" "wait" "$(next_action)"; }
 
 GREEN3="CI:completed:success:80,Checks:completed:success:82,Template Drift:completed:success:84"
 
@@ -113,7 +122,7 @@ echo "pr-status.sh: merge-queue entry stuck in AWAITING_CHECKS"
 echo "case: all queue runs green 80 min ago, entry still AWAITING_CHECKS -> stuck-queue-entry"
 fixture AWAITING_CHECKS 85 "$GREEN3"
 out=$(status)
-check          "NEXT is stuck-queue-entry" "stuck-queue-entry" "$(jq -r '.next.action' <<<"$out")"
+check          "NEXT is stuck-queue-entry" "stuck-queue-entry" "$(jq -r "$NEXT_ACTION" <<<"$out")"
 check_contains "the cmd dequeues the PR"   "dequeuePullRequest(input:{id:\$id})" "$(jq -r '.next.cmd' <<<"$out")"
 check_contains "the cmd enqueues it again" "enqueuePullRequest(input:{pullRequestId:\$id})" "$(jq -r '.next.cmd' <<<"$out")"
 check_contains "the cmd names the PR node id" "id=PR_kwTEST238" "$(jq -r '.next.cmd' <<<"$out")"
@@ -134,42 +143,42 @@ check          "--ignore-action accepts it (no exit 2)" "yes" "$([[ "$rc" != "2"
 
 echo "case: one queue run still in progress -> wait"
 fixture AWAITING_CHECKS 85 "CI:in_progress:-:1,Checks:completed:success:82"
-check "NEXT is wait" "wait" "$(status | jq -r '.next.action')"
+expect_wait
 rc=0; wout=$(watch --max-wait 2) || rc=$?
 check          "--watch times out (exit 1)" "1" "$rc"
 check_absent   "no ACTIONABLE return"       "ACTIONABLE" "$wout"
 
 echo "case: runs green, but only 5 min ago -> wait"
 fixture AWAITING_CHECKS 60 "CI:completed:success:5,Checks:completed:success:6"
-check "NEXT is wait" "wait" "$(status | jq -r '.next.action')"
+expect_wait
 
 echo "case: entry younger than the threshold -> wait, runs endpoint not read"
 fixture AWAITING_CHECKS 10 "CI:completed:success:5"
-check "NEXT is wait" "wait" "$(status | jq -r '.next.action')"
+expect_wait
 check "runs endpoint not called" "no" "$(runs_called)"
 
 echo "case: no merge_group run at all -> wait (vacuous 'all finished')"
 fixture AWAITING_CHECKS 85 none
-check "NEXT is wait" "wait" "$(status | jq -r '.next.action')"
+expect_wait
 
 echo "case: a queue run concluded red -> wait (the queue drops that entry itself)"
 fixture AWAITING_CHECKS 85 "CI:completed:failure:80,Checks:completed:success:82"
-check "NEXT is wait" "wait" "$(status | jq -r '.next.action')"
+expect_wait
 
 echo "case: entry QUEUED, not AWAITING_CHECKS -> wait, runs endpoint not read"
 fixture QUEUED 85 "$GREEN3"
-check "NEXT is wait" "wait" "$(status | jq -r '.next.action')"
+expect_wait
 check "runs endpoint not called" "no" "$(runs_called)"
 
 echo "case: threshold from flag and environment"
 fixture AWAITING_CHECKS 85 "$GREEN3"
-check "--stuck-after 120 holds at wait" "wait" "$(status --stuck-after 120 | jq -r '.next.action')"
+check "--stuck-after 120 holds at wait" "wait" "$(next_action --stuck-after 120)"
 check "PR_STATUS_STUCK_AFTER_MINUTES=120 holds at wait" "wait" \
-      "$(PR_STATUS_STUCK_AFTER_MINUTES=120 status | jq -r '.next.action')"
+      "$(PR_STATUS_STUCK_AFTER_MINUTES=120 next_action)"
 check "PR_STATUS_STUCK_AFTER_MINUTES=60 fires" "stuck-queue-entry" \
-      "$(PR_STATUS_STUCK_AFTER_MINUTES=60 status | jq -r '.next.action')"
+      "$(PR_STATUS_STUCK_AFTER_MINUTES=60 next_action)"
 check "an invalid env value falls back to 15" "stuck-queue-entry" \
-      "$(PR_STATUS_STUCK_AFTER_MINUTES=abc status | jq -r '.next.action')"
+      "$(PR_STATUS_STUCK_AFTER_MINUTES=abc next_action)"
 rc=0; status --stuck-after 0 >/dev/null 2>&1 || rc=$?
 check "--stuck-after 0 is refused (exit 2)" "2" "$rc"
 
