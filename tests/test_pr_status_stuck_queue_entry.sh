@@ -111,6 +111,7 @@ check_absent() {
 runs_called() { [[ -f "$STUB_DIR/runs-called" ]] && echo yes || echo no; }
 
 NEXT_ACTION='.next.action'
+STUCK='stuck-queue-entry'
 # next_action [status args…] — the NEXT action of one pr-status.sh --json run.
 next_action() { status "$@" | jq -r "$NEXT_ACTION"; }
 expect_wait() { check "NEXT is wait" "wait" "$(next_action)"; }
@@ -122,7 +123,7 @@ echo "pr-status.sh: merge-queue entry stuck in AWAITING_CHECKS"
 echo "case: all queue runs green 80 min ago, entry still AWAITING_CHECKS -> stuck-queue-entry"
 fixture AWAITING_CHECKS 85 "$GREEN3"
 out=$(status)
-check          "NEXT is stuck-queue-entry" "stuck-queue-entry" "$(jq -r "$NEXT_ACTION" <<<"$out")"
+check          "NEXT is stuck-queue-entry" "$STUCK" "$(jq -r "$NEXT_ACTION" <<<"$out")"
 check_contains "the cmd dequeues the PR"   "dequeuePullRequest(input:{id:\$id})" "$(jq -r '.next.cmd' <<<"$out")"
 check_contains "the cmd enqueues it again" "enqueuePullRequest(input:{pullRequestId:\$id})" "$(jq -r '.next.cmd' <<<"$out")"
 check_contains "the cmd names the PR node id" "id=PR_kwTEST238" "$(jq -r '.next.cmd' <<<"$out")"
@@ -191,7 +192,7 @@ two_pages() {
 echo "case: runs split over two pages, all green -> stuck-queue-entry over all three"
 two_pages success
 out=$(status)
-check "NEXT is stuck-queue-entry" "stuck-queue-entry" "$(jq -r "$NEXT_ACTION" <<<"$out")"
+check "NEXT is stuck-queue-entry" "$STUCK" "$(jq -r "$NEXT_ACTION" <<<"$out")"
 check "runs from both pages are counted" "3" "$(jq -r '.queue_entry.runs.total' <<<"$out")"
 echo "case: a red run only on the second page -> wait"
 two_pages failure
@@ -208,16 +209,16 @@ d["workflow_runs"] = [dict(run, name=f"{i:04d}-" + "w" * 300) for i in range(500
 d["total_count"] = len(d["workflow_runs"])
 json.dump(d, open(p, "w"))
 PY
-check "500 runs with 300-character names -> stuck-queue-entry" "stuck-queue-entry" "$(next_action)"
+check "500 runs with 300-character names -> stuck-queue-entry" "$STUCK" "$(next_action)"
 
 echo "case: threshold from flag and environment"
 fixture AWAITING_CHECKS 85 "$GREEN3"
 check "--stuck-after 120 holds at wait" "wait" "$(next_action --stuck-after 120)"
 check "PR_STATUS_STUCK_AFTER_MINUTES=120 holds at wait" "wait" \
       "$(PR_STATUS_STUCK_AFTER_MINUTES=120 next_action)"
-check "PR_STATUS_STUCK_AFTER_MINUTES=60 fires" "stuck-queue-entry" \
+check "PR_STATUS_STUCK_AFTER_MINUTES=60 fires" "$STUCK" \
       "$(PR_STATUS_STUCK_AFTER_MINUTES=60 next_action)"
-check "an invalid env value falls back to 15" "stuck-queue-entry" \
+check "an invalid env value falls back to 15" "$STUCK" \
       "$(PR_STATUS_STUCK_AFTER_MINUTES=abc next_action)"
 rc=0; status --stuck-after 0 >/dev/null 2>&1 || rc=$?
 check "--stuck-after 0 is refused (exit 2)" "2" "$rc"
