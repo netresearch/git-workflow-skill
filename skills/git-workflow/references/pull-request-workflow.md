@@ -3130,8 +3130,11 @@ answers `wait` rather than `merge` while an entry is held; `pr-merge.sh`
 refuses on that same verdict. Enqueueing an entry that already exists only
 restarts its checks and pushes the merge further out.
 The exception is an entry that stays `AWAITING_CHECKS` after every queue run
-finished green and nothing is in flight: there one dequeue + enqueue is the
-documented recovery, and `pr-status.sh` names it `stuck-queue-entry` — see
+finished green and nothing is in flight, and every required context reported
+green on the queue commit: there one dequeue + enqueue is the documented
+recovery, and `pr-status.sh` names it `stuck-queue-entry`. A required context
+with neither a check run from its app nor a commit status means a producer
+never reported — fix that producer and do not re-enqueue. See
 `merge-gate-watcher.md`, "An entry stuck in AWAITING_CHECKS after its queue
 runs finished green".
 

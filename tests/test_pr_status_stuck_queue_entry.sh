@@ -178,6 +178,25 @@ check "the runs are reported as not fully fetched" "false" "$(status | jq -r '.q
 check "the runs endpoint was read with --paginate" "yes" \
       "$(grep -q -- '--paginate' "$STUB_DIR/runs-called" && echo yes || echo no)"
 
+# Two pages as `gh api --paginate` prints them: two JSON documents back to
+# back, each with the full total_count. The second page holds the third run.
+two_pages() {
+  local last_run=$1
+  fixture AWAITING_CHECKS 85 "$GREEN3"
+  jq -c --arg last "$last_run" '.total_count = 3
+         | (.workflow_runs[2] | .conclusion = $last) as $third
+         | (.workflow_runs = .workflow_runs[0:2]), {total_count: 3, workflow_runs: [$third]}' \
+     "$STUB_DIR/runs.json" >"$STUB_DIR/runs.tmp" && mv "$STUB_DIR/runs.tmp" "$STUB_DIR/runs.json"
+}
+echo "case: runs split over two pages, all green -> stuck-queue-entry over all three"
+two_pages success
+out=$(status)
+check "NEXT is stuck-queue-entry" "stuck-queue-entry" "$(jq -r "$NEXT_ACTION" <<<"$out")"
+check "runs from both pages are counted" "3" "$(jq -r '.queue_entry.runs.total' <<<"$out")"
+echo "case: a red run only on the second page -> wait"
+two_pages failure
+expect_wait
+
 echo "case: run names past the 128 KiB argument cap still evaluate"
 fixture AWAITING_CHECKS 85 "$GREEN3"
 python3 - "$STUB_DIR/runs.json" <<'PY'

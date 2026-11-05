@@ -931,8 +931,10 @@
                     + " but all \($s.queue_entry.runs.total) merge_group run(s) on queue commit"
                     + " \(($s.queue_entry.head_oid // "")[0:8]) (\($s.queue_entry.runs.names | join(", ")))"
                     + " completed green \($idle) min ago and none is queued or running."
-                    + " Compare the required contexts with the check runs on that commit"
-                    + " (another app may still owe one), then re-enqueue ONCE: dequeue + enqueue (cmd)."
+                    + " This tool cannot see the required contexts: compare them with the check runs"
+                    + " and commit statuses on that commit first. Only if every required context"
+                    + " reported green, re-enqueue ONCE: dequeue + enqueue (cmd); if one has no check run"
+                    + " from its app and no commit status, fix that producer and do not re-enqueue."
                     + " If it hangs again, diagnose instead of looping;"
                     + " cause not determined (references/merge-gate-watcher.md, stuck in AWAITING_CHECKS)"),
                cmd:("gh api graphql -f id=\($prid) -f query='mutation($id:ID!){dequeuePullRequest(input:{id:$id}){clientMutationId}}'"
