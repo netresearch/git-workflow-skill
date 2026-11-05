@@ -650,8 +650,9 @@
                          head_oid: ($p.mergeQueueEntry.headCommit.oid // null),
                          # The merge_group runs of the queue commit, read by
                          # pr-status.sh only for an AWAITING_CHECKS entry older
-                         # than --stuck-after; null when not read.
-                         runs: $queue_runs}
+                         # than --stuck-after; null when not read. Passed as a
+                         # file (--slurpfile), so it arrives wrapped in an array.
+                         runs: ($queue_runs_f[0] // null)}
                       else null end)
       }
     # ---- next valid action, highest-priority first -------------------------

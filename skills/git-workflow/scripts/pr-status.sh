@@ -511,11 +511,19 @@ evaluate() {
   # comments passes; Windows caps the whole command line at 32767 characters,
   # which the program alone passes (#395). The program takes exactly four
   # documents and fails on any other count, so an empty rules answer stays an
-  # error instead of reading as "no rules".
+  # error instead of reading as "no rules". The queue-run summary travels
+  # through a file for the same reason: it lists every run name, and enough
+  # long workflow names pass the Windows cap.
+  local qf rc
+  qf=$(mktemp) || return 1
+  printf '%s\n' "$qruns" >"$qf"
   printf '%s\n' "$gql" "$rules" "$prot" "$runs" \
     | jq -n --argjson ok "$ok" --argjson marker "$marker" --arg marker_path "$QUOTA_MARKER" \
-         --argjson queue_runs "$qruns" --argjson stuck_after "$STUCK_AFTER" \
+         --slurpfile queue_runs_f "$qf" --argjson stuck_after "$STUCK_AFTER" \
          -f "$SCRIPT_DIR/pr-status-evaluate.jq"
+  rc=$?
+  rm -f "$qf"
+  return $rc
 }
 
 # ------------------------------------------------------- investigate --------
@@ -805,22 +813,26 @@ snapshot() {
   # for that long, so the call would buy nothing. Filtered by head_sha, not by
   # the pr-<n>- branch prefix, which also matches an earlier queue attempt.
   # A failed read leaves `fetched: false` and the ladder keeps answering
-  # `wait` -- it understates rather than invents.
+  # `wait` -- it understates rather than invents. Paginated, and `fetched`
+  # only when the rows cover `total_count`: an unfinished or red run on an
+  # unread page must not let the ladder advise a re-enqueue.
   local qruns='null' q_oid q_age rq
   if [[ "$(jq -r '.data.repository.pullRequest.mergeQueueEntry.state // ""' <<<"$g")" == "AWAITING_CHECKS" ]]; then
     q_oid=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.headCommit.oid // ""' <<<"$g")
     q_age=$(jq -r '(.data.repository.pullRequest.mergeQueueEntry.enqueuedAt // "") as $t
                    | if $t == "" then -1 else (((now - ($t | fromdateiso8601)) / 60) | floor) end' <<<"$g" 2>/dev/null) || q_age=-1
     if [[ -n "$q_oid" && "$q_age" =~ ^[0-9]+$ ]] && (( q_age >= STUCK_AFTER )); then
-      if rq=$(gh api "repos/$REPO/actions/runs?event=merge_group&head_sha=$q_oid&per_page=100" 2>/dev/null) \
-         && qruns=$(jq -c '{fetched: true,
-                            total: ([.workflow_runs[]?] | length),
-                            unfinished: ([.workflow_runs[]? | select(.status != "completed")] | length),
-                            not_green: ([.workflow_runs[]? | select(.status == "completed")
-                                         | select(.conclusion as $c | ["success", "skipped", "neutral"] | index($c) | not)
-                                         | "\(.name)=\(.conclusion)"]),
-                            names: ([.workflow_runs[]? | .name]),
-                            last_completed_at: ([.workflow_runs[]? | select(.status == "completed") | .updated_at] | max)}' \
+      if rq=$(gh api --paginate "repos/$REPO/actions/runs?event=merge_group&head_sha=$q_oid&per_page=100" 2>/dev/null) \
+         && qruns=$(jq -sc '[.[].workflow_runs[]?] as $w
+                            | ([.[].total_count // 0] | max // 0) as $tc
+                            | {fetched: (($w | length) >= $tc),
+                               total: ($w | length),
+                               unfinished: ([$w[] | select(.status != "completed")] | length),
+                               not_green: ([$w[] | select(.status == "completed")
+                                            | select(.conclusion as $c | ["success", "skipped", "neutral"] | index($c) | not)
+                                            | "\(.name)=\(.conclusion)"]),
+                               names: ([$w[] | .name]),
+                               last_completed_at: ([$w[] | select(.status == "completed") | .updated_at] | max)}' \
                      <<<"$rq" 2>/dev/null); then :
       else qruns='{"fetched":false}'; fi
     fi

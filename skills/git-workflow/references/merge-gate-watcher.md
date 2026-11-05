@@ -656,16 +656,21 @@ gh api graphql -F o="${R%/*}" -F r="${R#*/}" -F p=$PR -f query='query($o:String!
 QSHA=<headCommit.oid from above>
 # 1. The queue runs: all `completed`, none `queued`/`in_progress`? By head_sha, so an
 #    earlier queue attempt for the same PR (same `pr-<n>-` branch prefix) is not mixed in.
-gh api "repos/$R/actions/runs?event=merge_group&head_sha=$QSHA&per_page=100" \
+gh api --paginate "repos/$R/actions/runs?event=merge_group&head_sha=$QSHA&per_page=100" \
   --jq '.workflow_runs[] | "\(.name) \(.status)/\(.conclusion) \(.head_branch) \(.updated_at)"'
-# 2. Required contexts vs. what reported on the queue commit (paginated: 30 is not "all").
-gh api "repos/$R/rules/branches/main" \
-  --jq '[.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context] | unique[]'
+# 2. Required contexts vs. what reported on the queue commit, every list paginated
+#    (30 is not "all"). A context bound to an app (integration_id) is satisfied only
+#    by that app, so compare the app, not just the name; and a context can report as
+#    a commit status instead of a check run.
+gh api --paginate "repos/$R/rules/branches/main?per_page=100" \
+  --jq '[.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[] | "\(.context) app=\(.integration_id // "any")"] | unique[]'
 gh api --paginate "repos/$R/commits/$QSHA/check-runs?per_page=100" \
-  --jq '.check_runs[] | "\(.name) \(.status)/\(.conclusion)"'
+  --jq '.check_runs[] | "\(.name) app=\(.app.id) \(.status)/\(.conclusion)"'
+gh api --paginate "repos/$R/commits/$QSHA/status?per_page=100" \
+  --jq '.statuses[] | "\(.context) \(.state)"'
 ```
 
-A required context with no check run on the queue commit is a different problem: the queue is waiting for something that never reports (see [Re-queuing cancels the run already in flight](#re-queuing-cancels-the-run-already-in-flight), last paragraph); fix the producer, do not re-enqueue. A queue run that is still `queued` is runner starvation ([above](#a-queue-entry-also-drops-when-its-jobs-never-start)).
+A required context with neither a check run from its app nor a commit status on the queue commit is a different problem: the queue is waiting for something that never reports (see [Re-queuing cancels the run already in flight](#re-queuing-cancels-the-run-already-in-flight), last paragraph); fix the producer, do not re-enqueue. A queue run that is still `queued` is runner starvation ([above](#a-queue-entry-also-drops-when-its-jobs-never-start)).
 
 When every required context reported green and no queue run is in flight, **re-enqueue once**: dequeue, then enqueue. This does not contradict the cancel rule above — that rule is about re-adding while a queue run is still going; here nothing is going, so nothing is cancelled. `DequeuePullRequestInput` takes `id:`, `EnqueuePullRequestInput` takes `pullRequestId:`, both the PR node id:
 

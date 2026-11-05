@@ -33,7 +33,7 @@ for a in "\$@"; do
   case "\$a" in
     repos/*/rules/branches/*) echo '[]'; exit 0 ;;
     repos/*/actions/runs\?event=merge_group*)
-      echo "\$a" >> "$STUB_DIR/runs-called"
+      echo "\$*" >> "$STUB_DIR/runs-called"
       cat "$STUB_DIR/runs.json"; exit 0 ;;
   esac
 done
@@ -169,6 +169,27 @@ echo "case: entry QUEUED, not AWAITING_CHECKS -> wait, runs endpoint not read"
 fixture QUEUED 85 "$GREEN3"
 expect_wait
 check "runs endpoint not called" "no" "$(runs_called)"
+
+echo "case: total_count exceeds the rows read -> wait (an unread run may be unfinished)"
+fixture AWAITING_CHECKS 85 "$GREEN3"
+jq '.total_count = 150' "$STUB_DIR/runs.json" >"$STUB_DIR/runs.tmp" && mv "$STUB_DIR/runs.tmp" "$STUB_DIR/runs.json"
+expect_wait
+check "the runs are reported as not fully fetched" "false" "$(status | jq -r '.queue_entry.runs.fetched')"
+check "the runs endpoint was read with --paginate" "yes" \
+      "$(grep -q -- '--paginate' "$STUB_DIR/runs-called" && echo yes || echo no)"
+
+echo "case: run names past the 128 KiB argument cap still evaluate"
+fixture AWAITING_CHECKS 85 "$GREEN3"
+python3 - "$STUB_DIR/runs.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+run = d["workflow_runs"][0]
+d["workflow_runs"] = [dict(run, name=f"{i:04d}-" + "w" * 300) for i in range(500)]
+d["total_count"] = len(d["workflow_runs"])
+json.dump(d, open(p, "w"))
+PY
+check "500 runs with 300-character names -> stuck-queue-entry" "stuck-queue-entry" "$(next_action)"
 
 echo "case: threshold from flag and environment"
 fixture AWAITING_CHECKS 85 "$GREEN3"
