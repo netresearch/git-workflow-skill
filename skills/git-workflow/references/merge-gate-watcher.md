@@ -57,6 +57,37 @@ A second failure in the same window looked like a finding and was not one: a cod
 gh run view --repo "$R" --job "$JOB" --log | grep -n -e 'Uploading results' -e '##\[error\]'
 ```
 
+### A `cancelled` run beside a newer one: re-running it cancels the newer run
+
+Where a workflow's `concurrency` group is keyed on the pull request ref and `cancel-in-progress` is on, the newest run of that workflow for the PR cancels the older one, and the older run's jobs conclude `cancelled`. Nothing failed. Re-running the older run, with or without `--failed`, does harm: a re-run keeps the original `GITHUB_REF` ([GitHub docs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)), so its new attempt joins the same group and cancels the newer run, which is the run you were waiting for. The docs do not say that a re-run attempt enters the group. That it does was measured: the newer run's jobs carry the annotation `Canceling since a higher priority waiting request for <group> exists`.
+
+```yaml
+# the shape that triggers it (github.ref on pull_request is refs/pull/<n>/merge)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+```
+
+Two runs on one head need no push. A workflow whose `pull_request` types include `ready_for_review` starts a second run when a draft is marked ready ([pull-request-workflow.md](pull-request-workflow.md), "The Draft → Ready edge only exists if the workflow listens for it"), and the first run is cancelled with the same annotation.
+
+Observed 2026-11-05 on [netresearch/t3x-nr-textdb#228](https://github.com/netresearch/t3x-nr-textdb/pull/228): `Checks` run 42018304912 started at 11:21:25Z while the PR was a draft, and marking it ready at 11:22:32Z started run 42018457006. The older run's jobs were cancelled, but its aggregate gate `All security checks`, an `if: always()` job, still ran, concluded `failure` at 11:24:41Z and held the group until then: the newer run's jobs started only at 11:24:42Z. For two minutes the PR showed a red gate and cancelled jobs from the old run and no job of the new one. The old run was re-run; its attempt 2 started at 11:24:51Z, and at 11:24:53Z every job of 42018457006 was cancelled with `Canceling since a higher priority waiting request for Checks-refs/pull/228/merge exists`. 42018457006 then needed a re-run of its own. On [#229](https://github.com/netresearch/t3x-nr-textdb/pull/229) the old run 42023263372 was re-run 25 seconds after the newer run had finished green; that re-run cancelled nothing and was not needed either.
+
+The annotation reads the same whether a push, the ready transition or a re-run cancelled the run, so it cannot tell you which. The attempt start times can (`actions/runs/<id>/attempts/<n>`, `run_started_at`).
+
+Before any `gh run rerun` on a PR, list that workflow's runs for the head SHA:
+
+```bash
+SHA=$(gh pr view "$PR" --repo "$R" --json headRefOid --jq .headRefOid)
+gh run list --repo "$R" --commit "$SHA" --workflow "<workflow name>" \
+  --json databaseId,attempt,event,status,conclusion,createdAt
+```
+
+- A run is `queued` or `in_progress`: wait for it, and re-run nothing of that workflow, not even a different run.
+- All runs completed: re-run only the newest (`createdAt`), and only when it failed. A `cancelled` older run beside a newer one is concurrency at work.
+- The newest run is green: there is nothing to re-run; the older run's red rows are leftovers.
+
+`pr-status.sh` is part of the bait during the pending window: until the newer run reports, the old run's cancelled rows appear under `cancelled — re-run, do not debug`, a line that names no run, and its `if: always()` gate counts as a failure. "Re-run" there means the newest run of that workflow, once it has completed, and only if it failed. When the newer run reports the same check names, the cancelled rows move to `stale`.
+
 ## One shard red in a sharded suite: flake vs. real regression
 
 When one of N test shards fails, read its **first** error before you reach for a rerun — whether the Hard-class failure above is a flake or a real bug turns on it:
@@ -143,7 +174,7 @@ Pitfalls baked in: `grep -c` exits 1 on zero matches (`|| true`); decide hard-fa
 
 ## Two facts the loop depends on
 
-**`gh run rerun` reuses the original `GITHUB_SHA`.** For `pull_request` events that is the merge commit computed at first run — a rerun after a base-branch fix still tests against the broken base. Rerun is only for flakes; to pick up a repaired base, rebase the branch and push.
+**`gh run rerun` reuses the original `GITHUB_SHA`.** For `pull_request` events that is the merge commit computed at first run — a rerun after a base-branch fix still tests against the broken base. Rerun is only for flakes; to pick up a repaired base, rebase the branch and push. It also keeps the original `GITHUB_REF`, so where the concurrency group is the PR ref, re-running an older run cancels the newer one ([above](#a-cancelled-run-beside-a-newer-one-re-running-it-cancels-the-newer-run)).
 
 **Review bots converge over multiple rounds.** A `copilot_code_review` rule is not a merge gate: Copilot leaves a `COMMENT` review, which per GitHub's docs does "not count toward required approvals and will not block merging". Nor does every push invalidate the standing review — re-review on push is the rule's `review_on_push` parameter, and when it is unset "Copilot will only review the pull request once". Read the rule's `parameters`, not just its presence: `gh api repos/$R/rules/branches/$BRANCH --jq '.[] | select(.type=="copilot_code_review")'`. Re-request when you want fresh feedback on a new head: `gh api repos/$R/pulls/$PR/requested_reviewers -X POST -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`, then confirm the request registered off the timeline, not off `requested_reviewers` — a reviewer that has *started* drops off that list without having submitted (see `references/pull-request-workflow.md`, "Review on an earlier head + `CLEAN`"). Later rounds may flag UNCHANGED lines adjacent to the diff (latent legacy bugs) — triage each finding on its merits; expect 3–6 rounds on large refactor PRs, with finding severity decreasing per round. Re-arm the watcher after every push.
 
@@ -637,7 +668,7 @@ Re-enqueueing after such a drop is not reliable. On the same PR GitHub re-enqueu
 
 Re-adding a PR to the merge queue **cancels the queue run in progress**, so a retry loop prevents the very merge it is meant to cause. Observed 2026-08-06 on netresearch/t3x-nr-llm#616: a loop tried to re-queue the PR about every two minutes, 128 attempts, and the timeline records six `added_to_merge_queue` events. The first queue run completed the required E2E workflow green; in the next two the E2E run shows `cancelled` — once two seconds before the matching `removed_from_merge_queue` — and the PR merged on the fourth queue run, which was left to finish.
 
-The loop's trigger was a false ejection: the GraphQL `mergeQueue.entries` list reads **transiently empty** for an entry that is still queued. Requiring two consecutive empty reads did not fix it; the signal is wrong, not noisy. Let one queue attempt run to completion, and re-queue only when the latest queue event on the timeline is `removed_from_merge_queue`, with no `added_to_merge_queue` or `merged` after it, never because the entry is missing from the queue list. When a required check on the queue branch never reports, diff required against reported contexts, and check whether something you are doing is cancelling the run.
+The loop's trigger was a false ejection: the GraphQL `mergeQueue.entries` list reads **transiently empty** for an entry that is still queued. Requiring two consecutive empty reads did not fix it; the signal is wrong, not noisy. Let one queue attempt run to completion, and re-queue only when the latest queue event on the timeline is `removed_from_merge_queue`, with no `added_to_merge_queue` or `merged` after it, never because the entry is missing from the queue list. When a required check on the queue branch never reports, diff required against reported contexts, and check whether something you are doing is cancelling the run. Outside the queue, `gh run rerun` of a superseded PR run does the same to the newer run ([A `cancelled` run beside a newer one](#a-cancelled-run-beside-a-newer-one-re-running-it-cancels-the-newer-run)).
 
 ### An entry stuck in AWAITING_CHECKS after its queue runs finished green
 

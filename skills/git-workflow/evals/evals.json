@@ -1231,5 +1231,35 @@
         "Wait until Copilot's review quota resets and let Copilot approve it."
       ]
     }
+  },
+  {
+    "name": "cancelled_run_beside_a_newer_run_on_the_same_head",
+    "prompt": "I just marked my draft PR ready for review. gh pr checks shows the 'Checks' workflow's jobs as cancelled and its aggregate 'All security checks' as failed, all from run 42018304912 (started before I marked it ready). gh run list --commit <head sha> --workflow Checks also lists run 42018457006, created a minute later, status queued. The workflow has concurrency group ${{ github.workflow }}-${{ github.ref }} with cancel-in-progress: true. Should I run gh run rerun 42018304912 --failed?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(concurrency|superseded|cancel-in-progress|newer run)"
+      },
+      {
+        "type": "content",
+        "pattern": "(do not|don't|never|no,|not) [^.]{0,40}re-?run"
+      },
+      {
+        "type": "content",
+        "pattern": "(would|will|it) cancel[^.]{0,60}(newer|42018457006|queued|in progress|other) run"
+      },
+      {
+        "type": "content",
+        "pattern": "(wait (for|until)|let)[^.]{0,60}(42018457006|newer run|newest run|queued run)"
+      }
+    ],
+    "samples": {
+      "passing": "No, do not re-run 42018304912. It was cancelled by concurrency: marking the PR ready started 42018457006 in the same group, and its gate went red only because a job it needs was cancelled. A re-run keeps the same GITHUB_REF and joins that group, so it would cancel the newer run 42018457006 you are waiting for. Wait for 42018457006 to complete; re-run only the newest run, and only if it fails.",
+      "failing": [
+        "Yes, the cancelled jobs are infra flakes. Run gh run rerun 42018304912 --failed and wait for it.",
+        "All security checks failed, so open the failed job's log and debug the security scan before anything else.",
+        "Cancel 42018457006 with gh run cancel so it does not interfere, then re-run 42018304912 in full."
+      ]
+    }
   }
 ]
