@@ -831,6 +831,66 @@ The rest of this file is about getting a change *merged*. This section is about
 making it *reviewable*. A reviewer who cannot see what changed has to reproduce
 your work before they can judge it.
 
+### A short first paragraph, the details folded below it
+
+A maintainer who reads only the top must know what merging does. Write the
+first paragraph for that reader: two or three sentences on what changes when
+this is merged, ending in `Fixes #N`. For an issue: the problem, a
+reproduction, the expected behaviour, one sentence on the cause.
+
+Each further topic gets its own `<details>` block, and only when it has
+content. The `<summary>` lines stay visible and work as a table of contents:
+
+```markdown
+The CLI no longer writes `fractor.php` unasked when a config has no rules;
+it prints a warning instead. Fixes #442
+
+<details>
+<summary>Why this approach</summary>
+
+…
+</details>
+
+<details>
+<summary>Known limits</summary>
+
+…
+</details>
+
+<details>
+<summary>Testing</summary>
+
+…
+</details>
+```
+
+Leave a blank line after `</summary>`. Without it, GitHub prints the Markdown
+inside the block raw: a list item stays a line starting with a hyphen, and
+inline code keeps its backticks (measured 2026-11-05 through
+`gh api -X POST markdown` with `mode: gfm`).
+
+There is no hard length limit. The folded blocks hold reasons, limits and
+evidence. They never hold a narrative of what was done, a file-by-file list
+of changes, or review history. A body that grows with every review round is
+rewritten, not appended to.
+
+Three sources outrank this default, in this order:
+
+1. The repository's own documents: `AGENTS.md`, `CONTRIBUTING.md`, the PR
+   template, an AI policy.
+2. A maintainer's direct request in a PR or issue comment. It binds every
+   later PR and issue in that repository, so search the maintainers' recent
+   comments before writing. On FriendsOfTYPO3/fractor#443 a maintainer asked
+   for less text; a day later the repository wrote that request into its
+   `CONTRIBUTING.md` and `AGENTS.md` (TYPO3 commit rules, a short commit
+   body, a pull request of a one-to-three-sentence summary), which then
+   govern as source 1.
+3. This default.
+
+The shape follows Google's guide to change descriptions (a first line that
+stands alone, details below it) and the maintainers' discussion in
+apache/texera#7377 ("a short, human-edited summary first", no hard limit).
+
 ### Show before/after for anything observable
 
 If the change alters output, an error message, a rendered page, a CLI line or an
