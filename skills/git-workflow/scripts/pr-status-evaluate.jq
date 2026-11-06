@@ -599,6 +599,11 @@
         attestation_available: $attestation_available,
         viewer_commits: $viewer_commits,
         viewer_committed: $viewer_committed,
+        # Empty when the response carries no permission (null for a GitHub
+        # App token such as GITHUB_TOKEN, or a stub); unknown then counts as
+        # able to merge, the behaviour before this field was read.
+        viewer_permission: ($repo.viewerPermission // ""),
+        viewer_is_contributor: (($repo.viewerPermission // "") | IN("READ", "TRIAGE", "NONE")),
         authorship_complete: $authorship_complete,
         commits_read: $commits_read,
         commits_total: $commits_total,
@@ -839,8 +844,11 @@
          # run still has a job going, this does not fire; the ladder goes on,
          # so threads and comments still come first, and the wait it ends in
          # names the not-started rows (see the end of the ladder).
+         # Re-running needs write access; a contributor's handed-over names
+         # the runs instead.
          elif ($s.checks.failing|length) > 0 and ($s.checks.failing_other|length) == 0
-              and ($s.checks.not_started_busy_runs|length) == 0 then
+              and ($s.checks.not_started_busy_runs|length) == 0
+              and ($s.viewer_is_contributor | not) then
            {action:"rerun-ci", why:"only not-started job(s) failing: \($s.checks.not_started|join(", ")) — no runner was acquired; nothing in the PR to fix",
             cmd:($s.checks.not_started_runs|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))}
          # fix-ci and triage-ci name only failures somebody can fix; the
@@ -897,6 +905,9 @@
                why:("draft — nothing running, mark ready when the work is done"
                     + (if ($s.undispatched|length) > 0
                        then " (\($s.undispatched|length) required context(s) not reported — dispatch happens on ready, or the runs await approval)"
+                       else "" end)
+                    + (if $s.viewer_is_contributor
+                       then ". This is your last step: you have \($s.viewer_permission) access to \($s.repo), so review and merge belong to its maintainers"
                        else "" end)),
                cmd:"gh pr ready \($s.number) --repo \($s.repo)"}
             end)
@@ -961,7 +972,9 @@
          # the failure mode this tool exists to prevent (#310, observed on
          # netresearch/simple-ldap-go#227: 29 check runs before a force-push,
          # 6 after, eight runs waiting).
-         elif (($s.awaiting_approval|length) > 0) then
+         # A contributor cannot approve the runs; the branch for them below
+         # names the waiting runs instead.
+         elif (($s.awaiting_approval|length) > 0) and ($s.viewer_is_contributor | not) then
            {action:"approve-workflow-runs",
             why:("\($s.awaiting_approval|length) workflow run(s) on \($s.headOid[0:8]) await maintainer approval"
                  + " — \([$s.awaiting_approval[].name]|unique|join(", "))."
@@ -1029,6 +1042,56 @@
                  + " Note: gh pr update-branch re-writes the head UNSIGNED;"
                  + " rebase locally instead"),
             cmd:"git rebase --exec \"git commit --amend --no-edit -S\" $(git merge-base HEAD origin/\($s.base)) ; git push --force-with-lease"}
+         # A contributor (READ or TRIAGE on the base repository) has done all
+         # there is to do once the branches above are clear: a review from
+         # them does not count toward the gate, requesting reviewers and
+         # approving runs need write access, and the merge is refused. Every
+         # branch below hands over one of those, so they end here.
+         # Observed on FriendsOfTYPO3/fractor#443: READ access, and NEXT told
+         # the author to review the diff themselves and merge with
+         # pr-merge.sh --self-reviewed.
+         # Running checks hold the wait, as in the draft branch: a red one
+         # is still the contributor's to fix. Only RUNNING ones, because runs
+         # awaiting approval or contexts never dispatched wait on a maintainer.
+         # A maintainer can request changes without a thread or comment; the
+         # last verdict per reviewer on this head decides, so a fix pushed
+         # since moves it to an older head and the PR is handed over again.
+         elif $s.viewer_is_contributor then
+           (([$head_reviews | group_by(.author.login)[]
+             | [.[] | select(.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED"))] | last
+             | select(. != null and .state == "CHANGES_REQUESTED") | .author.login] | unique) as $changes_requested
+           | (if ($changes_requested|length) > 0 then
+              {action:"address-comments",
+               why:"changes requested on \($s.headOid[0:8]) by \($changes_requested|join(", ")) — read the review and push a fix; review and merge stay with the maintainers of \($s.repo)"}
+            elif ($s.checks.pending > 0) or (($s.checks.not_started_busy_runs|length) > 0) then
+              {action:"wait",
+               why:((if $s.checks.pending > 0 then "\($s.checks.pending) check(s) still running" else "a run is still going" end)
+                    + " — after that, review and merge belong to the maintainers of \($s.repo) (you have \($s.viewer_permission) access)")}
+            else
+              {action:"handed-over",
+               why:("you have \($s.viewer_permission) access to \($s.repo), so review, workflow-run approval and merge belong to its maintainers — nothing left to do on \($s.headOid[0:8]) until one of them answers"
+                    + (if (($s.awaiting_approval|length) > 0)
+                       then "; \($s.awaiting_approval|length) workflow run(s) await their approval (\([$s.awaiting_approval[].name]|unique|join(", ")))"
+                       else "" end)
+                    + (if (($s.checks.not_started_runs|length) > 0)
+                       then "; job(s) that never got a runner (\($s.checks.not_started|join(", "))) need a maintainer to re-run run(s) \($s.checks.not_started_runs|map(tostring)|join(", "))"
+                       else "" end)
+                    # What a maintainer needs to unblock it, named so the
+                    # contributor can pass it on: these rungs sit below.
+                    + (if (($stale_required|length) > 0)
+                       then "; required context(s) reported only by a superseded workflow run: \([$stale_required[].context]|join(", ")) (a maintainer re-triggers the workflow)"
+                       else "" end)
+                    + (if (($s.undispatched|length) > 0)
+                       then "; required context(s) never reported: \($s.undispatched|join(", "))"
+                       else "" end)
+                    # Approved and still BLOCKED with none of the above: the
+                    # cause lies where this tool cannot see (investigate).
+                    + (if $s.mergeState == "BLOCKED" and $s.reviewDecision == "APPROVED"
+                          and ($s.awaiting_approval|length) == 0 and ($s.checks.not_started_runs|length) == 0
+                          and ($stale_required|length) == 0 and ($s.undispatched|length) == 0
+                       then "; BLOCKED although approved, and no cause is visible from your access — ask a maintainer to investigate"
+                       else "" end))}
+            end))
          # An approval that does not count: classic protection with
          # require_last_push_approval discounts an approval from whoever
          # pushed last, so reviewDecision sits at REVIEW_REQUIRED with an
@@ -1375,10 +1438,12 @@
                        + " — not started (no runner acquired): \($s.checks.not_started|join(", ")); "
                        + ([ (if ($s.checks.not_started_busy_runs|length) > 0
                              then "re-run once run(s) \($s.checks.not_started_busy_runs|map(tostring)|join(", ")) have finished" else empty end),
-                            (if ($idle|length) > 0
-                             then "run(s) \($idle|map(tostring)|join(", ")) can be re-run now: "
+                            (if ($idle|length) == 0 then empty
+                             elif $s.viewer_is_contributor
+                             then "run(s) \($idle|map(tostring)|join(", ")) need a maintainer to re-run them"
+                             else "run(s) \($idle|map(tostring)|join(", ")) can be re-run now: "
                                   + ($idle|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))
-                             else empty end)
+                             end)
                           ] | join("; ")))
       else . end
     # Structural blockers named beside whatever rung won. A review action sits
