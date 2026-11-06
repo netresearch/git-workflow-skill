@@ -88,6 +88,15 @@ if check == "STARVED_BUSY":
                     "databaseId": 7, "runNumber": 1, "event": "pull_request",
                     "createdAt": "2026-01-01T00:00:00Z", "url": "run/7",
                     "workflow": {"databaseId": 70, "name": "CI"}}}})
+# REVIEW: CR (changes requested on the head), CR_OLD (on an older head),
+# CR_APPROVED (on the head, then approved by the same reviewer).
+def review(state, oid):
+    return {"author": {"login": "maint"}, "state": state, "commit": {"oid": oid}, "body": "please change"}
+reviews = {
+    "CR": [review("CHANGES_REQUESTED", head)],
+    "CR_OLD": [review("CHANGES_REQUESTED", "0123456789ab")],
+    "CR_APPROVED": [review("CHANGES_REQUESTED", head), review("APPROVED", head)],
+}.get(os.environ.get("REVIEW", ""), [])
 repo["pullRequest"] = {
     "number": 1, "title": "t", "state": "OPEN", "isDraft": os.environ.get("DRAFT") == "1",
     "mergeable": "MERGEABLE", "mergeStateStatus": os.environ.get("MERGE_STATE", "BLOCKED"),
@@ -96,7 +105,7 @@ repo["pullRequest"] = {
     "baseRefName": "main", "headRefName": "f", "headRefOid": head,
     "isCrossRepository": True,
     "comments": {"nodes": []},
-    "reviews": {"nodes": []},
+    "reviews": {"nodes": reviews},
     "reviewRequests": {"nodes": []},
     "reviewThreads": {"nodes": [
         {"id": f"T{n}", "isResolved": False, "isOutdated": False,
@@ -158,6 +167,24 @@ echo "case: READ, unresolved thread -> resolve-threads"
 PERM=READ THREADS=1 make_stub; rm -f "$MARKER"
 out=$(status)
 check_contains "thread first"           "NEXT: resolve-threads"    "$out"
+
+# A review that requests changes without a thread is still the
+# contributor's work, but only while it applies to the current head.
+echo "case: READ, changes requested on the head, no thread -> address-comments"
+PERM=READ REVIEW=CR make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "address the review"     "NEXT: address-comments"   "$out"
+check_contains "names the reviewer"     "changes requested on 71b53447 by maint" "$out"
+
+echo "case: READ, changes requested on an older head -> handed-over"
+PERM=READ REVIEW=CR_OLD make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "handed over"            "NEXT: handed-over"        "$out"
+
+echo "case: READ, changes requested, then approved by the same reviewer -> handed-over"
+PERM=READ REVIEW=CR_APPROVED make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "handed over"            "NEXT: handed-over"        "$out"
 
 echo "case: READ, check running -> wait, and --watch does not return"
 PERM=READ CHECK=IN_PROGRESS make_stub; rm -f "$MARKER"

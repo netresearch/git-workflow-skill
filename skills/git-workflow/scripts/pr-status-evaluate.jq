@@ -1050,8 +1050,17 @@
          # Running checks hold the wait, as in the draft branch: a red one
          # is still the contributor's to fix. Only RUNNING ones, because runs
          # awaiting approval or contexts never dispatched wait on a maintainer.
+         # A maintainer can request changes without a thread or comment; the
+         # last verdict per reviewer on this head decides, so a fix pushed
+         # since moves it to an older head and the PR is handed over again.
          elif $s.viewer_is_contributor then
-           (if ($s.checks.pending > 0) or (($s.checks.not_started_busy_runs|length) > 0) then
+           (([$head_reviews | group_by(.author.login)[]
+             | [.[] | select(.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED"))] | last
+             | select(. != null and .state == "CHANGES_REQUESTED") | .author.login] | unique) as $changes_requested
+           | (if ($changes_requested|length) > 0 then
+              {action:"address-comments",
+               why:"changes requested on \($s.headOid[0:8]) by \($changes_requested|join(", ")) — read the review and push a fix; review and merge stay with the maintainers of \($s.repo)"}
+            elif ($s.checks.pending > 0) or (($s.checks.not_started_busy_runs|length) > 0) then
               {action:"wait",
                why:((if $s.checks.pending > 0 then "\($s.checks.pending) check(s) still running" else "a run is still going" end)
                     + " — after that, review and merge belong to the maintainers of \($s.repo) (you have \($s.viewer_permission) access)")}
@@ -1061,7 +1070,7 @@
                     + (if (($s.awaiting_approval|length) > 0)
                        then "; \($s.awaiting_approval|length) workflow run(s) await their approval (\([$s.awaiting_approval[].name]|unique|join(", ")))"
                        else "" end))}
-            end)
+            end))
          # An approval that does not count: classic protection with
          # require_last_push_approval discounts an approval from whoever
          # pushed last, so reviewDecision sits at REVIEW_REQUIRED with an

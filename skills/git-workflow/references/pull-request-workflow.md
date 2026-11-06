@@ -614,6 +614,10 @@ the merge all belong to the maintainers. Your part ends earlier:
    says so in its reason.
 3. `NEXT: handed-over` follows. Nothing is left to do until a maintainer
    answers. `--watch` returns on it, and still holds while checks run.
+   A review that requests changes on the current head, with or without a
+   thread, turns it back into `address-comments`; once you push the fix,
+   the review belongs to an older head and the pull request is handed over
+   again.
 
 The review and merge advice of the rungs below never reaches you: it named
 `pr-merge.sh --self-reviewed` on FriendsOfTYPO3/fractor#443, where the author
