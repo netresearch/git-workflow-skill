@@ -74,19 +74,19 @@ Observed 2026-11-05 on [netresearch/t3x-nr-textdb#228](https://github.com/netres
 
 The annotation reads the same whether a push, the ready transition or a re-run cancelled the run, so it cannot tell you which. The attempt start times can (`actions/runs/<id>/attempts/<n>`, `run_started_at`).
 
-Before any `gh run rerun` on a PR, list that workflow's runs for the head SHA:
+Before any `gh run rerun` on a PR, list that workflow's runs for the PR's branch. The group is the PR ref, so runs for an earlier head share it, and a push after you read the head SHA would put a run outside a `--commit` listing:
 
 ```bash
-SHA=$(gh pr view "$PR" --repo "$R" --json headRefOid --jq .headRefOid)
-gh run list --repo "$R" --commit "$SHA" --workflow "<workflow name>" \
-  --json databaseId,attempt,event,status,conclusion,createdAt
+read -r SHA BR < <(gh pr view "$PR" --repo "$R" --json headRefOid,headRefName --jq '"\(.headRefOid) \(.headRefName)"')
+gh run list --repo "$R" --branch "$BR" --workflow "<workflow name>" \
+  --json databaseId,headSha,attempt,event,status,conclusion,createdAt
 ```
 
 - A run is not `completed` yet (`queued`, `pending`, `waiting` or `in_progress`; a run held back by the concurrency group is not `completed` either): wait for it, and re-run nothing of that workflow, not even a different run.
-- All runs completed: re-run only the newest (`createdAt`), and only when it failed. A `cancelled` older run beside a newer one is concurrency at work.
-- The newest run is green: there is nothing to re-run; the older run's red rows are leftovers.
+- All runs completed: re-run only the newest (`createdAt`), only when its `headSha` is still the PR head (read it again right before the re-run), and only when it concluded `failure` or `cancelled`. A newest run cancelled by a re-run of an older one, as on #228, needs a full `gh run rerun <id>`. A `cancelled` older run beside a newer one is concurrency at work.
+- The newest run is green: there is nothing to re-run; the older run's red rows are leftovers. If the PR stays `BLOCKED` with a required context that only the older run reported, re-running the older run does not help either; see [pull-request-workflow.md](pull-request-workflow.md), "The opposite face: a workflow that does fire on `ready_for_review` but skips a job there".
 
-`pr-status.sh` points at the old run during that window: until the newer run reports, the old run's cancelled rows appear under `cancelled — re-run, do not debug`, a line that names no run, and its `if: always()` gate counts as a failure. "Re-run" there means the newest run of that workflow, once it has completed, and only if it failed. When the newer run reports the same check names, the cancelled rows move to `stale`.
+`pr-status.sh` points at the old run during that window: until the newer run reports, the old run's cancelled rows appear under `cancelled — re-run, do not debug`, a line that names no run, and its `if: always()` gate counts as a failure. "Re-run" there means the newest run of that workflow, once it has completed, and only if it concluded `failure` or `cancelled`. When the newer run reports the same check names, the cancelled rows move to `stale`.
 
 ## One shard red in a sharded suite: flake vs. real regression
 

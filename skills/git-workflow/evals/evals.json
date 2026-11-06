@@ -1242,7 +1242,7 @@
       },
       {
         "type": "content",
-        "pattern": "(do not|don't|never|no,|not) [^.]{0,40}re-?run"
+        "pattern": "(do not|don't|never|no,|not) [^.;]{0,40}re-?run (42018304912|the (older|old|cancelled) run)"
       },
       {
         "type": "content",
@@ -1258,7 +1258,8 @@
       "failing": [
         "Yes, the cancelled jobs are infra flakes. Run gh run rerun 42018304912 --failed and wait for it.",
         "All security checks failed, so open the failed job's log and debug the security scan before anything else.",
-        "Cancel 42018457006 with gh run cancel so it does not interfere, then re-run 42018304912 in full."
+        "Cancel 42018457006 with gh run cancel so it does not interfere, then re-run 42018304912 in full.",
+        "Do not re-run the newer run; re-run 42018304912 now. Concurrency means it will cancel the newer run. Wait for the newer run."
       ]
     }
   }
