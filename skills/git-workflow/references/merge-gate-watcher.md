@@ -59,7 +59,7 @@ gh run view --repo "$R" --job "$JOB" --log | grep -n -e 'Uploading results' -e '
 
 ### A `cancelled` run beside a newer one: re-running it cancels the newer run
 
-Where a workflow's `concurrency` group is keyed on the pull request ref and `cancel-in-progress` is on, the newest run of that workflow for the PR cancels the older one, and the older run's jobs conclude `cancelled`. Nothing failed. Re-running the older run, with or without `--failed`, does harm: a re-run keeps the original `GITHUB_REF` ([GitHub docs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)), so its new attempt joins the same group and cancels the newer run, which is the run you were waiting for. The docs do not say that a re-run attempt enters the group. That it does was measured: the newer run's jobs carry the annotation `Canceling since a higher priority waiting request for <group> exists`.
+Where a workflow's `concurrency` group is keyed on the pull request ref and `cancel-in-progress` is on, the newest run of that workflow for the PR cancels the older one, and the older run's jobs conclude `cancelled`. Nothing in the PR failed, although an `if: always()` aggregate gate in the older run can still conclude `failure`, because a job it needs was cancelled. Re-running the older run, with or without `--failed`, does harm: a re-run keeps the original `GITHUB_REF` ([GitHub docs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)), so its new attempt joins the same group and cancels the newer run, which is the run you were waiting for. The docs do not say that a re-run attempt enters the group. That it does was measured: the newer run's jobs carry the annotation `Canceling since a higher priority waiting request for <group> exists`.
 
 ```yaml
 # the shape that triggers it (github.ref on pull_request is refs/pull/<n>/merge)
@@ -68,7 +68,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 ```
 
-Two runs on one head need no push. A workflow whose `pull_request` types include `ready_for_review` starts a second run when a draft is marked ready ([pull-request-workflow.md](pull-request-workflow.md), "The Draft → Ready edge only exists if the workflow listens for it"), and the first run is cancelled with the same annotation.
+A second run on the same head does not need a push. A workflow whose `pull_request` types include `ready_for_review` starts a second run when a draft is marked ready ([pull-request-workflow.md](pull-request-workflow.md), "The Draft → Ready edge only exists if the workflow listens for it"), and the first run is cancelled with the same annotation.
 
 Observed 2026-11-05 on [netresearch/t3x-nr-textdb#228](https://github.com/netresearch/t3x-nr-textdb/pull/228): `Checks` run 42018304912 started at 11:21:25Z while the PR was a draft, and marking it ready at 11:22:32Z started run 42018457006. The older run's jobs were cancelled, but its aggregate gate `All security checks`, an `if: always()` job, still ran, concluded `failure` at 11:24:41Z and held the group until then: the newer run's jobs started only at 11:24:42Z. For two minutes the PR showed a red gate and cancelled jobs from the old run and no job of the new one. The old run was re-run; its attempt 2 started at 11:24:51Z, and at 11:24:53Z every job of 42018457006 was cancelled with `Canceling since a higher priority waiting request for Checks-refs/pull/228/merge exists`. 42018457006 then needed a re-run of its own. On [#229](https://github.com/netresearch/t3x-nr-textdb/pull/229) the old run 42023263372 was re-run 25 seconds after the newer run had finished green; that re-run cancelled nothing and was not needed either.
 
@@ -82,11 +82,11 @@ gh run list --repo "$R" --commit "$SHA" --workflow "<workflow name>" \
   --json databaseId,attempt,event,status,conclusion,createdAt
 ```
 
-- A run is `queued` or `in_progress`: wait for it, and re-run nothing of that workflow, not even a different run.
+- A run is not `completed` yet (`queued`, `pending`, `waiting` or `in_progress`; a run held back by the concurrency group is not `completed` either): wait for it, and re-run nothing of that workflow, not even a different run.
 - All runs completed: re-run only the newest (`createdAt`), and only when it failed. A `cancelled` older run beside a newer one is concurrency at work.
 - The newest run is green: there is nothing to re-run; the older run's red rows are leftovers.
 
-`pr-status.sh` is part of the bait during the pending window: until the newer run reports, the old run's cancelled rows appear under `cancelled — re-run, do not debug`, a line that names no run, and its `if: always()` gate counts as a failure. "Re-run" there means the newest run of that workflow, once it has completed, and only if it failed. When the newer run reports the same check names, the cancelled rows move to `stale`.
+`pr-status.sh` points at the old run during that window: until the newer run reports, the old run's cancelled rows appear under `cancelled — re-run, do not debug`, a line that names no run, and its `if: always()` gate counts as a failure. "Re-run" there means the newest run of that workflow, once it has completed, and only if it failed. When the newer run reports the same check names, the cancelled rows move to `stale`.
 
 ## One shard red in a sharded suite: flake vs. real regression
 

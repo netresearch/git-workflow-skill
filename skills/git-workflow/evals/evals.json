@@ -1234,7 +1234,7 @@
   },
   {
     "name": "cancelled_run_beside_a_newer_run_on_the_same_head",
-    "prompt": "I just marked my draft PR ready for review. gh pr checks shows the 'Checks' workflow's jobs as cancelled and its aggregate 'All security checks' as failed, all from run 42018304912 (started before I marked it ready). gh run list --commit <head sha> --workflow Checks also lists run 42018457006, created a minute later, status queued. The workflow has concurrency group ${{ github.workflow }}-${{ github.ref }} with cancel-in-progress: true. Should I run gh run rerun 42018304912 --failed?",
+    "prompt": "I just marked my draft PR ready for review. gh pr checks shows the 'Checks' workflow's jobs as cancelled and its aggregate 'All security checks' as failed, all from run 42018304912 (started before I marked it ready). gh run list --commit <head sha> --workflow Checks also lists run 42018457006, created a minute later, not completed yet. The workflow has concurrency group ${{ github.workflow }}-${{ github.ref }} with cancel-in-progress: true. Should I run gh run rerun 42018304912 --failed?",
     "assertions": [
       {
         "type": "content",
