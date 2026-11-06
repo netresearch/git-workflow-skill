@@ -1075,6 +1075,14 @@
                        else "" end)
                     + (if (($s.checks.not_started_runs|length) > 0)
                        then "; job(s) that never got a runner (\($s.checks.not_started|join(", "))) need a maintainer to re-run run(s) \($s.checks.not_started_runs|map(tostring)|join(", "))"
+                       else "" end)
+                    # What a maintainer needs to unblock it, named so the
+                    # contributor can pass it on: these rungs sit below.
+                    + (if (($stale_required|length) > 0)
+                       then "; required context(s) reported only by a superseded workflow run: \([$stale_required[].context]|join(", ")) (a maintainer re-triggers the workflow)"
+                       else "" end)
+                    + (if (($s.undispatched|length) > 0)
+                       then "; required context(s) never reported: \($s.undispatched|join(", "))"
                        else "" end))}
             end))
          # An approval that does not count: classic protection with

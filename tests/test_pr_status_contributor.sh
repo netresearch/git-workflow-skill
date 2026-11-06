@@ -47,7 +47,16 @@ arm_marker() {
 # CHECK: COMPLETED or IN_PROGRESS; THREADS: unresolved thread count;
 # MERGE_STATE: mergeStateStatus.
 make_stub() {
-    printf '%s\n' '[{"type":"copilot_code_review","parameters":{}}]' > "$STUB_DIR/rules.json"
+    # REQ: comma-separated required contexts (none by default).
+    python3 - "$STUB_DIR/rules.json" <<'PY2'
+import json, os, sys
+rules = [{"type": "copilot_code_review", "parameters": {}}]
+req = [c for c in os.environ.get("REQ", "").split(",") if c]
+if req:
+    rules.append({"type": "required_status_checks",
+                  "parameters": {"required_status_checks": [{"context": c} for c in req]}})
+json.dump(rules, open(sys.argv[1], "w"))
+PY2
     # RUNS_JSON: the actions/runs answer; the default holds no run awaiting approval.
     printf '%s\n' "${RUNS_JSON:-{\"workflow_runs\":[]\}}" > "$STUB_DIR/runs.json"
     cat > "$STUB_DIR/gh" <<STUB
@@ -78,11 +87,12 @@ if perm:
 run = {"__typename": "CheckRun", "name": "CI", "detailsUrl": "u",
        "startedAt": "2026-01-01T00:00:00Z", "status": check,
        "conclusion": "SUCCESS" if check == "COMPLETED" else None}
-def suite(status, run_id):
+def suite(status, run_id, run_number=1, workflow=None):
+    workflow = workflow or 70 + run_id
     return {"status": status, "workflowRun": {
-        "databaseId": run_id, "runNumber": 1, "event": "pull_request",
+        "databaseId": run_id, "runNumber": run_number, "event": "pull_request",
         "createdAt": "2026-01-01T00:00:00Z", "url": f"run/{run_id}",
-        "workflow": {"databaseId": 70 + run_id, "name": f"CI{run_id}"}}}
+        "workflow": {"databaseId": workflow, "name": f"wf{workflow}"}}}
 # STARVED_BUSY: a job that never got a runner while another job of its run
 # still goes (no pending row; only the check suite says the run is busy).
 # STARVED_DONE: the same job, its run concluded. STARVED_MIX: STARVED_DONE
@@ -93,6 +103,14 @@ if check.startswith("STARVED_"):
                 "annotations": {"nodes": [{"message":
                     "The job was not started because it repeatedly failed to be acquired (5 attempts)."}]},
                 "checkSuite": suite("IN_PROGRESS" if check == "STARVED_BUSY" else "COMPLETED", 7)})
+# STALE: "CI" reported only by run #1 of its workflow, while the newer,
+# completed run #2 of the same workflow carries no row of that name.
+if check == "STALE":
+    run.update({"status": "COMPLETED", "conclusion": "SUCCESS",
+                "checkSuite": suite("COMPLETED", 7, 1, 70)})
+    nodes.append({"__typename": "CheckRun", "name": "Other", "detailsUrl": "u3",
+                  "startedAt": "2026-01-01T00:00:00Z", "status": "COMPLETED",
+                  "conclusion": "SUCCESS", "checkSuite": suite("COMPLETED", 9, 2, 70)})
 if check == "STARVED_MIX":
     nodes.append({"__typename": "CheckRun", "name": "Lint", "detailsUrl": "u2",
                   "startedAt": "2026-01-01T00:00:00Z", "status": "IN_PROGRESS",
@@ -224,6 +242,25 @@ out=$(status)
 check_contains "wait"                   "NEXT: wait"               "$out"
 check_contains "names the run"          "run(s) 7 need a maintainer to re-run them" "$out"
 check_absent   "no rerun command"       "gh run rerun"             "$out"
+
+# What only a maintainer can clear is still named, so the contributor
+# can pass it on.
+echo "case: READ, a required context never reported -> handed-over names it"
+PERM=READ REQ="ci / Never" make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "handed over"            "NEXT: handed-over"        "$out"
+check_contains "names the context"      "required context(s) never reported: ci / Never" "$out"
+
+echo "case: READ, a required context only in a superseded run -> handed-over names it"
+PERM=READ REQ="CI" CHECK=STALE make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "handed over"            "NEXT: handed-over"        "$out"
+check_contains "names the context"      "reported only by a superseded workflow run: CI" "$out"
+
+echo "case: WRITE, the same superseded run -> not handed over"
+PERM=WRITE REQ="CI" CHECK=STALE make_stub; rm -f "$MARKER"
+out=$(status)
+check_absent   "not handed over"        "handed-over"              "$out"
 
 echo "case: WRITE, the same concluded run -> rerun-ci as before"
 PERM=WRITE CHECK=STARVED_DONE make_stub; rm -f "$MARKER"

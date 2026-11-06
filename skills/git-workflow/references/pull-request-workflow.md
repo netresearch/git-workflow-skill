@@ -614,6 +614,9 @@ the merge all belong to the maintainers. Your part ends earlier:
    says so in its reason.
 3. `NEXT: handed-over` follows. Nothing is left to do until a maintainer
    answers. `--watch` returns on it, and still holds while checks run.
+   Its reason names what only a maintainer can clear (runs awaiting
+   approval, a run to re-run, a required context never reported or only
+   in a superseded run), so you can pass it on.
    A review that requests changes on the current head turns it back into
    `resolve-threads` when it opened a thread, otherwise `address-comments`;
    once you push the fix,
