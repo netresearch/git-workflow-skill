@@ -22,15 +22,17 @@ trap 'rm -rf "$STUB_DIR"' EXIT
 
 fail=0
 check_contains() { # check_contains <name> <needle> <haystack>
-    case "$3" in
-        *"$2"*) echo "  ok   $1" ;;
-        *) echo "  FAIL $1: no '$2' in output"; fail=1 ;;
+    local label=$1 needle=$2 haystack=$3
+    case "$haystack" in
+        *"$needle"*) echo "  ok   $label" ;;
+        *) echo "  FAIL $label: no '$needle' in output"; fail=1 ;;
     esac
 }
 check_absent() { # check_absent <name> <needle> <haystack>
-    case "$3" in
-        *"$2"*) echo "  FAIL $1: unexpected '$2' in output"; fail=1 ;;
-        *) echo "  ok   $1" ;;
+    local label=$1 needle=$2 haystack=$3
+    case "$haystack" in
+        *"$needle"*) echo "  FAIL $label: unexpected '$needle' in output"; fail=1 ;;
+        *) echo "  ok   $label" ;;
     esac
 }
 
@@ -76,6 +78,16 @@ if perm:
 run = {"__typename": "CheckRun", "name": "CI", "detailsUrl": "u",
        "startedAt": "2026-01-01T00:00:00Z", "status": check,
        "conclusion": "SUCCESS" if check == "COMPLETED" else None}
+if check == "STARVED_BUSY":
+    # A job that never got a runner, while another job of its run still
+    # goes: no pending row, only the check suite says the run is busy.
+    run.update({"status": "COMPLETED", "conclusion": "FAILURE", "steps": {"totalCount": 0},
+                "annotations": {"nodes": [{"message":
+                    "The job was not started because it repeatedly failed to be acquired (5 attempts)."}]},
+                "checkSuite": {"status": "IN_PROGRESS", "workflowRun": {
+                    "databaseId": 7, "runNumber": 1, "event": "pull_request",
+                    "createdAt": "2026-01-01T00:00:00Z", "url": "run/7",
+                    "workflow": {"databaseId": 70, "name": "CI"}}}})
 repo["pullRequest"] = {
     "number": 1, "title": "t", "state": "OPEN", "isDraft": os.environ.get("DRAFT") == "1",
     "mergeable": "MERGEABLE", "mergeStateStatus": os.environ.get("MERGE_STATE", "BLOCKED"),
@@ -153,6 +165,13 @@ out=$(status)
 check_contains "wait"                   "NEXT: wait"               "$out"
 out=$(status --watch --interval 1 --max-wait 2 2>&1 || true)
 check_absent   "watch holds"            "ACTIONABLE"               "$out"
+
+echo "case: READ, no check running but a run still going -> wait, without a count of zero"
+PERM=READ CHECK=STARVED_BUSY make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "wait"                   "NEXT: wait"               "$out"
+check_contains "names the busy run"     "a run is still going"     "$out"
+check_absent   "no zero count"          "0 check(s) still running" "$out"
 
 echo "case: READ, green -> --watch returns on handed-over"
 PERM=READ make_stub; rm -f "$MARKER"

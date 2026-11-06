@@ -1053,7 +1053,8 @@
          elif $s.viewer_is_contributor then
            (if ($s.checks.pending > 0) or (($s.checks.not_started_busy_runs|length) > 0) then
               {action:"wait",
-               why:"\($s.checks.pending) check(s) still running — after that, review and merge belong to the maintainers of \($s.repo) (you have \($s.viewer_permission) access)"}
+               why:((if $s.checks.pending > 0 then "\($s.checks.pending) check(s) still running" else "a run is still going" end)
+                    + " — after that, review and merge belong to the maintainers of \($s.repo) (you have \($s.viewer_permission) access)")}
             else
               {action:"handed-over",
                why:("you have \($s.viewer_permission) access to \($s.repo), so review, workflow-run approval and merge belong to its maintainers — nothing left to do on \($s.headOid[0:8]) until one of them answers"
