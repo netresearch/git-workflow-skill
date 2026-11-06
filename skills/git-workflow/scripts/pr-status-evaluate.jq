@@ -1083,6 +1083,13 @@
                        else "" end)
                     + (if (($s.undispatched|length) > 0)
                        then "; required context(s) never reported: \($s.undispatched|join(", "))"
+                       else "" end)
+                    # Approved and still BLOCKED with none of the above: the
+                    # cause lies where this tool cannot see (investigate).
+                    + (if $s.mergeState == "BLOCKED" and $s.reviewDecision == "APPROVED"
+                          and ($s.awaiting_approval|length) == 0 and ($s.checks.not_started_runs|length) == 0
+                          and ($stale_required|length) == 0 and ($s.undispatched|length) == 0
+                       then "; BLOCKED although approved, and no cause is visible from your access — ask a maintainer to investigate"
                        else "" end))}
             end))
          # An approval that does not count: classic protection with

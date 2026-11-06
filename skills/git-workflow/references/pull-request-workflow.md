@@ -616,7 +616,8 @@ the merge all belong to the maintainers. Your part ends earlier:
    answers. `--watch` returns on it, and still holds while checks run.
    Its reason names what only a maintainer can clear (runs awaiting
    approval, a run to re-run, a required context never reported or only
-   in a superseded run), so you can pass it on.
+   in a superseded run, an approved pull request still BLOCKED for a
+   reason it cannot see), so you can pass it on.
    A review that requests changes on the current head turns it back into
    `resolve-threads` when it opened a thread, otherwise `address-comments`;
    once you push the fix,

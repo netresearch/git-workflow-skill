@@ -127,7 +127,7 @@ reviews = {
 repo["pullRequest"] = {
     "number": 1, "title": "t", "state": "OPEN", "isDraft": os.environ.get("DRAFT") == "1",
     "mergeable": "MERGEABLE", "mergeStateStatus": os.environ.get("MERGE_STATE", "BLOCKED"),
-    "reviewDecision": None,
+    "reviewDecision": os.environ.get("DECISION") or None,
     "author": {"login": "contrib", "__typename": "User"},
     "baseRefName": "main", "headRefName": "f", "headRefOid": head,
     "isCrossRepository": True,
@@ -256,6 +256,17 @@ PERM=READ REQ="CI" CHECK=STALE make_stub; rm -f "$MARKER"
 out=$(status)
 check_contains "handed over"            "NEXT: handed-over"        "$out"
 check_contains "names the context"      "reported only by a superseded workflow run: CI" "$out"
+
+echo "case: READ, approved but BLOCKED with no visible cause -> handed-over asks for an investigation"
+PERM=READ DECISION=APPROVED make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "handed over"            "NEXT: handed-over"        "$out"
+check_contains "says undetermined"      "BLOCKED although approved, and no cause is visible" "$out"
+
+echo "case: READ, not yet approved -> handed-over without that claim"
+PERM=READ make_stub; rm -f "$MARKER"
+out=$(status)
+check_absent   "no undetermined claim"  "BLOCKED although approved" "$out"
 
 echo "case: WRITE, the same superseded run -> not handed over"
 PERM=WRITE REQ="CI" CHECK=STALE make_stub; rm -f "$MARKER"
