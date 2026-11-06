@@ -599,9 +599,9 @@
         attestation_available: $attestation_available,
         viewer_commits: $viewer_commits,
         viewer_committed: $viewer_committed,
-        # Empty when the response carries no permission (an older gh, a
-        # stub); unknown then counts as able to merge, the behaviour before
-        # this field was read.
+        # Empty when the response carries no permission (null for a GitHub
+        # App token such as GITHUB_TOKEN, or a stub); unknown then counts as
+        # able to merge, the behaviour before this field was read.
         viewer_permission: ($repo.viewerPermission // ""),
         viewer_is_contributor: (($repo.viewerPermission // "") | IN("READ", "TRIAGE", "NONE")),
         authorship_complete: $authorship_complete,
@@ -844,8 +844,11 @@
          # run still has a job going, this does not fire; the ladder goes on,
          # so threads and comments still come first, and the wait it ends in
          # names the not-started rows (see the end of the ladder).
+         # Re-running needs write access; a contributor's handed-over names
+         # the runs instead.
          elif ($s.checks.failing|length) > 0 and ($s.checks.failing_other|length) == 0
-              and ($s.checks.not_started_busy_runs|length) == 0 then
+              and ($s.checks.not_started_busy_runs|length) == 0
+              and ($s.viewer_is_contributor | not) then
            {action:"rerun-ci", why:"only not-started job(s) failing: \($s.checks.not_started|join(", ")) — no runner was acquired; nothing in the PR to fix",
             cmd:($s.checks.not_started_runs|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))}
          # fix-ci and triage-ci name only failures somebody can fix; the
@@ -1069,6 +1072,9 @@
                why:("you have \($s.viewer_permission) access to \($s.repo), so review, workflow-run approval and merge belong to its maintainers — nothing left to do on \($s.headOid[0:8]) until one of them answers"
                     + (if (($s.awaiting_approval|length) > 0)
                        then "; \($s.awaiting_approval|length) workflow run(s) await their approval (\([$s.awaiting_approval[].name]|unique|join(", ")))"
+                       else "" end)
+                    + (if (($s.checks.not_started_runs|length) > 0)
+                       then "; job(s) that never got a runner (\($s.checks.not_started|join(", "))) need a maintainer to re-run run(s) \($s.checks.not_started_runs|map(tostring)|join(", "))"
                        else "" end))}
             end))
          # An approval that does not count: classic protection with
@@ -1417,10 +1423,12 @@
                        + " — not started (no runner acquired): \($s.checks.not_started|join(", ")); "
                        + ([ (if ($s.checks.not_started_busy_runs|length) > 0
                              then "re-run once run(s) \($s.checks.not_started_busy_runs|map(tostring)|join(", ")) have finished" else empty end),
-                            (if ($idle|length) > 0
-                             then "run(s) \($idle|map(tostring)|join(", ")) can be re-run now: "
+                            (if ($idle|length) == 0 then empty
+                             elif $s.viewer_is_contributor
+                             then "run(s) \($idle|map(tostring)|join(", ")) need a maintainer to re-run them"
+                             else "run(s) \($idle|map(tostring)|join(", ")) can be re-run now: "
                                   + ($idle|map("gh run rerun \(.) --repo \($s.repo) --failed")|join(" && "))
-                             else empty end)
+                             end)
                           ] | join("; ")))
       else . end
     # Structural blockers named beside whatever rung won. A review action sits

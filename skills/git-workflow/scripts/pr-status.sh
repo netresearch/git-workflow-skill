@@ -614,7 +614,10 @@ render() {
     "  checks      : \(.checks.pass) pass, \(.checks.fail) fail, \(.checks.pending) pending\(if .checks.pending > 0 then " (\(.checks.running) running, \(.checks.queued) queued)" else "" end), \(.checks.skip) skip (of \(.checks.total))",
     (if (.checks.failing|length) > 0 then "  failing     : \(.checks.failing|join(", "))" else empty end),
     (if (.checks.cancelled|length) > 0 then "  cancelled   : \(.checks.cancelled|join(", ")) — re-run, do not debug" else empty end),
-    (if ((.checks.not_started // [])|length) > 0 then "  not started : \(.checks.not_started|join(", ")) — no runner acquired; gh run rerun <run> --failed once that run has completed (run \(.checks.not_started_runs|map(tostring)|join(", "))), do not debug" else empty end),
+    (if ((.checks.not_started // [])|length) > 0 then "  not started : \(.checks.not_started|join(", ")) — no runner acquired; "
+       + (if .viewer_is_contributor then "a maintainer has to re-run it once that run has completed"
+          else "gh run rerun <run> --failed once that run has completed" end)
+       + " (run \(.checks.not_started_runs|map(tostring)|join(", "))), do not debug" else empty end),
     (if .checks.stale > 0 then "  stale       : \(.checks.stale) cancelled row(s) from a superseded run, ignored" else empty end),
     (if (.checks.failing_required|length) > 0 then "  ^ REQUIRED  : \(.checks.failing_required|join(", "))" else empty end),
     "  rulesets    : \(if (.rulesets|length)>0 then (.rulesets|join(", ")) else "none" end)",

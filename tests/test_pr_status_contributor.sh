@@ -78,16 +78,25 @@ if perm:
 run = {"__typename": "CheckRun", "name": "CI", "detailsUrl": "u",
        "startedAt": "2026-01-01T00:00:00Z", "status": check,
        "conclusion": "SUCCESS" if check == "COMPLETED" else None}
-if check == "STARVED_BUSY":
-    # A job that never got a runner, while another job of its run still
-    # goes: no pending row, only the check suite says the run is busy.
+def suite(status, run_id):
+    return {"status": status, "workflowRun": {
+        "databaseId": run_id, "runNumber": 1, "event": "pull_request",
+        "createdAt": "2026-01-01T00:00:00Z", "url": f"run/{run_id}",
+        "workflow": {"databaseId": 70 + run_id, "name": f"CI{run_id}"}}}
+# STARVED_BUSY: a job that never got a runner while another job of its run
+# still goes (no pending row; only the check suite says the run is busy).
+# STARVED_DONE: the same job, its run concluded. STARVED_MIX: STARVED_DONE
+# beside a check of another run that is still running.
+nodes = [run]
+if check.startswith("STARVED_"):
     run.update({"status": "COMPLETED", "conclusion": "FAILURE", "steps": {"totalCount": 0},
                 "annotations": {"nodes": [{"message":
                     "The job was not started because it repeatedly failed to be acquired (5 attempts)."}]},
-                "checkSuite": {"status": "IN_PROGRESS", "workflowRun": {
-                    "databaseId": 7, "runNumber": 1, "event": "pull_request",
-                    "createdAt": "2026-01-01T00:00:00Z", "url": "run/7",
-                    "workflow": {"databaseId": 70, "name": "CI"}}}})
+                "checkSuite": suite("IN_PROGRESS" if check == "STARVED_BUSY" else "COMPLETED", 7)})
+if check == "STARVED_MIX":
+    nodes.append({"__typename": "CheckRun", "name": "Lint", "detailsUrl": "u2",
+                  "startedAt": "2026-01-01T00:00:00Z", "status": "IN_PROGRESS",
+                  "conclusion": None, "steps": {"totalCount": 2}, "checkSuite": suite("IN_PROGRESS", 8)})
 # REVIEW: CR (changes requested on the head), CR_OLD (on an older head),
 # CR_APPROVED (on the head, then approved by the same reviewer).
 def review(state, oid):
@@ -113,7 +122,7 @@ repo["pullRequest"] = {
         for n in range(threads)]},
     "commits": {"nodes": [{"commit": {"oid": head, "statusCheckRollup": {
         "state": "SUCCESS" if check == "COMPLETED" else "PENDING",
-        "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": [run]}}}}]},
+        "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": nodes}}}}]},
     "allCommits": {"totalCount": 1, "nodes": [
         {"commit": {"oid": head, "signature": {"isValid": True},
                     "parents": {"totalCount": 1},
@@ -199,6 +208,27 @@ out=$(status)
 check_contains "wait"                   "NEXT: wait"               "$out"
 check_contains "names the busy run"     "a run is still going"     "$out"
 check_absent   "no zero count"          "0 check(s) still running" "$out"
+
+# Re-running a run needs write access, so a contributor is never handed
+# the command, neither as rerun-ci nor in the note appended to a wait.
+echo "case: READ, a job never got a runner, its run concluded -> handed-over names it, no rerun"
+PERM=READ CHECK=STARVED_DONE make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "handed over"            "NEXT: handed-over"        "$out"
+check_contains "names the run"          "need a maintainer to re-run run(s) 7" "$out"
+check_absent   "no rerun command"       "gh run rerun"             "$out"
+
+echo "case: READ, that run beside a running check -> wait without a rerun command"
+PERM=READ CHECK=STARVED_MIX make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "wait"                   "NEXT: wait"               "$out"
+check_contains "names the run"          "run(s) 7 need a maintainer to re-run them" "$out"
+check_absent   "no rerun command"       "gh run rerun"             "$out"
+
+echo "case: WRITE, the same concluded run -> rerun-ci as before"
+PERM=WRITE CHECK=STARVED_DONE make_stub; rm -f "$MARKER"
+out=$(status)
+check_contains "rerun-ci"               "NEXT: rerun-ci"           "$out"
 
 echo "case: READ, green -> --watch returns on handed-over"
 PERM=READ make_stub; rm -f "$MARKER"

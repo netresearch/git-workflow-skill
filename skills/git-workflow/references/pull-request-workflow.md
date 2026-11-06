@@ -614,15 +614,17 @@ the merge all belong to the maintainers. Your part ends earlier:
    says so in its reason.
 3. `NEXT: handed-over` follows. Nothing is left to do until a maintainer
    answers. `--watch` returns on it, and still holds while checks run.
-   A review that requests changes on the current head, with or without a
-   thread, turns it back into `address-comments`; once you push the fix,
+   A review that requests changes on the current head turns it back into
+   `resolve-threads` when it opened a thread, otherwise `address-comments`;
+   once you push the fix,
    the review belongs to an older head and the pull request is handed over
    again.
 
 The review and merge advice of the rungs below never reaches you: it named
 `pr-merge.sh --self-reviewed` on FriendsOfTYPO3/fractor#443, where the author
-had `READ` access and could merge nothing. An unknown permission (an older
-`gh`) keeps the previous advice.
+had `READ` access and could merge nothing. An unknown permission keeps the
+previous advice; GitHub returns none for a GitHub App token such as
+`GITHUB_TOKEN` in Actions.
 
 ### Taking over a contributor's fork pull request (#308)
 
