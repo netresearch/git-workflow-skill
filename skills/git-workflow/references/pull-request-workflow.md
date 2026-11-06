@@ -865,9 +865,9 @@ it prints a warning instead. Fixes #442
 ```
 
 Leave a blank line after `</summary>`. Without it, GitHub prints the Markdown
-inside the block raw: a list item stays a line starting with a hyphen, and inline code
-keeps its backticks (measured 2026-11-05 through `gh api -X POST markdown`
-with `mode: gfm`).
+inside the block raw: a list item stays a line starting with a hyphen, and
+inline code keeps its backticks (measured 2026-11-05 through
+`gh api -X POST markdown` with `mode: gfm`).
 
 There is no hard length limit. The folded blocks hold reasons, limits and
 evidence. They never hold a narrative of what was done, a file-by-file list
@@ -881,8 +881,10 @@ Three sources outrank this default, in this order:
 2. A maintainer's direct request in a PR or issue comment. It binds every
    later PR and issue in that repository, so search the maintainers' recent
    comments before writing. On FriendsOfTYPO3/fractor#443 a maintainer asked
-   for less text; that repository then gets the first paragraph only, and
-   the details go into the commit message.
+   for less text; a day later the repository wrote that request into its
+   `CONTRIBUTING.md` and `AGENTS.md` (TYPO3 commit rules, a short commit
+   body, a pull request of a one-to-three-sentence summary), which then
+   govern as source 1.
 3. This default.
 
 The shape follows Google's guide to change descriptions (a first line that
