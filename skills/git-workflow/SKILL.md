@@ -60,7 +60,8 @@ Releases: `github-release`. BLOCKED-PR diagnosis: `github-project`.
 ## Hook Detection
 
 ```bash
-ls lefthook.yml .lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null || echo "No hooks"
+found=$(ls lefthook.yml .lefthook.yml captainhook.json Build/captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null)
+[ -n "$found" ] && echo "$found" || echo "No hooks"
 ```
 
 Install commands per framework: `references/git-hooks-setup.md`.

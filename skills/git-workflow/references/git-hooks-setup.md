@@ -21,18 +21,22 @@ prevent secrets, and ensure code quality without requiring the agent to "remembe
 ## Detection — One Command
 
 ```bash
-ls lefthook.yml .lefthook.yml captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null || echo "No hook framework configured"
+found=$(ls lefthook.yml .lefthook.yml captainhook.json Build/captainhook.json .pre-commit-config.yaml .husky/pre-commit 2>/dev/null)
+[ -n "$found" ] && echo "$found" || echo "No hook framework configured"
 ```
 
-Then install based on what's found:
+`ls` exits non-zero as soon as one named file is missing, so test its output, not its exit
+status. Then install based on what's found:
 - `lefthook.yml` → `lefthook install` (or `make setup`)
-- `captainhook.json` → `composer install` (auto)
+- `captainhook.json` or `Build/captainhook.json` → `composer install` (auto)
 - `.husky/` → `npm install` (auto)
 - `.pre-commit-config.yaml` → `pre-commit install`
 - Nothing → suggest adding one based on project language
 
 CaptainHook resolves `bootstrap` against the directory of `captainhook.json`, not the repository
-root, so a config in `Build/` needs `"bootstrap": "../.Build/vendor/autoload.php"`.
+root, so a config in `Build/` needs `"bootstrap": "../vendor/autoload.php"`, or
+`"../.Build/vendor/autoload.php"` where Composer's `vendor-dir` is `.Build/vendor` (the TYPO3
+extension layout).
 
 ## Updating Hook Versions (`pre-commit autoupdate`)
 
