@@ -31,6 +31,9 @@ Then install based on what's found:
 - `.pre-commit-config.yaml` → `pre-commit install`
 - Nothing → suggest adding one based on project language
 
+CaptainHook resolves `bootstrap` against the directory of `captainhook.json`, not the repository
+root, so a config in `Build/` needs `"bootstrap": "../.Build/vendor/autoload.php"`.
+
 ## Updating Hook Versions (`pre-commit autoupdate`)
 
 `pre-commit autoupdate` bumps every hook's `rev` to the repo's **latest tag —
