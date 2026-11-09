@@ -249,9 +249,21 @@
     # attestation path above uses. Falling back to $author keeps the old
     # behaviour when viewer is absent — an older gh, or a stubbed response —
     # rather than making every comment unanswered by comparing against "".
-    | (if $author_is_bot and $viewer != "" then $viewer else $author end) as $responder
-    | (([$p.comments.nodes[]? | select(.author.login == $responder) | .createdAt] | max) // "") as $responder_last_comment
-    | ([$p.comments.nodes[]? | select(.author.login != $responder)
+    #
+    # On a person-authored pull request the viewer answers too (#426). A fork
+    # pull request whose author never comments, with a third party writing
+    # under it and the maintainer answering, otherwise keeps every third-party
+    # comment unanswered for good: the viewer's own comments are dropped from
+    # the count (#308) but never moved the last word. Observed on
+    # netresearch/jujutsu-workflow-skill#41 — CLEAN, green, approved, and
+    # pr-merge.sh refusing. So the last word is the later one of author and
+    # viewer. A bot author keeps the viewer alone: a bot comment posted after
+    # a human one is no answer to it.
+    | (if $author_is_bot and $viewer != "" then [$viewer]
+       elif $viewer != "" then [$author, $viewer]
+       else [$author] end) as $responders
+    | (([$p.comments.nodes[]? | select(.author.login | IN($responders[])) | .createdAt] | max) // "") as $responder_last_comment
+    | ([$p.comments.nodes[]? | select(.author.login | IN($responders[]) | not)
                             | select(.createdAt > $responder_last_comment)]) as $unanswered_comments
     # Bots are reported but never drive the ladder: a Renovate or Dependabot
     # note must not push its own PR off the auto-merge rung it exists to reach.

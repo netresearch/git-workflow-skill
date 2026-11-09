@@ -199,5 +199,30 @@ out="$(run)"
 check    "a contributor reply still gates" "address-comments" "$(action)"
 contains "and names who wrote it"          "alonsoburon" "$out"
 
+echo "Case 8: a third party on a fork PR whose author never commented, answered by the viewer (#426)"
+# The author is a person and silent, a reader with no write access comments,
+# the maintainer answers in a later comment. Measured against the author alone
+# the third-party comments stay unanswered for the life of the PR - observed
+# on netresearch/jujutsu-workflow-skill#41, where pr-merge.sh refused a CLEAN,
+# green, approved pull request.
+VIEWER_LOGIN=CybotTM \
+COMMENTS_JSON='[{"author":"LeoniePhiline","createdAt":"2026-10-27T10:00:00Z"},
+                {"author":"LeoniePhiline","createdAt":"2026-10-27T10:05:00Z"},
+                {"author":"LeoniePhiline","createdAt":"2026-10-27T10:10:00Z"},
+                {"author":"CybotTM","createdAt":"2026-10-28T09:00:00Z"}]' make_stub
+out="$(run)"
+check "the viewer's answer counts as the last word" "merge" "$(action)"
+lacks "and the rung is not reported"               "address-comments" "$out"
+
+echo "Case 8b: the third party writes again after the viewer's answer"
+# The guarantee the fix must NOT break: a later third-party comment gates again.
+VIEWER_LOGIN=CybotTM \
+COMMENTS_JSON='[{"author":"LeoniePhiline","createdAt":"2026-10-27T10:00:00Z"},
+                {"author":"CybotTM","createdAt":"2026-10-28T09:00:00Z"},
+                {"author":"LeoniePhiline","createdAt":"2026-10-28T11:00:00Z"}]' make_stub
+out="$(run)"
+check    "a newer third-party comment still gates" "address-comments" "$(action)"
+contains "and only that one is counted"            "1 unanswered (LeoniePhiline)" "$out"
+
 [ "$fail" = "0" ] && echo "All cases passed." || echo "FAILURES"
 exit "$fail"
