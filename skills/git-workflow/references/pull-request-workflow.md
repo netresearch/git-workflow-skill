@@ -45,8 +45,8 @@ is everything needed to reply and resolve without another query.
 under the pull request instead of on a line of the diff produces an *issue
 comment*, which lives in neither `reviewThreads` nor the check rollup — so a
 report built from those alone says `threads: 0 unresolved` while the findings
-sit unread. Anything posted after the last word of the author counts as
-unanswered; comments from bots are shown but never drive the `NEXT:` line, so a
+sit unread. Anything posted after the last word of the author or of you (the
+authenticated viewer) counts as unanswered; comments from bots are shown but never drive the `NEXT:` line, so a
 Renovate note cannot push its own pull request off the auto-merge rung.
 
 Measured on a 40-PR rollout that did not have it: **183 of 370 shell calls
@@ -588,8 +588,10 @@ and `deps-major` route to a human by design — `netresearch/.github`'s
 majors are approved but left for a human to merge.
 
 **On a bot PR the `address-comments` rung measures against YOUR last word, not
-the author's (#319).** Everywhere else it measures against the author: you
-opened the pull request, somebody wrote under it, you answer. A bot author posts
+the author's (#319).** Everywhere else it measures against the later last word
+of the author and you (#426): you opened the pull request, somebody wrote under
+it, you answer — or a third party wrote under someone else's pull request and
+you answered for the maintainers. A bot author posts
 once at creation and never again, so measuring against that would count every
 later comment for the life of the pull request — the repository's own status
 notes from Codecov, SonarCloud and Dependency Review, a CodeRabbit "review
@@ -684,8 +686,12 @@ Three things about the merge differ from an ordinary pull request:
    measures against the *author*, the contributor has often stopped answering,
    and every comment you write is newer than their last word — so the counter
    rose with each one, including the comment answering the bot notices. The
-   viewer is now excluded from it the way bots are. A reply from the
-   contributor still raises the rung.
+   viewer is now excluded from it the way bots are, and your last comment
+   counts as the last word next to the author's, so answering a third party
+   who wrote under the contributor's pull request clears their comments too
+   (#426, netresearch/jujutsu-workflow-skill#41). A reply from the
+   contributor, the author, is a last word as well. A new comment from anyone
+   else after the later of the two still raises the rung.
 
 Pin the head commit on the merge, since a takeover has usually pushed twice:
 `gh pr merge <n> --repo OWNER/REPO --merge --match-head-commit <full-sha>`.
