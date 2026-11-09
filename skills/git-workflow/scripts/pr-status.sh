@@ -833,7 +833,7 @@ snapshot() {
       if (( cancelled )); then
         head_runs=$(jq -c '{fetched: true,
                             unfinished: [.[] | select(.status != "completed")
-                                         | {id, workflow_id, run_number, status}]}' <<<"$rr") \
+                                         | {id, workflow_id, run_number, event, status}]}' <<<"$rr") \
           || head_runs='{"fetched":false}'
       fi
     elif (( cancelled )); then

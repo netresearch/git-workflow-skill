@@ -65,6 +65,7 @@ chmod +x "$STUB_DIR/gh"
 #   CONCLUSION     conclusion of the "Checks / test" row in run 100 (default CANCELLED)
 #   NEWER_STATUS   REST status of run 101 (default pending; "none" leaves it out)
 #   NEWER_WF       workflow id of run 101 (default 7, the same workflow)
+#   NEWER_EVENT    event of run 101 (default pull_request)
 build() {
     : > "$STUB_DIR/runs-calls.log"
     python3 - "$STUB_DIR" "$HEAD" <<'PY'
@@ -81,6 +82,7 @@ runs = [{"id": 100, "workflow_id": 7, "run_number": 10, "status": "completed",
 newer = env.get("NEWER_STATUS", "pending")
 if newer != "none":
     runs.append({"id": 101, "workflow_id": int(env.get("NEWER_WF", "7")), "run_number": 11,
+                 "event": env.get("NEWER_EVENT", "pull_request"),
                  "status": newer, "conclusion": "success" if newer == "completed" else None,
                  "name": "Checks"})
 json.dump({"total_count": len(runs), "workflow_runs": runs}, open(os.path.join(d, "runs.json"), "w"))
@@ -148,6 +150,10 @@ contains "re-run advice names the run" "cancelled   : Checks / test (run 100) â€
 echo "case 3: the unfinished run belongs to another workflow"
 NEWER_WF=8 build
 check "a pending run of another workflow supersedes nothing" "fix-ci" "$(run_json | jq -r .next.action)"
+
+echo "case 3b: the unfinished run of that workflow is a push run"
+NEWER_EVENT=push build
+check "a run in another event's group supersedes nothing" "fix-ci" "$(run_json | jq -r .next.action)"
 
 echo "case 4: the runs listing cannot be read"
 build

@@ -53,6 +53,7 @@
                 run: (.checkSuite.workflowRun.databaseId // null),
                 run_number: (.checkSuite.workflowRun.runNumber // null),
                 workflow: (.checkSuite.workflowRun.workflow.databaseId // null),
+                event: (.checkSuite.workflowRun.event // null),
                 suite_done: ((.checkSuite.status // "COMPLETED") == "COMPLETED")}
           else {name: .context, state: (if .state == "SUCCESS" then "PASS"
                                         elif .state == "PENDING" then "PENDING"
@@ -418,13 +419,14 @@
     # waiting on its concurrency group has no jobs yet, so the rollup cannot
     # show it and the dedupe above cannot replace the row; the runs listing
     # (head_runs_f, read by pr-status.sh only when a cancelled row exists) can.
-    # Newer means a higher run_number in the same workflow, as for
-    # $stale_required. Such a row is neither failing nor re-runnable: it is
+    # Newer means a higher run_number in the same workflow for the same
+    # event, as for $stale_required: a push run waits in another group. Such a row is neither failing nor re-runnable: it is
     # pending, so the gate stays shut and the ladder waits. Unread or failed
     # listing: no row is superseded, the old advice stands.
     | (($head_runs_f[0] // null) | if type == "object" and .fetched == true then (.unfinished // []) else [] end) as $unfinished_runs
     | ([$cancelled_all[] | . as $c
         | ([$unfinished_runs[] | select($c.workflow != null and .workflow_id == $c.workflow
+                                        and ($c.event == null or .event == $c.event)
                                         and (.run_number // 0) > ($c.run_number // 0))]
            | max_by(.run_number)) as $newer
         | select($newer != null)
