@@ -690,7 +690,8 @@ Three things about the merge differ from an ordinary pull request:
    counts as the last word next to the author's, so answering a third party
    who wrote under the contributor's pull request clears their comments too
    (#426, netresearch/jujutsu-workflow-skill#41). A reply from the
-   contributor, or a new comment from that third party, still raises the rung.
+   contributor, the author, is a last word as well. A new comment from anyone
+   else after the later of the two still raises the rung.
 
 Pin the head commit on the merge, since a takeover has usually pushed twice:
 `gh pr merge <n> --repo OWNER/REPO --merge --match-head-commit <full-sha>`.
