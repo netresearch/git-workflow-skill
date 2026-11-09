@@ -817,13 +817,13 @@ snapshot() {
   # the green path keeps its call count. A failed read leaves
   # `fetched: false`, and the cancelled rows keep their re-run advice.
   local runs='[]' head_runs='null' head_oid rr cross=0 cancelled=0
-  [ "$(jq -r '.data.repository.pullRequest.isCrossRepository // false' <<<"$g")" = "true" ] && cross=1
+  [[ "$(jq -r '.data.repository.pullRequest.isCrossRepository // false' <<<"$g")" == "true" ]] && cross=1
   jq -e '[.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
           | select(.__typename == "CheckRun" and .conclusion == "CANCELLED")] | length > 0' \
      <<<"$g" >/dev/null 2>&1 && cancelled=1
   if (( cross || cancelled )); then
     head_oid=$(jq -r '.data.repository.pullRequest.headRefOid // ""' <<<"$g")
-    if [ -n "$head_oid" ] && rr=$(gh api --paginate "repos/$REPO/actions/runs?head_sha=$head_oid&per_page=100" 2>/dev/null) \
+    if [[ -n "$head_oid" ]] && rr=$(gh api --paginate "repos/$REPO/actions/runs?head_sha=$head_oid&per_page=100" 2>/dev/null) \
        && rr=$(jq -sc '[.[].workflow_runs[]?]' <<<"$rr" 2>/dev/null); then
       if (( cross )); then
         runs=$(jq -c '[.[]

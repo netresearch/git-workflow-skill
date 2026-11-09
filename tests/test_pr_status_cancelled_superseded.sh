@@ -24,19 +24,22 @@ export XDG_CACHE_HOME="$STUB_DIR/cache"
 
 fail=0
 check() { # check <name> <expected> <actual>
-    if [ "$2" = "$3" ]; then echo "  ok   $1"; else
-        echo "  FAIL $1: expected '$2', got '$3'"; fail=1; fi
+    local name="$1" want="$2" got="$3"
+    if [[ "$want" == "$got" ]]; then echo "  ok   $name"; else
+        echo "  FAIL $name: expected '$want', got '$got'"; fail=1; fi
 }
 contains() { # contains <name> <needle> <haystack>
-    case "$3" in
-        *"$2"*) echo "  ok   $1" ;;
-        *) echo "  FAIL $1: '$2' not found in output"; fail=1 ;;
+    local name="$1" needle="$2" hay="$3"
+    case "$hay" in
+        *"$needle"*) echo "  ok   $name" ;;
+        *) echo "  FAIL $name: '$needle' not found in output"; fail=1 ;;
     esac
 }
 lacks() { # lacks <name> <needle> <haystack>
-    case "$3" in
-        *"$2"*) echo "  FAIL $1: '$2' should not appear"; fail=1 ;;
-        *) echo "  ok   $1" ;;
+    local name="$1" needle="$2" hay="$3"
+    case "$hay" in
+        *"$needle"*) echo "  FAIL $name: '$needle' should not appear"; fail=1 ;;
+        *) echo "  ok   $name" ;;
     esac
 }
 
@@ -166,5 +169,5 @@ CONCLUSION=SUCCESS build
 run_json >/dev/null
 check "no runs call on a same-repo PR without a cancelled row" "0" "$(wc -l < "$STUB_DIR/runs-calls.log" | tr -d ' ')"
 
-[ "$fail" = "0" ] && echo "All cases passed." || echo "FAILURES"
+[[ "$fail" == "0" ]] && echo "All cases passed." || echo "FAILURES"
 exit "$fail"
