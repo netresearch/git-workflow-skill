@@ -3149,7 +3149,9 @@ expression they are doubly confusing, showing up as rows literally called
 `e2e / matrix.typo3 != '' && …`. `pr-status.sh` splits them: a cancelled context
 that later reported under the same name is counted as **stale** and dropped from
 the numbers, while one that never reported again still shuts the gate and is
-listed under `cancelled — re-run, do not debug`. Before this split, two stale
+listed under `cancelled — re-run, do not debug` with its run id — unless a
+newer run of its workflow on the same head has not finished, which lists it
+under `superseded` and waits (#439, see merge-gate-watcher.md). Before this split, two stale
 e2e rows read as `2 fail` with `NEXT: fix-ci` on a pull request GitHub itself
 called `CLEAN`, which cost an hour of log archaeology on a run that had been
 cancelled on purpose.

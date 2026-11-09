@@ -509,7 +509,7 @@ complete_contexts() {
 # would discard the status flag.
 
 evaluate() {
-  local gql="$1" rules="$2" ok="$3" marker="$4" prot="${5:-null}" runs="${6:-[]}" qruns="${7:-null}"
+  local gql="$1" rules="$2" ok="$3" marker="$4" prot="${5:-null}" runs="${6:-[]}" qruns="${7:-null}" hruns="${8:-null}"
   # The jq program comes from a file and the JSON payloads from stdin, not
   # argv. Linux caps one argument at 128 KiB, which a pull request with long
   # comments passes; Windows caps the whole command line at 32767 characters,
@@ -518,15 +518,17 @@ evaluate() {
   # error instead of reading as "no rules". The queue-run summary travels
   # through a file for the same reason: it lists every run name, and enough
   # long workflow names pass the Windows cap.
-  local qf rc
+  local qf hf rc
   qf=$(mktemp) || return 1
+  hf=$(mktemp) || { rm -f "$qf"; return 1; }
   printf '%s\n' "$qruns" >"$qf"
+  printf '%s\n' "$hruns" >"$hf"
   printf '%s\n' "$gql" "$rules" "$prot" "$runs" \
     | jq -n --argjson ok "$ok" --argjson marker "$marker" --arg marker_path "$QUOTA_MARKER" \
-         --slurpfile queue_runs_f "$qf" --argjson stuck_after "$STUCK_AFTER" \
+         --slurpfile queue_runs_f "$qf" --slurpfile head_runs_f "$hf" --argjson stuck_after "$STUCK_AFTER" \
          -f "$SCRIPT_DIR/pr-status-evaluate.jq"
   rc=$?
-  rm -f "$qf"
+  rm -f "$qf" "$hf"
   return $rc
 }
 
@@ -611,9 +613,11 @@ render() {
     "PR #\(.number)  \(.title)",
     "  state       : \(.state)\(if .draft then " (DRAFT)" else "" end)  mergeable=\(.mergeable)  mergeState=\(.mergeState)",
     "  head        : \(.headOid[0:8]) on \(.head) -> \(.base)",
-    "  checks      : \(.checks.pass) pass, \(.checks.fail) fail, \(.checks.pending) pending\(if .checks.pending > 0 then " (\(.checks.running) running, \(.checks.queued) queued)" else "" end), \(.checks.skip) skip (of \(.checks.total))",
+    "  checks      : \(.checks.pass) pass, \(.checks.fail) fail, \(.checks.pending) pending\(if .checks.pending > 0 then " (\(.checks.running) running, \(.checks.queued) queued\(if ((.checks.superseded // [])|length) > 0 then ", \(.checks.superseded|length) awaiting a newer run" else "" end))" else "" end), \(.checks.skip) skip (of \(.checks.total))",
     (if (.checks.failing|length) > 0 then "  failing     : \(.checks.failing|join(", "))" else empty end),
-    (if (.checks.cancelled|length) > 0 then "  cancelled   : \(.checks.cancelled|join(", ")) — re-run, do not debug" else empty end),
+    (if (.checks.cancelled|length) > 0 then "  cancelled   : \([.checks.cancelled, (.checks.cancelled_runs // [])] | transpose
+                                                       | map(.[0] + (if .[1] != null then " (run \(.[1]))" else "" end)) | join(", ")) — re-run, do not debug" else empty end),
+    (if ((.checks.superseded // [])|length) > 0 then "  superseded  : \(.checks.superseded|map("\(.name) (run \(.run))")|join(", ")) — cancelled by a newer run \(.checks.superseded|map(.newer_run)|unique|map(tostring)|join(", ")) — wait for it, do not re-run" else empty end),
     (if ((.checks.not_started // [])|length) > 0 then "  not started : \(.checks.not_started|join(", ")) — no runner acquired; "
        + (if .viewer_is_contributor then "a maintainer has to re-run it once that run has completed"
           else "gh run rerun <run> --failed once that run has completed" end)
@@ -802,13 +806,38 @@ snapshot() {
   # (#310). Fetched only when the head is cross-repository, so a same-repo PR
   # keeps its existing call count. A failed call leaves the list empty, which
   # understates rather than invents — the same direction the rules fetch takes.
-  local runs='[]' head_oid rr
-  if [ "$(jq -r '.data.repository.pullRequest.isCrossRepository // false' <<<"$g")" = "true" ]; then
+  #
+  # The same listing answers a second question, so it is read once for both.
+  # A cancelled check-run row while a NEWER run of its workflow on this head
+  # has not reported yet belongs to the superseded run: re-running it cancels
+  # the newer one when the concurrency group is keyed on the PR ref (#439,
+  # measured on netresearch/t3x-nr-textdb#228). A run waiting on its
+  # concurrency group has no jobs, so the check rollup cannot show it; only
+  # the runs listing can. Read only when the rollup holds a cancelled row, so
+  # the green path keeps its call count. A failed read leaves
+  # `fetched: false`, and the cancelled rows keep their re-run advice.
+  local runs='[]' head_runs='null' head_oid rr cross=0 cancelled=0
+  [ "$(jq -r '.data.repository.pullRequest.isCrossRepository // false' <<<"$g")" = "true" ] && cross=1
+  jq -e '[.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+          | select(.__typename == "CheckRun" and .conclusion == "CANCELLED")] | length > 0' \
+     <<<"$g" >/dev/null 2>&1 && cancelled=1
+  if (( cross || cancelled )); then
     head_oid=$(jq -r '.data.repository.pullRequest.headRefOid // ""' <<<"$g")
-    if [ -n "$head_oid" ] && rr=$(gh api "repos/$REPO/actions/runs?head_sha=$head_oid&per_page=100" 2>/dev/null); then
-      runs=$(jq -c '[.workflow_runs[]?
-                     | select(.status == "action_required" or .conclusion == "action_required")
-                     | {id: .id, name: .name}]' <<<"$rr") || runs='[]'
+    if [ -n "$head_oid" ] && rr=$(gh api --paginate "repos/$REPO/actions/runs?head_sha=$head_oid&per_page=100" 2>/dev/null) \
+       && rr=$(jq -sc '[.[].workflow_runs[]?]' <<<"$rr" 2>/dev/null); then
+      if (( cross )); then
+        runs=$(jq -c '[.[]
+                       | select(.status == "action_required" or .conclusion == "action_required")
+                       | {id: .id, name: .name}]' <<<"$rr") || runs='[]'
+      fi
+      if (( cancelled )); then
+        head_runs=$(jq -c '{fetched: true,
+                            unfinished: [.[] | select(.status != "completed")
+                                         | {id, workflow_id, run_number, status}]}' <<<"$rr") \
+          || head_runs='{"fetched":false}'
+      fi
+    elif (( cancelled )); then
+      head_runs='{"fetched":false}'
     fi
   fi
 
@@ -845,7 +874,7 @@ snapshot() {
     fi
   fi
 
-  out=$(evaluate "$g" "$r" "$ok" "$(quota_marker_seen)" "$PROT" "$runs" "$qruns")
+  out=$(evaluate "$g" "$r" "$ok" "$(quota_marker_seen)" "$PROT" "$runs" "$qruns" "$head_runs")
   # Written from the EVIDENCE field, never from the verdict: with
   # copilot_quota_exhausted the marker would re-assert itself, and the PR named
   # inside it would be whichever one read the file rather than the one that

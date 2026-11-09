@@ -51,6 +51,8 @@
                                 then "NOSTART"
                               else "FAIL" end), url: .detailsUrl, started: .startedAt,
                 run: (.checkSuite.workflowRun.databaseId // null),
+                run_number: (.checkSuite.workflowRun.runNumber // null),
+                workflow: (.checkSuite.workflowRun.workflow.databaseId // null),
                 suite_done: ((.checkSuite.status // "COMPLETED") == "COMPLETED")}
           else {name: .context, state: (if .state == "SUCCESS" then "PASS"
                                         elif .state == "PENDING" then "PENDING"
@@ -408,13 +410,33 @@
     # needs a re-run, not a fix, so it is named separately either way.
     | ([$checks[] | select(.state=="PASS" or .state=="SKIP" or .state=="FAIL") | .name]) as $reported
     | ($checks | map(select(.state=="CANCEL" and (.name as $n | $reported | index($n)))))     as $stale
-    | ($checks | map(select(.state=="CANCEL" and (.name as $n | $reported | index($n)) == null))) as $cancelled
+    | ($checks | map(select(.state=="CANCEL" and (.name as $n | $reported | index($n)) == null))) as $cancelled_all
+    # A cancelled row is SUPERSEDED while a newer run of its workflow on this
+    # head has not finished (#439): that run will report the context again, and
+    # re-running the cancelled one cancels it when the concurrency group is
+    # keyed on the PR ref (measured on netresearch/t3x-nr-textdb#228). A run
+    # waiting on its concurrency group has no jobs yet, so the rollup cannot
+    # show it and the dedupe above cannot replace the row; the runs listing
+    # (head_runs_f, read by pr-status.sh only when a cancelled row exists) can.
+    # Newer means a higher run_number in the same workflow, as for
+    # $stale_required. Such a row is neither failing nor re-runnable: it is
+    # pending, so the gate stays shut and the ladder waits. Unread or failed
+    # listing: no row is superseded, the old advice stands.
+    | (($head_runs_f[0] // null) | if type == "object" and .fetched == true then (.unfinished // []) else [] end) as $unfinished_runs
+    | ([$cancelled_all[] | . as $c
+        | ([$unfinished_runs[] | select($c.workflow != null and .workflow_id == $c.workflow
+                                        and (.run_number // 0) > ($c.run_number // 0))]
+           | max_by(.run_number)) as $newer
+        | select($newer != null)
+        | . + {newer_run: $newer.id}]) as $superseded
+    | ($cancelled_all | map(select(.name as $n | ($superseded | map(.name) | index($n)) == null))) as $cancelled
     | ($checks | map(select(.state=="NOSTART"))) as $not_started
     | (($checks | map(select(.state=="FAIL"))) + $cancelled + $not_started) as $failing
     | ($checks | map(select(.state=="QUEUED"))) as $queued
     | ($checks | map(select(.state=="PENDING"))) as $running
-    # "pending" downstream keeps meaning "not finished", queued or running.
-    | ($queued + $running) as $pending
+    # "pending" downstream keeps meaning "not finished": queued, running, or
+    # cancelled in a run that a newer, unfinished run replaces.
+    | ($queued + $running + $superseded) as $pending
     | ($failing | map(select(.name as $n | $required | index($n)))) as $failing_required
     | ($pending | map(select(.name as $n | $required | index($n)))) as $pending_required
     | ($queued  | map(select(.name as $n | $required | index($n)))) as $queued_required
@@ -452,6 +474,12 @@
           # check-run name arrives with newlines in it and would break the
           # single-line summary into fragments.
           cancelled: ($cancelled|map(.name|gsub("\\s+";" ")|.[0:90])),
+          # The run each cancelled row came from, in the order of `cancelled`;
+          # null for a check run of another app.
+          cancelled_runs: ($cancelled|map(.run)),
+          # Cancelled rows a newer, unfinished run of the same workflow
+          # replaces: wait for that run, never re-run the old one (#439).
+          superseded: ($superseded|map({name: (.name|gsub("\\s+";" ")|.[0:90]), run, newer_run})),
           not_started: ($not_started|map(.name|gsub("\\s+";" ")|.[0:90])),
           # The runs to re-run, and which of them still have a job going: a
           # run is re-runnable only once all of its jobs have concluded. The
@@ -461,7 +489,7 @@
           not_started_runs: ($not_started|map(.run)|unique),
           not_started_busy_runs: (($not_started|map(.run)|unique) as $ns_runs
                                   | (($not_started|map(select(.suite_done|not)|.run))
-                                     + ($ns_runs - ($ns_runs - ($pending|map(.run // empty)))))
+                                     + ($ns_runs - ($ns_runs - (($queued + $running)|map(.run // empty)))))
                                   | unique),
           # Failures other than not-started ones. Empty while failing is not
           # means every red row is one nobody can fix in the PR.
