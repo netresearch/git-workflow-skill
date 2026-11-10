@@ -147,30 +147,27 @@ against the repo root, before inspecting it.
 - **Symptom**: `composer install` fails with
   `Shiver me timbers! CaptainHook could not install yer git hooks! (invalid .git path)`
   when run in a secondary git worktree.
-- **Cause**: Git worktrees use a `.git` *pointer file* (e.g. `gitdir: /path/to/bare/worktrees/NAME`),
-  not a directory. `captainhook/hook-installer` ≤ 1.x does not resolve the pointer correctly
-  and aborts.
-- **Fix (recommended)**: `mkdir -p "$(git rev-parse --git-path hooks)" && composer install` —
-  creates the hooks dir at the effective hooks path (honors `core.hooksPath` if configured,
-  falls back to `<git-dir>/hooks` otherwise). Works with captainhook's plugin in place, so other
-  Composer plugins (phpstan/extension-installer, TYPO3 composer installers, etc.) continue to
-  auto-register normally.
+- **Cause on the host**: Git worktrees use a `.git` *pointer file* (e.g. `gitdir: /path/to/bare/worktrees/NAME`),
+  not a directory. `captainhook/hook-installer` before 1.0.5 did not resolve a pointer to a
+  directory not named `.git` (a bare repository's worktree) and aborted. 1.0.5 resolves it and
+  prints `ARRRRR! We ARRR in a worktree, install is skipped!` instead — upgrade first.
+- **Cause in a container** (still current with 1.0.5): the container mounts only the
+  working tree, so the absolute `gitdir:` path does not exist inside it; `DotGit` checks
+  `is_dir()` on it and throws `invalid .git path`. Every other git call in that container fails
+  too (`fatal: not a git repository`), and a script that asks git gets a wrong answer — a
+  changelog check reports an existing tag as missing. See Symptom C below.
+- **Fix (container)**: mount `$(git rev-parse --path-format=absolute --git-common-dir)` at the
+  identical absolute path. The shared `runTests.sh` of `netresearch/typo3-ci-workflows` does this
+  since netresearch/typo3-ci-workflows#333; its README section "Git worktrees" describes it.
+- **Fix (old hook-installer, host)**: `mkdir -p "$(git rev-parse --git-path hooks)" && composer install`.
 - **Fix (scoped alternative)**: `composer config extra.captainhook.disable-plugin true`
   before the install disables ONLY the captainhook plugin — all other Composer plugins
   (phpstan/extension-installer, TYPO3 installers, …) keep working. It edits `composer.json`,
-  so revert it before committing (`git checkout composer.json`); useful for one-off
-  installs in throwaway worktrees where hooks are not wanted anyway.
-- **Fix (last-resort fallback)**: `composer install --no-plugins` — only if the hooks-dir
-  workaround above doesn't resolve it. Be aware this disables *all* Composer plugins for that
-  install, which has broader side effects: phpstan extensions won't auto-register, TYPO3
-  composer installers won't place extensions, and captainhook itself won't install hooks. Hooks
-  still work in the primary worktree where `.git` is a real directory.
-- **When this matters**: Repos using a bare-repo + worktrees layout (see
-  [git-worktree(1)](https://git-scm.com/docs/git-worktree)) hit this on every `composer install`
-  in a secondary worktree, since `.git` is a pointer file rather than a directory.
-- **Cross-reference**: The `netresearch/typo3-ci-workflows` meta-package bundles
-  `captainhook/hook-installer`; its README section "Git Worktree + captainhook Workaround"
-  is the canonical source.
+  so revert it before committing (`git checkout composer.json`). Setting
+  `CAPTAINHOOK_DISABLE=true` in the environment has the same effect without the edit.
+- **Fix (last-resort fallback)**: `composer install --no-plugins` disables *all* Composer
+  plugins: phpstan extensions won't auto-register and TYPO3 composer installers won't place
+  extensions.
 
 ### Hooks fail in worktrees / hang on host-unreachable services (FAQ)
 
