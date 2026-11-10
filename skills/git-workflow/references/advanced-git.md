@@ -1142,6 +1142,19 @@ against `.bare/`.)
 
 When removing a worktree leaves a dangling branch reference (e.g., after deleting the physical directory manually), `git worktree prune` in `.bare/` cleans up the metadata.
 
+**A `<repo>/.git` file makes the project root usable.** With `<repo>/.git` holding `gitdir: .bare`, git commands run from `<repo>` itself reach the bare store, so the root is a valid working directory for agents and terminals even though nothing is checked out there.
+
+**Tools that read `git worktree list` treat `.bare` as the main worktree.** In this layout the first entry is always the bare store (`bare`, no branch), and a tool that takes entry 0 as the primary checkout shows `.bare` as the project and starts sessions inside it, where there are no files. Orca 1.4.255 does this (stablyai/orca#40698): a terminal opened on the project row starts with `$PWD` = `<repo>/.bare`. Until the tool handles the layout, move such a shell to the root from `~/.bashrc`:
+
+```bash
+# Start in <repo>, not in <repo>/.bare, when <repo>/.git exists
+if [[ $PWD == */.bare && -e ${PWD%/.bare}/.git ]]; then
+  cd "${PWD%/.bare}" || true
+fi
+```
+
+This reaches only shells that read `~/.bashrc`. Orca's bash wrapper sources `~/.profile`, and Ubuntu's default `~/.profile` sources `~/.bashrc`, so it also covers agents Orca launches in a terminal. Measure it with a control: open a terminal on the project row with and without the block and compare `$PWD`.
+
 **Batch cleanup after a session of PRs:**
 
 ```bash
