@@ -1262,5 +1262,36 @@
         "Do not re-run the newer run; re-run 42018304912 now. Concurrency means it will cancel the newer run. Wait for the newer run."
       ]
     }
+  },
+  {
+    "name": "bare_layout_tool_starts_in_bare_store",
+    "prompt": "My projects use ~/projects/<repo>/.bare plus a <repo>/.git file (gitdir: .bare) and one worktree per branch next to it. My IDE opens new terminal and agent sessions for the project in <repo>/.bare instead of <repo>, and it has no start-directory setting. My shell is bash. Why, and how do I make new shells start in <repo>?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(git worktree list|first entry|entry 0|main worktree)"
+      },
+      {
+        "type": "content",
+        "pattern": "\\.bashrc"
+      },
+      {
+        "type": "content",
+        "pattern": "(\\.git (file|entry)|/\\.git\\b|gitdir)"
+      },
+      {
+        "type": "content",
+        "pattern": "(cd (to|into) the parent|cd \"?\\$\\{PWD%/\\.bare\\}|cd \\.\\.)"
+      }
+    ],
+    "samples": {
+      "passing": "In this layout git worktree list names the bare store first, and your IDE takes that first entry as the main worktree, so it starts sessions in <repo>/.bare. Because <repo>/.git points at .bare, <repo> is a valid start directory. Add a check to ~/.bashrc: if $PWD ends in /.bare and the parent has a .git entry, cd to the parent.",
+      "failing": [
+        "Convert the project to a normal clone; bare layouts are not supported by IDEs.",
+        "Run git worktree prune and restart the IDE, then the sessions start in the right place.",
+        "Configure the start directory in your IDE settings to <repo>; nothing else is needed.",
+        "git worktree list is broken in this layout; delete the .git file and your ~/.bashrc."
+      ]
+    }
   }
 ]
