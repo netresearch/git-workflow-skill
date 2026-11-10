@@ -157,9 +157,16 @@ against the repo root, before inspecting it.
   too (`fatal: not a git repository`), and a script that asks git gets a wrong answer — a
   changelog check reports an existing tag as missing. See Symptom C below.
 - **Fix (container)**: mount `$(git rev-parse --path-format=absolute --git-common-dir)` at the
-  identical absolute path. The shared `runTests.sh` of `netresearch/typo3-ci-workflows` does this
-  since netresearch/typo3-ci-workflows#333; its README section "Git worktrees" describes it.
-- **Fix (old hook-installer, host)**: `mkdir -p "$(git rev-parse --git-path hooks)" && composer install`.
+  identical absolute path, with the worktree itself also mounted at its host path. A worktree
+  created with relative links (`worktree.useRelativePaths`, `--relative-paths`) resolves only
+  when the relative layout survives too: mount the common parent instead (Fix C below). The
+  shared `runTests.sh` of `netresearch/typo3-ci-workflows` adds the absolute mount with
+  netresearch/typo3-ci-workflows#333, from the first release that contains it; its README
+  section "Git worktrees" describes it.
+- **Fix (hook-installer before 1.0.5, host)**: upgrade. Its parser accepts only a `gitdir:`
+  path ending in `.git`, so a bare repository's worktree (`…/.bare/worktrees/NAME`) fails
+  before any hooks directory is looked at; creating that directory does not help. Where an
+  upgrade is not possible, use the scoped alternative below.
 - **Fix (scoped alternative)**: `composer config extra.captainhook.disable-plugin true`
   before the install disables ONLY the captainhook plugin — all other Composer plugins
   (phpstan/extension-installer, TYPO3 installers, …) keep working. It edits `composer.json`,
