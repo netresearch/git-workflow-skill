@@ -1142,7 +1142,11 @@ against `.bare/`.)
 
 When removing a worktree leaves a dangling branch reference (e.g., after deleting the physical directory manually), `git worktree prune` in `.bare/` cleans up the metadata.
 
-**A `<repo>/.git` file makes the project root usable.** With `<repo>/.git` holding `gitdir: .bare`, git commands run from `<repo>` itself reach the bare store, so the root is a valid working directory for agents and terminals even though nothing is checked out there.
+**A `<repo>/.git` file makes the project root usable.** With `<repo>/.git` holding `gitdir: .bare`, git commands run from `<repo>` itself reach the bare store, so the root is a valid working directory for agents and terminals even though nothing is checked out there. The setup recipe above does not create it; add it once from `<repo>`, without overwriting an existing entry:
+
+```bash
+( set -C; printf '%s\n' 'gitdir: .bare' > .git )
+```
 
 **Tools that read `git worktree list` treat `.bare` as the main worktree.** In this layout the first entry is always the bare store (`bare`, no branch), and a tool that takes entry 0 as the primary checkout shows `.bare` as the project and starts sessions inside it, where there are no files. Orca 1.4.255 does this (stablyai/orca#40698): a terminal opened on the project row starts with `$PWD` = `<repo>/.bare`. Until the tool handles the layout, move such a shell to the root from `~/.bashrc`:
 
