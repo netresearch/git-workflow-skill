@@ -202,9 +202,9 @@ for mode in missing short; do
   WINDOW=short WINDOW_REST=$mode stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 '[]'
   rc=0; err="$(PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 7 --json 2>&1 >/dev/null)" || rc=$?
   if [[ "$rc" == 2 && "$err" == *"more than 50 reviews and the rest could not be read"* ]]; then
-    echo "  ok   a $mode read beyond the window stops with an error"
+    echo "  ok   a $mode read beyond the window gives no verdict"
   else
-    echo "  FAIL a $mode read beyond the window stops with an error: rc=$rc err=$err"
+    echo "  FAIL a $mode read beyond the window gives no verdict: rc=$rc stderr=$err"
     fail=1
   fi
 done
