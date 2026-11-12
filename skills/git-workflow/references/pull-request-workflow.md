@@ -49,6 +49,19 @@ sit unread. Anything posted after the last word of the author or of you (the
 authenticated viewer) counts as unanswered; comments from bots are shown but never drive the `NEXT:` line, so a
 Renovate note cannot push its own pull request off the auto-merge rung.
 
+CodeRabbit review bodies are a fourth channel. Some findings are not posted as
+threads at all: the review body carries them in a collapsible section
+summarised `Additional comments: N` (older shape: `Outside diff range comments
+(N)`), each with a file, a line range and a severity. They never appear in
+`reviewThreads`, so `threads: 0 unresolved` says nothing about them.
+`pr-status.sh` reads every CodeRabbit review of the pull request, not only the
+one on the head, prints a `review body :` line per review that has such a
+section (count, review id, commit), lists them in `--json` as
+`review_body_findings`, and answers `address-comments` until you or the author
+comment on the pull request after that review. Read the findings, fix or reject
+each, then say in a PR comment what was done; that comment clears the rung.
+`Nitpick comments` are not counted.
+
 Measured on a 40-PR rollout that did not have it: **183 of 370 shell calls
 were PR-status probing**, the rulesets endpoint was queried exactly once, and
 `copilot_code_review` blocked four merges by surprise.
