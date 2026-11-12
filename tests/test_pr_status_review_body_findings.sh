@@ -143,19 +143,23 @@ case_() {
 
 echo "pr-status.sh: findings in a CodeRabbit review body, outside threads"
 
+# The moodle-docker#109 finding as reported while unanswered.
+UNANSWERED_109='[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":false}]'
+LINE_109='  review body : coderabbitai 1 additional comment(s) outside threads (review 5879112466, commit 6206543)'
+
 # Case 1 is the PR that motivated this: the finding sits in the review of
 # 6206543, and the PR head is the later 03a1c5f, whose own CodeRabbit review
 # has an empty body. Head-only scanning would miss it.
 stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 '[]'
 case_ "moodle-docker#109 verbatim: Additional comments: 1 on an older commit" \
-      address-comments '[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":false}]' \
-      '  review body : coderabbitai 1 additional comment(s) outside threads (review 5879112466, commit 6206543)'
+      address-comments "$UNANSWERED_109" \
+      "$LINE_109"
 
 stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 \
      '[["someone", "2026-11-12T17:00:00Z"]]'
 case_ "an author comment BEFORE the review does not answer it" \
-      address-comments '[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":false}]' \
-      '  review body : coderabbitai 1 additional comment(s) outside threads (review 5879112466, commit 6206543)'
+      address-comments "$UNANSWERED_109" \
+      "$LINE_109"
 
 stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 \
      '[["someone", "2026-11-12T17:40:00Z"]]'
@@ -170,14 +174,14 @@ case_ "an author comment after the review answers it: merge, line still shown" \
 stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 \
      '[["someone", "2026-11-12T17:40:00Z", "@coderabbitai review"]]'
 case_ "an @coderabbitai command after the review does not answer it" \
-      address-comments '[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":false}]' \
-      '  review body : coderabbitai 1 additional comment(s) outside threads (review 5879112466, commit 6206543)'
+      address-comments "$UNANSWERED_109" \
+      "$LINE_109"
 
 stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 \
      '[["someone", "2026-11-12T17:40:00Z", "Self-review: 03a1c5fbc447\n\nThe diff on this head was reviewed by the PR author."]]'
 case_ "a Self-review attestation after the review does not answer it" \
-      address-comments '[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":false}]' \
-      '  review body : coderabbitai 1 additional comment(s) outside threads (review 5879112466, commit 6206543)'
+      address-comments "$UNANSWERED_109" \
+      "$LINE_109"
 
 # Both shapes in one body: an emoji-prefixed <summary> "Additional comments: 2"
 # and a bold Markdown "Outside diff range comments (1)" inside a CAUTION quote.
@@ -208,8 +212,8 @@ case_ "a User account named like the bot is ignored" merge '[]' -
 # review that only the REST read returns.
 WINDOW=short stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 '[]'
 case_ "a finding outside the 50-review window is read over REST" \
-      address-comments '[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":false}]' \
-      '  review body : coderabbitai 1 additional comment(s) outside threads (review 5879112466, commit 6206543)'
+      address-comments "$UNANSWERED_109" \
+      "$LINE_109"
 
 # The REST read fails or comes back short: no verdict at all, never a merge
 # on a partial list.
