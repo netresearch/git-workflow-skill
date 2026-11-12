@@ -44,7 +44,8 @@ chmod +x "$STUB_DIR/gh"
 # head is the PR head, which may be a later commit than the review's.
 # comments-json is a list of [login, createdAt].
 stub() {
-  python3 - "$STUB_DIR/graphql.json" "$FIX/$1" "$2" "$3" "${4:-}" <<'PY'
+  local fixture="$1" head="$2" comments="$3" login_override="${4:-}"
+  python3 - "$STUB_DIR/graphql.json" "$FIX/$fixture" "$head" "$comments" "$login_override" <<'PY'
 import sys, json
 path, fixture, head, comments, login_override = sys.argv[1:6]
 reviews = [{"author": {"login": login_override or r["login"].removesuffix("[bot]"),
