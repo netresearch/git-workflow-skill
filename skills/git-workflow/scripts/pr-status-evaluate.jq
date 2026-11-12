@@ -266,6 +266,15 @@
        elif $viewer != "" then [$author, $viewer]
        else [$author] end) as $responders
     | (([$p.comments.nodes[]? | select(.author.login | IN($responders[])) | .createdAt] | max) // "") as $responder_last_comment
+    # An answer to review-body findings (see $review_body_findings) must be
+    # about them. A comment that only asks a bot to review again
+    # ("@coderabbitai review") or the Self-review attestation pr-merge.sh posts
+    # says nothing about the findings; counted, either would clear the rung
+    # unread. The author posted exactly such a command after a review on
+    # netresearch/moodle-docker#113 and #114.
+    | (([$p.comments.nodes[]? | select(.author.login | IN($responders[]))
+         | select((.body // "") | test("^\\s*(@coderabbitai\\b|Self-review:)"; "i") | not)
+         | .createdAt] | max) // "") as $responder_last_answer
     | ([$p.comments.nodes[]? | select(.author.login | IN($responders[]) | not)
                             | select(.createdAt > $responder_last_comment)]) as $unanswered_comments
     # Bots are reported but never drive the ladder: a Renovate or Dependabot
@@ -452,7 +461,7 @@
        | {author: .author.login, review_id: .databaseId, commit: (.commit.oid // null),
           url: .url, submitted_at: .submittedAt,
           count: ($sections | map(.count) | add), sections: $sections,
-          answered: ((.submittedAt // "") != "" and $responder_last_comment > .submittedAt)}]) as $review_body_findings
+          answered: ((.submittedAt // "") != "" and $responder_last_answer > .submittedAt)}]) as $review_body_findings
     # A cancelled context that reported again under the same name is STALE:
     # the later row is the answer and the cancelled one is a leftover. One that
     # never reported again is genuinely unmet and still shuts the gate — but it

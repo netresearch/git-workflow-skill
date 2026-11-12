@@ -60,7 +60,9 @@ with an error when that read fails), prints a `review body :` line per review th
 section (count, review id, commit), lists them in `--json` as
 `review_body_findings`, and answers `address-comments` until you or the author
 comment on the pull request after that review. Read the findings, fix or reject
-each, then say in a PR comment what was done; that comment clears the rung.
+each, then say in a PR comment what was done; that comment clears the rung. A
+comment that is only a bot command (`@coderabbitai review`) or the `Self-review:`
+attestation does not count as that answer.
 `Nitpick comments` are not counted.
 
 Measured on a 40-PR rollout that did not have it: **183 of 370 shell calls

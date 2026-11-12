@@ -82,9 +82,9 @@ if os.environ.get("WINDOW") == "short":
         json.dump(rest_rows, open(rest, "w"))
     reviews = [approve]
     total = 60
-nodes = [{"author": {"login": login, "__typename": "User"}, "body": "x", "url": "u",
-          "createdAt": created, "lastEditedAt": None}
-         for login, created in json.loads(comments)]
+nodes = [{"author": {"login": c[0], "__typename": "User"}, "body": c[2] if len(c) > 2 else "x",
+          "url": "u", "createdAt": c[1], "lastEditedAt": None}
+         for c in json.loads(comments)]
 json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
@@ -163,6 +163,22 @@ case_ "an author comment after the review answers it: merge, line still shown" \
       merge '[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":true}]' \
       '  review body : coderabbitai 1 additional comment(s) outside threads (review 5879112466, commit 6206543) — answered after the review'
 
+# A comment that only asks the bot to review again, or the Self-review
+# attestation pr-merge.sh posts, says nothing about the findings. On
+# moodle-docker#113 and #114 the author posted `@coderabbitai review` after a
+# review; counted as an answer it would clear the rung unread.
+stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 \
+     '[["someone", "2026-11-12T17:40:00Z", "@coderabbitai review"]]'
+case_ "an @coderabbitai command after the review does not answer it" \
+      address-comments '[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":false}]' \
+      '  review body : coderabbitai 1 additional comment(s) outside threads (review 5879112466, commit 6206543)'
+
+stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 \
+     '[["someone", "2026-11-12T17:40:00Z", "Self-review: 03a1c5fbc447\n\nThe diff on this head was reviewed by the PR author."]]'
+case_ "a Self-review attestation after the review does not answer it" \
+      address-comments '[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":false}]' \
+      '  review body : coderabbitai 1 additional comment(s) outside threads (review 5879112466, commit 6206543)'
+
 # Both shapes in one body: an emoji-prefixed <summary> "Additional comments: 2"
 # and a bold Markdown "Outside diff range comments (1)" inside a CAUTION quote.
 stub coding_agent_cli_toolset-187.json ce45c7d972a200861eb485ba9d00972e3db5bcf8 '[]'
@@ -209,5 +225,5 @@ for mode in missing short; do
   fi
 done
 
-[[ "$ran" == 11 ]] || { echo "  FAIL ran $ran of 11 cases"; fail=1; }
+[[ "$ran" == 13 ]] || { echo "  FAIL ran $ran of 13 cases"; fail=1; }
 exit "$fail"
