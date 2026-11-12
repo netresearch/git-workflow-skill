@@ -104,6 +104,19 @@ CASES = [
         "gh pr view 1 --repo o/r --json state",
     ),
     ("hard-wrapped inline body", "DENY", f'gh pr create --title x --body "{WRAPPED}"'),
+    # A project that requires wrapped bodies (the commit body as the PR
+    # description) outranks the default; the switch is read off the command.
+    (
+        "a project rule switches the wrap gate off",
+        "PASS",
+        f'FORGE_WRAP_GATE_OFF=1 gh pr edit 1 --body "{WRAPPED}"',
+    ),
+    # The name inside the body must not switch the gate off for that body.
+    (
+        "the switch inside the body is not a switch",
+        "DENY",
+        f'gh pr create --title x --body "{WRAPPED}\nFORGE_WRAP_GATE_OFF=1 here"',
+    ),
     (
         "one long line is what we want",
         "PASS",
