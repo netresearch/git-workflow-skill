@@ -100,7 +100,7 @@
 #   unanswered_comments unanswered_human unanswered_by unanswered_urls
 #   body_freshness
 #   reviewDecision reviews_on_head has_review_on_head coderabbit_on_head
-#   coderabbit_retry_at sonar_new_issues
+#   coderabbit_retry_at sonar_new_issues review_body_findings
 #   has_copilot_review_on_head copilot_latest_on_head_ok copilot_review_errored
 #   copilot_error_count copilot_quota_hit copilot_quota_exhausted
 #   self_review_on_head self_review_url
@@ -125,6 +125,12 @@
 # `edited` is false) against the committer date of the head commit. It is
 # information only and never changes `next`; the prose rendering prints a
 # `body` line when `older_than_head` is true.
+#
+# `review_body_findings` lists each CodeRabbit review whose body carries
+# findings outside any thread ("Additional comments: N", "Outside diff range
+# comments (N)"): {author, review_id, commit, url, submitted_at, count,
+# sections, answered}. An unanswered entry (no comment by the author or the
+# viewer after the review) makes NEXT address-comments.
 #
 # Before writing a jq filter against any of these, consider whether --watch
 # already answers the question; it usually does, and a hand-rolled poll loop is
@@ -377,7 +383,11 @@ collect_raw() {
         # header) is posted at the end of a conversation, and an old page
         # would go blind on exactly the PRs long enough to need one.
         comments(last:100){ nodes{ author{login __typename} body url createdAt lastEditedAt } }
-        reviews(last:50){ nodes{ author{login} state commit{oid} body } }
+        # databaseId, url and submittedAt identify a review whose BODY holds
+        # findings outside any thread; see review_body_findings.
+        # totalCount says whether these 50 are all of them; see complete_reviews.
+        reviews(last:50){ totalCount nodes{ author{login __typename} state commit{oid} body
+          databaseId url submittedAt } }
         reviewRequests(first:20){ nodes{ requestedReviewer{
           ... on User{login} ... on Bot{login} ... on Team{slug} } } }
         reviewThreads(first:100){ nodes{ id isResolved isOutdated
@@ -499,6 +509,30 @@ complete_contexts() {
   fi
   printf '%s\n' "$g" "$conn" | jq -n 'input as $g | input as $c | $g
     | .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts = $c'
+}
+
+# The GraphQL read carries the last 50 reviews. review_body_findings reads
+# every CodeRabbit review of the PR, and a finding in a review older than that
+# window would otherwise drop out unanswered and let NEXT reach merge. When
+# totalCount says the window is short, all reviews are read once over REST,
+# mapped to the GraphQL shape and attached as pullRequest.allReviews; a failed
+# or short read is an error, not an empty list. A PR with 50 reviews or fewer
+# costs no extra call.
+complete_reviews() {
+  local g total have raw all
+  g=$(cat) || return 1
+  total=$(jq '.data.repository.pullRequest.reviews.totalCount // 0' <<<"$g") || return 1
+  have=$(jq '.data.repository.pullRequest.reviews.nodes // [] | length' <<<"$g") || return 1
+  if (( total <= have )); then printf '%s\n' "$g"; return 0; fi
+  raw=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews?per_page=100") || return 1
+  all=$(jq -sc '[.[][] | {author: (if .user == null then null
+                                    else {login: (.user.login | sub("\\[bot\\]$"; "")),
+                                          __typename: .user.type} end),
+                          state, commit: {oid: .commit_id}, body,
+                          databaseId: .id, url: .html_url, submittedAt: .submitted_at}]' <<<"$raw") || return 1
+  jq -e --argjson total "$total" 'length >= $total' <<<"$all" >/dev/null || return 1
+  printf '%s\n' "$g" "$all" | jq -n 'input as $g | input as $r | $g
+    | .data.repository.pullRequest.allReviews = $r'
 }
 
 # A branch legitimately has no rules and answers `[]`, so an empty result is NOT
@@ -633,6 +667,8 @@ render() {
        "  sonar       : \(.sonar_new_issues) new issue(s) in the latest Quality Gate comment — not gating; read them before merging, a passed gate still lets them through"
      else empty end),
     "  threads     : \(.unresolved_threads) unresolved",
+    ((.review_body_findings // [])[]
+       | "  review body : \(.author) \(.sections | map("\(.count) \(.kind)") | join(", ")) comment(s) outside threads (review \(.review_id), commit \((.commit // "")[0:7]))\(if .answered then " — answered after the review" else "" end)"),
     (if .unanswered_comments > 0 then
        "  comments    : \(.unanswered_comments) unanswered (\(.unanswered_by|join(", ")))\(if .unanswered_human == 0 then " — bots only, not gating" else "" end)"
      else empty end),
@@ -771,6 +807,7 @@ snapshot() {
   fi
 
   g=$(printf '%s\n' "$g" | complete_contexts) || die "status contexts are incomplete or changed while reading"
+  g=$(printf '%s\n' "$g" | complete_reviews) || die "the pull request has more than 50 reviews and the rest could not be read"
 
   base=$(jq -r '.data.repository.pullRequest.baseRefName // "main"' <<<"$g")
 

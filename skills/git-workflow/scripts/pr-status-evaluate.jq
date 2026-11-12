@@ -266,6 +266,18 @@
        elif $viewer != "" then [$author, $viewer]
        else [$author] end) as $responders
     | (([$p.comments.nodes[]? | select(.author.login | IN($responders[])) | .createdAt] | max) // "") as $responder_last_comment
+    # An answer to review-body findings (see $review_body_findings) must be
+    # about them. A comment that only asks a bot to review again
+    # ("@coderabbitai review") or the Self-review attestation pr-merge.sh posts
+    # says nothing about the findings; counted, either would clear the rung
+    # unread. The author posted exactly such a command after a review on
+    # netresearch/moodle-docker#113 and #114.
+    | (([$p.comments.nodes[]? | select(.author.login | IN($responders[]))
+         # Only a body that is nothing but a CodeRabbit command; a reply that
+         # merely starts with the mention ("@coderabbitai fixed in abc123")
+         # still answers.
+         | select((.body // "") | test("^\\s*(@coderabbitai\\s+((full\\s+)?review|resolve|pause|resume|summary|help|configuration)\\s*$|Self-review:)"; "i") | not)
+         | .createdAt] | max) // "") as $responder_last_answer
     | ([$p.comments.nodes[]? | select(.author.login | IN($responders[]) | not)
                             | select(.createdAt > $responder_last_comment)]) as $unanswered_comments
     # Bots are reported but never drive the ladder: a Renovate or Dependabot
@@ -417,6 +429,42 @@
        | sort_by(.lastEditedAt // .createdAt // "") | last) as $sonar_comment
     | ([($sonar_comment.body // "") | capture("\\[(?<n>[0-9]+) New issues?\\]")]
        | first | if . == null then null else (.n | tonumber) end) as $sonar_new_issues
+    # CodeRabbit puts some findings into the BODY of a review rather than into
+    # a thread: a section labelled "Additional comments: N" or "Outside diff
+    # range comments (N)", each entry with a file, a line range and a
+    # severity. They never become reviewThreads, so
+    # "threads: 0 unresolved" and NEXT=merge were printed while they sat
+    # unread. Measured on netresearch/moodle-docker#109: review 5879112466
+    # carried "Additional comments: 1", a Major finding on
+    # docker/moodle/Dockerfile line 64, and the report said 0 unresolved. In
+    # 600 netresearch pull requests reviewed by CodeRabbit, 46 reviews carried
+    # "Additional comments" and 37 "Outside diff range comments"; none read 0.
+    # Every review of the PR counts, not only those on the head: a later
+    # review of a newer commit does not repeat the earlier body. Bot accounts
+    # only, as for the comments above. A finding is answered once the author
+    # or the viewer has commented after the review was submitted, the same
+    # last-word test the address-comments rung uses, so the operator clears it
+    # by saying in the pull request what was done about it. "Nitpick comments"
+    # are deliberately not counted: CodeRabbit counts them apart from
+    # "Actionable comments posted".
+    # allReviews is attached by complete_reviews in pr-status.sh when the PR
+    # has more reviews than the GraphQL window of 50 holds.
+    | ([($p.allReviews // $p.reviews.nodes)[]?
+       | select((.author.login // "") | test("^coderabbitai"; "i"))
+       | select((.author.__typename // "Bot") == "Bot")
+       # Two shapes carry the label: a <summary> ("🔇 Additional comments: 2")
+       # and a bold Markdown line inside a CAUTION quote ("**⚠️ Outside diff
+       # range comments (1)**"), measured on netresearch/coding_agent_cli_toolset#187.
+       | ([(.body // "") | (scan("<summary>(.*?)</summary>"), scan("\\*\\*([^*\\n]*)\\*\\*"))
+           | .[0] | gsub("<[^>]*>"; "")
+           | capture("(?<kind>Additional|Outside diff range) comments(:\\s*|\\s*\\()(?<n>[0-9]+)\\)?\\s*$")
+           | {kind: (.kind | ascii_downcase), count: (.n | tonumber)}
+           | select(.count > 0)]) as $sections
+       | select(($sections | length) > 0)
+       | {author: .author.login, review_id: .databaseId, commit: (.commit.oid // null),
+          url: .url, submitted_at: .submittedAt,
+          count: ($sections | map(.count) | add), sections: $sections,
+          answered: ((.submittedAt // "") != "" and $responder_last_answer > .submittedAt)}]) as $review_body_findings
     # A cancelled context that reported again under the same name is STALE:
     # the later row is the answer and the cancelled one is a leftover. One that
     # never reported again is genuinely unmet and still shuts the gate — but it
@@ -604,6 +652,10 @@
         # New issues in the newest SonarCloud Quality Gate comment, or null.
         # Display only — see $sonar_new_issues above.
         sonar_new_issues: $sonar_new_issues,
+        # CodeRabbit reviews whose body holds findings outside any thread:
+        # [{author, review_id, commit, url, submitted_at, count, sections,
+        # answered}]. The unanswered ones drive address-comments below.
+        review_body_findings: $review_body_findings,
         has_copilot_review_on_head: (($copilot_on_head|length) > 0),
         # Which of the two came last, not merely which exists. reviews(last:50)
         # is chronological, so the final Copilot row on this head decides: a
@@ -918,6 +970,19 @@
            {action:"address-comments",
             why:"\($s.unanswered_human) comment(s) posted after your last word by \($s.unanswered_by|join(", ")) — issue comments live outside reviewThreads, so \"0 unresolved\" above does not cover them",
             urls:$s.unanswered_urls}
+         # Findings a CodeRabbit review put into its body (see
+         # $review_body_findings). Same rung and same clearing test as the
+         # comments above: work outside reviewThreads, answered by a comment
+         # of yours written after the review.
+         elif ([$s.review_body_findings[] | select(.answered | not)] | length) > 0 then
+           ([$s.review_body_findings[] | select(.answered | not)]) as $open
+           | {action:"address-comments",
+              why:("\($open | map(.count) | add) finding(s) in the body of CodeRabbit review(s) "
+                   + ($open | map("\(.review_id) on \((.commit // "")[0:7])") | join(", "))
+                   + " — review-body sections are not review threads, so \"0 unresolved\" above does not cover them."
+                   + " Read and address them, then say in a PR comment what was done; a comment of yours"
+                   + " after the review clears this"),
+              urls:($open | map(.url))}
          # Draft sits BELOW the branches that report real work — a conflict, a
          # stale base, a red check, an open thread all stay worth doing while
          # the PR is deliberately parked as draft (the back-to-draft-on-resume
