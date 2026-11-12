@@ -178,6 +178,12 @@ case_ "an @coderabbitai command after the review does not answer it" \
       "$LINE_109"
 
 stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 \
+     '[["someone", "2026-11-12T17:40:00Z", "@coderabbitai Fixed the Dockerfile message in 228bb0b."]]'
+case_ "a reply that starts with the mention but says what was done answers it" \
+      merge '[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":true}]' \
+      "$LINE_109 — answered after the review"
+
+stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 \
      '[["someone", "2026-11-12T17:40:00Z", "Self-review: 03a1c5fbc447\n\nThe diff on this head was reviewed by the PR author."]]'
 case_ "a Self-review attestation after the review does not answer it" \
       address-comments "$UNANSWERED_109" \
@@ -229,5 +235,5 @@ for mode in missing short; do
   fi
 done
 
-[[ "$ran" == 13 ]] || { echo "  FAIL ran $ran of 13 cases"; fail=1; }
+[[ "$ran" == 14 ]] || { echo "  FAIL ran $ran of 14 cases"; fail=1; }
 exit "$fail"

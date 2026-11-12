@@ -273,7 +273,10 @@
     # unread. The author posted exactly such a command after a review on
     # netresearch/moodle-docker#113 and #114.
     | (([$p.comments.nodes[]? | select(.author.login | IN($responders[]))
-         | select((.body // "") | test("^\\s*(@coderabbitai\\b|Self-review:)"; "i") | not)
+         # Only a body that is nothing but a CodeRabbit command; a reply that
+         # merely starts with the mention ("@coderabbitai fixed in abc123")
+         # still answers.
+         | select((.body // "") | test("^\\s*(@coderabbitai\\s+((full\\s+)?review|resolve|pause|resume|summary|help|configuration)\\s*$|Self-review:)"; "i") | not)
          | .createdAt] | max) // "") as $responder_last_answer
     | ([$p.comments.nodes[]? | select(.author.login | IN($responders[]) | not)
                             | select(.createdAt > $responder_last_comment)]) as $unanswered_comments
