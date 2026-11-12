@@ -32,6 +32,8 @@ cat > "$STUB_DIR/gh" <<STUB
 for a in "\$@"; do
   case "\$a" in
     repos/*/rules/branches/*) cat "$STUB_DIR/rules.json"; exit 0 ;;
+    repos/*/pulls/*/reviews*) [ -f "$STUB_DIR/rest-reviews.json" ] || exit 1
+                              cat "$STUB_DIR/rest-reviews.json"; exit 0 ;;
   esac
 done
 cat "$STUB_DIR/graphql.json"
@@ -43,11 +45,19 @@ chmod +x "$STUB_DIR/gh"
 # [bot] suffix REST appends, and the REST user type becomes __typename. The
 # head is the PR head, which may be a later commit than the review's.
 # comments-json is a list of [login, createdAt].
+# With WINDOW=short the GraphQL window holds only the approving review and
+# claims 60 in totalCount, so the fixture's reviews are reachable only through
+# the REST read; WINDOW_REST=missing makes that read fail, WINDOW_REST=short
+# makes it return fewer reviews than totalCount.
 stub() {
   local fixture="$1" head="$2" comments="$3" login_override="${4:-}"
   python3 - "$STUB_DIR/graphql.json" "$FIX/$fixture" "$head" "$comments" "$login_override" <<'PY'
 import sys, json
+import os
 path, fixture, head, comments, login_override = sys.argv[1:6]
+rest = os.path.join(os.path.dirname(path), "rest-reviews.json")
+if os.path.exists(rest):
+    os.remove(rest)
 reviews = [{"author": {"login": login_override or r["login"].removesuffix("[bot]"),
                        "__typename": "User" if login_override else r["type"]},
             "state": "COMMENTED", "commit": {"oid": r["commit_id"]}, "body": r["body"],
@@ -56,6 +66,22 @@ reviews = [{"author": {"login": login_override or r["login"].removesuffix("[bot]
 reviews.append({"author": {"login": "reviewer", "__typename": "User"}, "state": "APPROVED",
                 "commit": {"oid": head}, "body": "", "databaseId": 1, "url": "u",
                 "submittedAt": "2026-11-12T23:00:00Z"})
+raw = json.load(open(fixture))["reviews"]
+approve = reviews[-1]
+total = len(reviews)
+if os.environ.get("WINDOW") == "short":
+    rest_rows = [{"user": {"login": r["login"], "type": r["type"]}, "state": "COMMENTED",
+                  "commit_id": r["commit_id"], "body": r["body"], "id": r["id"],
+                  "html_url": r["html_url"], "submitted_at": r["submitted_at"]} for r in raw]
+    rest_rows += [{"user": {"login": "reviewer", "type": "User"}, "state": "COMMENTED",
+                   "commit_id": head, "body": "", "id": 100 + i, "html_url": "u",
+                   "submitted_at": "2026-11-12T22:00:00Z"} for i in range(60 - len(rest_rows))]
+    if os.environ.get("WINDOW_REST") == "short":
+        rest_rows = rest_rows[:10]
+    if os.environ.get("WINDOW_REST") != "missing":
+        json.dump(rest_rows, open(rest, "w"))
+    reviews = [approve]
+    total = 60
 nodes = [{"author": {"login": login, "__typename": "User"}, "body": "x", "url": "u",
           "createdAt": created, "lastEditedAt": None}
          for login, created in json.loads(comments)]
@@ -72,7 +98,7 @@ json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
         "baseRefName": "main", "headRefName": "f", "headRefOid": head,
         "isCrossRepository": False,
         "comments": {"nodes": nodes},
-        "reviews": {"nodes": reviews},
+        "reviews": {"totalCount": total, "nodes": reviews},
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
         "commits": {"nodes": [{"commit": {"oid": head, "committedDate": "2026-11-12T22:00:00Z",
@@ -137,11 +163,18 @@ case_ "an author comment after the review answers it: merge, line still shown" \
       merge '[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":true}]' \
       '  review body : coderabbitai 1 additional comment(s) outside threads (review 5879112466, commit 6206543) — answered after the review'
 
-# The older summary shape with an emoji in front, two findings in one section.
+# Both shapes in one body: an emoji-prefixed <summary> "Additional comments: 2"
+# and a bold Markdown "Outside diff range comments (1)" inside a CAUTION quote.
 stub coding_agent_cli_toolset-187.json ce45c7d972a200861eb485ba9d00972e3db5bcf8 '[]'
-case_ "coding_agent_cli_toolset#187 verbatim: emoji-prefixed Additional comments: 2" \
-      address-comments '[{"review_id":5681828678,"commit7":"ce45c7d","count":2,"answered":false}]' \
-      '  review body : coderabbitai 2 additional comment(s) outside threads (review 5681828678, commit ce45c7d)'
+case_ "coding_agent_cli_toolset#187 verbatim: Additional comments: 2 plus Outside diff range comments (1)" \
+      address-comments '[{"review_id":5681828678,"commit7":"ce45c7d","count":3,"answered":false}]' \
+      '  review body : coderabbitai 2 additional, 1 outside diff range comment(s) outside threads (review 5681828678, commit ce45c7d)'
+
+# Only the Markdown outside-diff heading, no <summary> section of either kind.
+stub typo3-ddev-skill-94.json 97adeb1dfae1243d4289a9dd6603a3d3576743eb '[]'
+case_ "typo3-ddev-skill#94 verbatim: only Outside diff range comments (1)" \
+      address-comments '[{"review_id":5614686022,"commit7":"97adeb1","count":1,"answered":false}]' \
+      '  review body : coderabbitai 1 outside diff range comment(s) outside threads (review 5614686022, commit 97adeb1)'
 
 # Negative cases: real CodeRabbit reviews with findings only in threads
 # ("Actionable comments posted: 3") and no body section of that kind.
@@ -155,5 +188,26 @@ case_ "moodle-docker#113 verbatim: no body section, NEXT stays merge" merge '[]'
 stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 '[]' coderabbitai-fan
 case_ "a User account named like the bot is ignored" merge '[]' -
 
-[[ "$ran" == 7 ]] || { echo "  FAIL ran $ran of 7 cases"; fail=1; }
+# More reviews than the GraphQL window of 50: the finding sits in an older
+# review that only the REST read returns.
+WINDOW=short stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 '[]'
+case_ "a finding outside the 50-review window is read over REST" \
+      address-comments '[{"review_id":5879112466,"commit7":"6206543","count":1,"answered":false}]' \
+      '  review body : coderabbitai 1 additional comment(s) outside threads (review 5879112466, commit 6206543)'
+
+# The REST read fails or comes back short: no verdict at all, never a merge
+# on a partial list.
+for mode in missing short; do
+  ran=$((ran + 1))
+  WINDOW=short WINDOW_REST=$mode stub moodle-docker-109.json 03a1c5fbc447dfe2ae1469f614b0017f4de293b4 '[]'
+  rc=0; err="$(PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 7 --json 2>&1 >/dev/null)" || rc=$?
+  if [[ "$rc" == 2 && "$err" == *"more than 50 reviews and the rest could not be read"* ]]; then
+    echo "  ok   a $mode read beyond the window stops with an error"
+  else
+    echo "  FAIL a $mode read beyond the window stops with an error: rc=$rc err=$err"
+    fail=1
+  fi
+done
+
+[[ "$ran" == 11 ]] || { echo "  FAIL ran $ran of 11 cases"; fail=1; }
 exit "$fail"

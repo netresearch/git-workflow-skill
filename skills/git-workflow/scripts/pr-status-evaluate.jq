@@ -418,27 +418,33 @@
     | ([($sonar_comment.body // "") | capture("\\[(?<n>[0-9]+) New issues?\\]")]
        | first | if . == null then null else (.n | tonumber) end) as $sonar_new_issues
     # CodeRabbit puts some findings into the BODY of a review rather than into
-    # a thread: a collapsible section summarised "Additional comments: N" (in
-    # the older shape "Outside diff range comments (N)"), each entry with a
-    # file, a line range and a severity. They never become reviewThreads, so
+    # a thread: a section labelled "Additional comments: N" or "Outside diff
+    # range comments (N)", each entry with a file, a line range and a
+    # severity. They never become reviewThreads, so
     # "threads: 0 unresolved" and NEXT=merge were printed while they sat
     # unread. Measured on netresearch/moodle-docker#109: review 5879112466
     # carried "Additional comments: 1", a Major finding on
     # docker/moodle/Dockerfile line 64, and the report said 0 unresolved. In
     # 600 netresearch pull requests reviewed by CodeRabbit, 46 reviews carried
-    # such a section and every one held a severity-tagged finding; none read 0.
+    # "Additional comments" and 37 "Outside diff range comments"; none read 0.
     # Every review of the PR counts, not only those on the head: a later
     # review of a newer commit does not repeat the earlier body. Bot accounts
     # only, as for the comments above. A finding is answered once the author
     # or the viewer has commented after the review was submitted, the same
     # last-word test the address-comments rung uses, so the operator clears it
     # by saying in the pull request what was done about it. "Nitpick comments"
-    # are deliberately not counted: CodeRabbit itself leaves them out of
+    # are deliberately not counted: CodeRabbit counts them apart from
     # "Actionable comments posted".
-    | ([$p.reviews.nodes[]?
+    # allReviews is attached by complete_reviews in pr-status.sh when the PR
+    # has more reviews than the GraphQL window of 50 holds.
+    | ([($p.allReviews // $p.reviews.nodes)[]?
        | select((.author.login // "") | test("^coderabbitai"; "i"))
        | select((.author.__typename // "Bot") == "Bot")
-       | ([(.body // "") | scan("<summary>(.*?)</summary>") | .[0] | gsub("<[^>]*>"; "")
+       # Two shapes carry the label: a <summary> ("🔇 Additional comments: 2")
+       # and a bold Markdown line inside a CAUTION quote ("**⚠️ Outside diff
+       # range comments (1)**"), measured on netresearch/coding_agent_cli_toolset#187.
+       | ([(.body // "") | (scan("<summary>(.*?)</summary>"), scan("\\*\\*([^*\\n]*)\\*\\*"))
+           | .[0] | gsub("<[^>]*>"; "")
            | capture("(?<kind>Additional|Outside diff range) comments(:\\s*|\\s*\\()(?<n>[0-9]+)\\)?\\s*$")
            | {kind: (.kind | ascii_downcase), count: (.n | tonumber)}
            | select(.count > 0)]) as $sections

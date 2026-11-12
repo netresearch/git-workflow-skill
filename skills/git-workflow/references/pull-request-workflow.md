@@ -50,12 +50,13 @@ authenticated viewer) counts as unanswered; comments from bots are shown but nev
 Renovate note cannot push its own pull request off the auto-merge rung.
 
 CodeRabbit review bodies are a fourth channel. Some findings are not posted as
-threads at all: the review body carries them in a collapsible section
-summarised `Additional comments: N` (older shape: `Outside diff range comments
-(N)`), each with a file, a line range and a severity. They never appear in
+threads at all: the review body carries them in a section labelled
+`Additional comments: N` or `Outside diff range comments (N)`, each with a
+file, a line range and a severity. They never appear in
 `reviewThreads`, so `threads: 0 unresolved` says nothing about them.
 `pr-status.sh` reads every CodeRabbit review of the pull request, not only the
-one on the head, prints a `review body :` line per review that has such a
+one on the head (beyond the 50 newest it reads the rest over REST, and stops
+with an error when that read fails), prints a `review body :` line per review that has such a
 section (count, review id, commit), lists them in `--json` as
 `review_body_findings`, and answers `address-comments` until you or the author
 comment on the pull request after that review. Read the findings, fix or reject
