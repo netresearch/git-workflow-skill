@@ -199,8 +199,18 @@ def _forge_bodies(cmd: str) -> list[tuple[str, str]]:
     return bodies
 
 
+# Some projects require wrapped bodies: TYPO3-Documentation repositories, for
+# one, take the commit body (wrapped, trailers included) as the PR description.
+# A project rule outranks this default, so the gate needs an escape hatch, read
+# off the command like FORGE_LANGUAGE_GATE_OFF below.
+WRAP_GATE_OFF = re.compile(
+    r"(?:^|[;&|]|\bthen\b|\bdo\b)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
+    r"FORGE_WRAP_GATE_OFF=1\s"
+)
+
+
 def forge_body_hard_wrapped(cmd: str) -> str | None:
-    if not FORGE_BODY.search(cmd):
+    if not FORGE_BODY.search(cmd) or WRAP_GATE_OFF.search(cmd):
         return None
     for name, text in _forge_bodies(cmd):
         n = hard_wrapped(text)
@@ -213,7 +223,11 @@ def forge_body_hard_wrapped(cmd: str) -> str | None:
                 "corrupt every later quote or diff — and in release notes they "
                 "survive verbatim, unlike a CHANGELOG where markdown reflows. "
                 "Tables, lists and fenced code keep their own line structure. "
-                "(Commit messages are the exception and stay wrapped at ~72.)"
+                "(Commit messages are the exception and stay wrapped at ~72.) "
+                "If the target repository's own rules require wrapped text "
+                "(AGENTS.md, CONTRIBUTING, a PR template, or a rule that the PR "
+                "description is the commit body), the project rule wins: prefix "
+                "the command with FORGE_WRAP_GATE_OFF=1."
             )
     return None
 
