@@ -306,12 +306,15 @@ The hard-wrap gate for forge bodies has the same kind of switch,
 `FORGE_WRAP_GATE_OFF=1`. It is for a project whose rules require the
 wrapped commit body as the PR description. Both forge switches use one
 pattern: an assignment at the start of the command, or after `;`, `&`,
-`|`, `then` or `do`. This has two known limits:
+`|`, `then` or `do`. This has three known limits:
 
 - The switch does not count on a later line of a multi-line call. Put
   the forge call on the first line, or join the lines with `&&`.
 - A switch that prefixes any statement disables the gate for the whole
   command, also for a forge call in another statement.
+- The pattern does not see quotes. A body text that holds the switch
+  after `;`, `then` or `do` disables the gate, for example
+  `--body "Example; FORGE_WRAP_GATE_OFF=1 here"`.
 
 An attempt to read the switch per statement (in [#451](https://github.com/netresearch/git-workflow-skill/pull/451)) denied commands
 that `main` allows in three review rounds in a row. Each round found new
