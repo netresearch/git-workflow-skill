@@ -302,6 +302,23 @@ not a mention — entered the message only with the fix, which is itself the
 pattern: sharpening a promise is how the missing case gets named, so
 re-derive the tests whenever the message changes.
 
+The hard-wrap gate for forge bodies has the same kind of switch,
+`FORGE_WRAP_GATE_OFF=1`. It is for a project whose rules require the
+wrapped commit body as the PR description. Both forge switches use one
+pattern: an assignment at the start of the command, or after `;`, `&`,
+`|`, `then` or `do`. This has two known limits:
+
+- The switch does not count on a later line of a multi-line call. Put
+  the forge call on the first line, or join the lines with `&&`.
+- A switch that prefixes any statement disables the gate for the whole
+  command, also for a forge call in another statement.
+
+An attempt to read the switch per statement (in [#451](https://github.com/netresearch/git-workflow-skill/pull/451)) denied commands
+that `main` allows in three review rounds in a row. Each round found new
+shapes: a body flag inside a commit message, an apostrophe in a heredoc,
+and `$(…)` or `2>&1` inside the forge call. A per-statement rule needs
+a shell parser, not the separator scan that `_gate_disabled` uses.
+
 A gate that denies also needs its threshold calibrated against a negative
 corpus wider than the documents that motivated it. In that gate a German
 function-word marker list contained `mit`, which is the licence every skill
