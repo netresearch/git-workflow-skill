@@ -473,10 +473,14 @@
       {
         "type": "content",
         "pattern": "whitespace"
+      },
+      {
+        "type": "content",
+        "pattern": "--verbatim"
       }
     ],
     "samples": {
-      "passing": "range-diff marks a commit ! when only its message changed, so removing trailers makes every commit look altered. Compare git patch-id --verbatim per commit for the old and new heads: equal patch ids mean the code is unchanged. Use --verbatim because the default and --stable ids strip whitespace, which hides a changed space inside a string.",
+      "passing": "range-diff marks a commit ! when only its message changed, so removing trailers makes every commit look altered. Compare git patch-id --verbatim per commit for the old and new heads: equal patch ids mean every commit carries the same hunk text. Use --verbatim because the default and --stable ids strip whitespace, which hides a changed space inside a string.",
       "failing": [
         "The ! marks in range-diff mean the code changed; review every commit again.",
         "Run git diff between the old and the new head and check that it is empty."

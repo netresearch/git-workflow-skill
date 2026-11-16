@@ -564,7 +564,7 @@ leave the message out:
 
 ```bash
 pid() { git log --reverse --format=%H "$1" | while read -r c; do
-          git show --no-ext-diff --no-textconv "$c" | git patch-id --verbatim | cut -c1-12; done; }
+          git show --no-ext-diff --no-textconv --no-relative "$c" | git patch-id --verbatim | cut -c1-12; done; }
 old=$(pid origin/main..<old-head>); new=$(pid origin/main..<new-head>)
 if [ -z "$old" ]; then echo "no patches read for the old head: check the sha"
 elif [ "$old" = "$new" ]; then echo "same patches"
@@ -573,8 +573,9 @@ else echo "patches differ: read range-diff"; fi
 
 An empty list is not a match: a mistyped or unreachable head makes `git log`
 fail inside the pipe, and two empty lists would compare equal.
-`--no-ext-diff` and `--no-textconv` keep a configured `diff.external` tool or a
-textconv filter from replacing the diff that `patch-id` reads, and `--verbatim`
+`--no-ext-diff`, `--no-textconv` and `--no-relative` keep a configured
+`diff.external` tool, a textconv filter or `diff.relative` from replacing or
+cutting the diff that `patch-id` reads, and `--verbatim`
 keeps whitespace, so `value = "a b"` against `value = "ab"` counts as a change
 (the default and `--stable` ids strip all whitespace; `--verbatim` needs git
 2.39 or later).
@@ -582,8 +583,13 @@ keeps whitespace, so `value = "a b"` against `value = "ab"` counts as a change
 `origin/main..<old-head>` still selects only the old commits, because the old
 base is an ancestor of the moved `origin/main`; for a stacked branch use its
 parent's old and new head instead. A patch id depends on the diff, not on the
-base, so a clean rebase keeps it. Equal lists mean the code is the one that was
-reviewed; read the commit-message hunks of `range-diff` for the rest.
+base, so a clean rebase keeps it. Equal lists mean every commit carries the same
+hunk text as the reviewed one; read the commit-message hunks of `range-diff` for
+the rest. A patch id leaves out line numbers, so where a file repeats a block,
+check in `range-diff` that the hunk still sits in the same place. The check
+assumes a linear branch: `git show` prints a merge commit as a combined diff
+that leaves out parts of the resolution, so after `--rebase-merges` compare each
+merge against its parents instead.
 (2026-11-16, ter: seven branches rebased with their
 agent trailers removed came back `!` throughout; six had identical patch ids,
 the seventh differed by the one import line its rebase conflict had touched.)
