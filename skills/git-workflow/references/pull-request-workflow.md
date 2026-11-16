@@ -582,8 +582,9 @@ keeps whitespace, so `value = "a b"` against `value = "ab"` counts as a change
 `origin/main..<old-head>` still selects only the old commits, because the old
 base is an ancestor of the moved `origin/main`; for a stacked branch use its
 parent's old and new head instead. A patch id depends on the diff, not on the
-base, so a clean rebase keeps it. Equal lists mean the code is the one that was reviewed; read the commit-message hunks
-of `range-diff` for the rest. (2026-11-16, ter: seven branches rebased with their
+base, so a clean rebase keeps it. Equal lists mean the code is the one that was
+reviewed; read the commit-message hunks of `range-diff` for the rest.
+(2026-11-16, ter: seven branches rebased with their
 agent trailers removed came back `!` throughout; six had identical patch ids,
 the seventh differed by the one import line its rebase conflict had touched.)
 
