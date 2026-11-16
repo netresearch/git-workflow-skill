@@ -74,6 +74,11 @@ require Premium/Ultimate; Netresearch CE must not be assumed to have them.
 - Where native dependencies are available, use the supported dependency
   relation, then read it back and verify the prerequisite and dependent IDs.
   Do not confuse a Jira issue link or body text with that relation.
+  Native dependencies enforce merge order only. If fulfillment requires a
+  release or deployment after merge, retain a separate unresolved discussion
+  with enforced resolution or a required CI gate until that condition is met,
+  including on paid editions. Establish it before allowing auto-merge; a
+  later manual verification cannot prevent an already-enabled automatic merge.
 - On CE, propose an **unresolved resolvable MR discussion** naming the
   prerequisite URL, technical reason and exact resolution condition. Read
   `only_allow_merge_if_all_discussions_are_resolved` from the project first.
