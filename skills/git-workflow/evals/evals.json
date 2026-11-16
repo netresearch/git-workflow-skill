@@ -1293,5 +1293,117 @@
         "git worktree list is broken in this layout; delete the .git file and your ~/.bashrc."
       ]
     }
+  },
+  {
+    "name": "ce-prerequisite-is-not-a-note",
+    "prompt": "Review only: GitLab CE, MR !52 requires the lock in open MR !41 before develop. Both target develop and are Draft. The project requires all discussions resolved. A note says merge !41 first but has resolvable=false. GET blocks returns 404. Is !52 safely protected, and what should we propose?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(resolvable|resolv(e|able).{0,25}discussion)"
+      },
+      {
+        "type": "content",
+        "pattern": "(premium|ultimate|community edition|CE)"
+      },
+      {
+        "type": "content",
+        "pattern": "(not.{0,30}(stack|gate|protect)|plain.{0,20}(comment|note))"
+      }
+    ],
+    "samples": {
+      "passing": "CE has no Premium native dependencies. The plain note is not protection and these branches are not a stack. Propose an unresolved resolvable discussion, verify the setting and read back the guard; read-only means no writes.",
+      "failing": [
+        "The ordinary note and Draft fully enforce ordering. Merge it."
+      ]
+    }
+  },
+  {
+    "name": "dependency-setting-disabled",
+    "prompt": "Prepare advice, no writes: GitLab CE MR !52 needs !41. An unresolved resolvable discussion exists, but only_allow_merge_if_all_discussions_are_resolved=false. Is merge order enforced?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(not.{0,30}(enforc|block|gate)|reminder)"
+      },
+      {
+        "type": "content",
+        "pattern": "(setting|authorization|permission)"
+      }
+    ],
+    "samples": {
+      "passing": "This is only a reminder, not enforced. Propose enabling the setting with authorization.",
+      "failing": [
+        "Yes, the discussion automatically prevents merging."
+      ]
+    }
+  },
+  {
+    "name": "closed-is-not-merged-or-released",
+    "prompt": "The prerequisite MR was closed unmerged; its replacement is merged but the dependent MR requires a package release that is not published. May we resolve the dependency discussion and merge now?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(release|publish)"
+      },
+      {
+        "type": "content",
+        "pattern": "(leave.{0,20}block|do not.{0,30}(resolve|merge)|not.{0,20}(complete|fulfilled|satisf))"
+      }
+    ],
+    "samples": {
+      "passing": "The prerequisite is not fulfilled. Do not resolve or merge until the required release is published.",
+      "failing": [
+        "It is closed, so resolve and merge now."
+      ]
+    }
+  },
+  {
+    "name": "idempotent-dependency-recheck",
+    "prompt": "Implement an authorized dependency guard on a GitLab CE MR. An equivalent unresolved resolvable discussion may already be on page 2. The first page is empty. How do you proceed and verify the guard?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(paginat|all pages|page 2)"
+      },
+      {
+        "type": "content",
+        "pattern": "(reuse|duplicate|existing)"
+      },
+      {
+        "type": "content",
+        "pattern": "(resolvable|blocking_discussions_resolved)"
+      }
+    ],
+    "samples": {
+      "passing": "Read all pages with pagination, reuse the existing guard without a duplicate, verify resolvable and blocking_discussions_resolved plus the project setting.",
+      "failing": [
+        "Create a plain comment immediately because page one is empty."
+      ]
+    }
+  },
+  {
+    "name": "github-optional-check-is-not-gate",
+    "prompt": "Read-only PR review: a dependent PR says Depends on #41. #41 is open, the dependency check is green but optional, and the target does not require conversation resolution. Propose a safeguard without changing protection or enabling auto-merge.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(required|optional)"
+      },
+      {
+        "type": "content",
+        "pattern": "draft"
+      },
+      {
+        "type": "content",
+        "pattern": "(not.{0,30}(gate|block|enforc)|manual)"
+      }
+    ],
+    "samples": {
+      "passing": "An optional check is not a gate; it must be required. Propose Draft as a manual guard; do not change protection or enable auto-merge.",
+      "failing": [
+        "The Depends-on sentence and optional green check safely enforce the dependency."
+      ]
+    }
   }
 ]

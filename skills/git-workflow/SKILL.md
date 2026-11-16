@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: CC-BY-SA-4.0
 # SPDX-FileCopyrightText: Netresearch DTT GmbH
 name: git-workflow
-description: "Use when establishing branching strategies, implementing Conventional Commits, creating or reviewing PRs, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, verifying a merge didn't silently drop changes, syncing a long-diverged branch (e.g. master into integration), rebasing a long-lived branch onto a moved base or splitting one into several PRs, integrating Git with CI/CD, setting up git hooks (lefthook, captainhook, husky, pre-commit), debugging hook-install failures in git worktrees, or working in a bare-repo plus per-branch-worktree layout, including consolidating a directory that holds both a plain clone and a .bare. The pull-request tooling is GitHub-only; references/pull-request-workflow.md carries the GitLab equivalents. Not for creating releases (use github-release) or diagnosing BLOCKED/won't-merge PRs (use github-project)."
+description: "Use when branching strategies, implementing Conventional Commits, creating or reviewing PRs, dependent/stacked PR/MR safeguards, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, verifying a merge didn't silently drop changes, syncing a long-diverged branch (e.g. master into integration), rebasing a long-lived branch onto a moved base or splitting one into several PRs, integrating Git with CI/CD, setting up git hooks (lefthook, captainhook, husky, pre-commit), debugging hook-install failures in git worktrees, or working in a bare-repo plus per-branch-worktree layout, including consolidating a directory that holds both a plain clone and a .bare. The pull-request tooling is GitHub-only; references/pull-request-workflow.md carries the GitLab equivalents. Not for creating releases (use github-release) or diagnosing BLOCKED/won't-merge PRs (use github-project)."
 license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
 compatibility: "Requires uv (runs the scripts on Python 3.11 or later), git, gh CLI; yq for .spec-cleanup.yml. The plugin hook fails closed from Claude Code v2.1.295 (onFailure)."
 metadata:
@@ -35,6 +35,7 @@ Releases: `github-release`. BLOCKED-PR diagnosis: `github-project`.
 
 | Reference | Content Triggers |
 |-----------|-----------------|
+| `references/merge-dependencies.md` | Prerequisite discovery, stacked PR/MR safeguards, GitLab CE discussion gates and native dependencies |
 | `references/commit-conventions.md` | Conventional commits, DCO sign-off |
 | `references/pull-request-workflow.md` | PR merge gate, signed rebase, posting a review with inline suggestions |
 | `references/ci-cd-integration.md` | CI watching, git mirrors |
@@ -65,6 +66,15 @@ found=$(ls lefthook.yml .lefthook.yml captainhook.json Build/captainhook.json .p
 ```
 
 Install commands per framework: `references/git-hooks-setup.md`.
+
+## Dependency preflight
+
+When creating, reviewing or preparing to merge, proactively check linked work,
+discussions and code for prerequisites. Read `references/merge-dependencies.md`
+when one is found: distinguish a review stack from an enforced merge gate,
+check platform capabilities, and propose or apply a suitable safeguard within
+the task's authorization. Do not leave a known dependency as a plain comment
+and call it protected.
 
 ## PR Merge Requirements
 

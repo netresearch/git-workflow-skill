@@ -3922,8 +3922,8 @@ glab api "projects/$P" | jq '{merge_method,squash_option,
 | `statusCheckRollup` | `glab ci status` / `/pipelines` |
 | Draft PR | `draft: true` → `glab mr update <iid> --ready` |
 
-`detailed_merge_status: draft_status` means the **only** blocker is the draft
-flag. That is the most common "the MR refuses to merge and nothing looks wrong"
+`detailed_merge_status: draft_status` reports the draft blocker, not proof
+that it is the **only** blocker. Inspect the remaining gates independently. That is the most common "the MR refuses to merge and nothing looks wrong"
 case — check it before hunting for approvals or failing jobs.
 
 `detailed_merge_status` is recomputed asynchronously after every push and
