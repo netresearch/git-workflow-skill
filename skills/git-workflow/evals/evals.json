@@ -476,7 +476,7 @@
       }
     ],
     "samples": {
-      "passing": "range-diff marks a commit ! when only its message changed, so removing trailers makes every commit look altered. Compare git patch-id --stable per commit for the old and new heads: equal patch ids mean the code is unchanged. Patch ids normalise whitespace, so a whitespace-only change still needs git diff.",
+      "passing": "range-diff marks a commit ! when only its message changed, so removing trailers makes every commit look altered. Compare git patch-id --verbatim per commit for the old and new heads: equal patch ids mean the code is unchanged. Use --verbatim because the default and --stable ids strip whitespace, which hides a changed space inside a string.",
       "failing": [
         "The ! marks in range-diff mean the code changed; review every commit again.",
         "Run git diff between the old and the new head and check that it is empty."

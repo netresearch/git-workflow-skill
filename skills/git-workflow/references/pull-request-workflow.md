@@ -564,7 +564,7 @@ leave the message out:
 
 ```bash
 pid() { git log --reverse --format=%H "$1" | while read -r c; do
-          git show --no-ext-diff "$c" | git patch-id --stable | cut -c1-12; done; }
+          git show --no-ext-diff --no-textconv "$c" | git patch-id --verbatim | cut -c1-12; done; }
 old=$(pid origin/main..<old-head>); new=$(pid origin/main..<new-head>)
 if [ -z "$old" ]; then echo "no patches read for the old head: check the sha"
 elif [ "$old" = "$new" ]; then echo "same patches"
@@ -573,15 +573,16 @@ else echo "patches differ: read range-diff"; fi
 
 An empty list is not a match: a mistyped or unreachable head makes `git log`
 fail inside the pipe, and two empty lists would compare equal.
-`--no-ext-diff` keeps a configured `diff.external` tool from replacing the diff
-that `patch-id` reads.
+`--no-ext-diff` and `--no-textconv` keep a configured `diff.external` tool or a
+textconv filter from replacing the diff that `patch-id` reads, and `--verbatim`
+keeps whitespace, so `value = "a b"` against `value = "ab"` counts as a change
+(the default and `--stable` ids strip all whitespace; `--verbatim` needs git
+2.39 or later).
 
 `origin/main..<old-head>` still selects only the old commits, because the old
 base is an ancestor of the moved `origin/main`; for a stacked branch use its
 parent's old and new head instead. A patch id depends on the diff, not on the
-base, so a clean rebase keeps it. It also normalises whitespace (see
-`advanced-git.md`), so a change that only re-indents is invisible to it. Equal
-lists mean the code is the one that was reviewed; read the commit-message hunks
+base, so a clean rebase keeps it. Equal lists mean the code is the one that was reviewed; read the commit-message hunks
 of `range-diff` for the rest. (2026-11-16, ter: seven branches rebased with their
 agent trailers removed came back `!` throughout; six had identical patch ids,
 the seventh differed by the one import line its rebase conflict had touched.)
