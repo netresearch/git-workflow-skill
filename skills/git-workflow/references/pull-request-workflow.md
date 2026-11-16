@@ -564,10 +564,17 @@ leave the message out:
 
 ```bash
 pid() { git log --reverse --format=%H "$1" | while read -r c; do
-          git show "$c" | git patch-id --stable | cut -c1-12; done; }
-[ "$(pid origin/main..<old-head>)" = "$(pid origin/main..<new-head>)" ] \
-  && echo "same patches" || echo "patches differ: read range-diff"
+          git show --no-ext-diff "$c" | git patch-id --stable | cut -c1-12; done; }
+old=$(pid origin/main..<old-head>); new=$(pid origin/main..<new-head>)
+if [ -z "$old" ]; then echo "no patches read for the old head: check the sha"
+elif [ "$old" = "$new" ]; then echo "same patches"
+else echo "patches differ: read range-diff"; fi
 ```
+
+An empty list is not a match: a mistyped or unreachable head makes `git log`
+fail inside the pipe, and two empty lists would compare equal.
+`--no-ext-diff` keeps a configured `diff.external` tool from replacing the diff
+that `patch-id` reads.
 
 `origin/main..<old-head>` still selects only the old commits, because the old
 base is an ancestor of the moved `origin/main`; for a stacked branch use its
