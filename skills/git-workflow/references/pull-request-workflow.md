@@ -557,6 +557,28 @@ applies to the new head and can be cited as the basis for the attestation.
 Naming the old and new sha in the review note is what makes that checkable
 afterwards.
 
+A rewritten commit message also turns a commit into `!`, so `range-diff` cannot
+say whether the code changed when the same pass also edited messages — removed
+trailers, a corrected sentence, an added sign-off. Compare the patch ids, which
+leave the message out:
+
+```bash
+pid() { git log --reverse --format=%H "$1" | while read -r c; do
+          git show "$c" | git patch-id --stable | cut -c1-12; done; }
+[ "$(pid origin/main..<old-head>)" = "$(pid origin/main..<new-head>)" ] \
+  && echo "same patches" || echo "patches differ: read range-diff"
+```
+
+`origin/main..<old-head>` still selects only the old commits, because the old
+base is an ancestor of the moved `origin/main`; for a stacked branch use its
+parent's old and new head instead. A patch id depends on the diff, not on the
+base, so a clean rebase keeps it. It also normalises whitespace (see
+`advanced-git.md`), so a change that only re-indents is invisible to it. Equal
+lists mean the code is the one that was reviewed; read the commit-message hunks
+of `range-diff` for the rest. (2026-11-16, ter: seven branches rebased with their
+agent trailers removed came back `!` throughout; six had identical patch ids,
+the seventh differed by the one import line its rebase conflict had touched.)
+
 This answers a different question from the reference-merge check under *"I need
 to rebase a long branch onto a base that moved"*: that one proves the resulting
 **tree** is the intended end state, this one proves the **patches** are still
