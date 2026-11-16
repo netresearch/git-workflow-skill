@@ -459,6 +459,35 @@
     ]
   },
   {
+    "name": "rebase_with_rewritten_messages",
+    "prompt": "I rebased my PR onto the moved main and in the same pass removed some trailers from every commit message. git range-diff now shows ! for every commit. How do I tell whether the code itself changed?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "patch-id"
+      },
+      {
+        "type": "content",
+        "pattern": "(message|trailer).{0,120}(!|range-diff)|(!|range-diff).{0,120}(message|trailer)"
+      },
+      {
+        "type": "content",
+        "pattern": "whitespace"
+      },
+      {
+        "type": "content",
+        "pattern": "--verbatim"
+      }
+    ],
+    "samples": {
+      "passing": "range-diff marks a commit ! when only its message changed, so removing trailers makes every commit look altered. Compare git patch-id --verbatim per commit for the old and new heads: equal patch ids mean every commit carries the same hunk text. Use --verbatim because the default and --stable ids strip whitespace, which hides a changed space inside a string.",
+      "failing": [
+        "The ! marks in range-diff mean the code changed; review every commit again.",
+        "Run git diff between the old and the new head and check that it is empty."
+      ]
+    }
+  },
+  {
     "name": "pr_body_must_match_current_diff",
     "prompt": "This MR has been open for eight months and I just rebased it. Update the description.",
     "assertions": [

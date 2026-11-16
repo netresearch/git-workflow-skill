@@ -557,6 +557,44 @@ applies to the new head and can be cited as the basis for the attestation.
 Naming the old and new sha in the review note is what makes that checkable
 afterwards.
 
+A rewritten commit message also turns a commit into `!`, so `range-diff` cannot
+say whether the code changed when the same pass also edited messages — removed
+trailers, a corrected sentence, an added sign-off. Compare the patch ids, which
+leave the message out:
+
+```bash
+pid() { git rev-list --reverse --no-merges "$1" |
+          git diff-tree --stdin -p --ignore-submodules=none |
+          git patch-id --verbatim | cut -c1-12; }
+old=$(pid origin/main..<old-head>); new=$(pid origin/main..<new-head>)
+if [ -z "$old" ]; then echo "no patches read for the old head: check the sha"
+elif [ "$old" = "$new" ]; then echo "same patches"
+else echo "patches differ: read range-diff"; fi
+```
+
+An empty list is not a match: a mistyped or unreachable head makes
+`git rev-list` fail inside the pipe, and two empty lists would compare equal.
+`rev-list` and `diff-tree` are plumbing, so `color.diff`, `diff.external`,
+textconv filters and `diff.relative` do not change the diff that `patch-id`
+reads, as they change the output of `git show` or `git log -p`.
+`--ignore-submodules=none` keeps submodule pointer changes even where
+`diff.ignoreSubmodules` is set. `--verbatim` keeps whitespace, so
+`value = "a b"` against `value = "ab"` counts as a change (the default and
+`--stable` ids strip all whitespace; `--verbatim` needs git 2.39 or later).
+
+`origin/main..<old-head>` still selects only the old commits, because the old
+base is an ancestor of the moved `origin/main`; for a stacked branch use its
+parent's old and new head instead. A patch id depends on the diff, not on the
+base, so a clean rebase keeps it. Equal lists mean every commit carries the same
+hunk text as the reviewed one; read the commit-message hunks of `range-diff` for
+the rest. A patch id leaves out line numbers, so where a file repeats a block,
+check in `range-diff` that the hunk still sits in the same place. The check
+assumes a linear branch: `pid` skips merge commits, so after `--rebase-merges`
+compare each merge against its parents separately.
+(2026-11-16, ter: seven branches rebased with their
+agent trailers removed came back `!` throughout; six had identical patch ids,
+the seventh differed by the one import line its rebase conflict had touched.)
+
 This answers a different question from the reference-merge check under *"I need
 to rebase a long branch onto a base that moved"*: that one proves the resulting
 **tree** is the intended end state, this one proves the **patches** are still
