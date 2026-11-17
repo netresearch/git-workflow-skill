@@ -962,6 +962,28 @@ evidence. They never hold a narrative of what was done, a file-by-file list
 of changes, or review history. A body that grows with every review round is
 rewritten, not appended to.
 
+Write the body as if it lands verbatim in the merge commit. On GitHub it does
+when the repository sets `merge_commit_message` (or
+`squash_merge_commit_message`) to `PR_BODY`; on GitLab when
+`merge_commit_template` (or `squash_commit_template`) contains
+`%{description}`. Read the setting with `gh api repos/OWNER/REPO` or
+`glab api projects/<id>`, but write for the permanent record either way:
+the setting can change, and a fork can set it differently. The line between
+body and comment follows from that:
+
+- **Body:** evidence that stays true after the merge — what was tested and
+  how, the before/after output, the reason for the approach, known limits.
+- **Comment on the PR/MR:** evidence that expires with the merge or is not
+  meant for the record — pipeline and run numbers, local environment
+  problems, intermediate metric arithmetic, merge order between sibling
+  PRs, earlier states the branch no longer has.
+
+A bare `#N` resolves against the repository the text lives in. To reference
+an issue in another repository (the upstream of a fork, a dependency), write
+`owner/repo#N` or the issue's full URL in the PR body or a commit message.
+That is what puts the cross-reference on that issue's timeline, so its
+maintainers see the PR; a bare `#N` there links a different issue, or none.
+
 Three sources outrank this default, in this order:
 
 1. The repository's own documents: `AGENTS.md`, `CONTRIBUTING.md`, the PR
@@ -1123,6 +1145,13 @@ the body was last edited (or written, if nobody edited it); `--json` carries the
 comparison as `body_freshness`. It is a reminder, not a check: it compares two
 timestamps, so a rebase that changed nothing the body says also trips it, and it
 never changes the `NEXT:` line or the merge gate.
+
+**Equal is not current.** Where the body is the commit message, or a copy of
+it, checking that the two match proves only that both are equally stale.
+Read each claim of the commit message itself against the final tree,
+above all numbers and "was run on …" statements: they describe the version
+they were written for, and a review round that rewrote the code leaves them
+standing in both places at once.
 
 **A state change invalidates the body as surely as a push, and is easier to
 miss.** A push makes you re-read the body because you just wrote the change;
@@ -2824,6 +2853,20 @@ The second way PR-green diverges from main-green needs no `push:`-gated job: a P
 - Rebasing before merge does **not** close the window — the config PR can land after your rebase. Only a merge queue or a "require branches to be up to date" rule makes it structurally impossible; where neither is on, expect this occasionally on active repos.
 - Consequence: watching the post-merge run on `main` is part of the merge, because this failure class is visible nowhere else. When it fires, diff `main`'s history for config-touching merges since your branch's last CI run and fix forward against the new config — it is mechanical, not an investigation into which check was wrong.
 
+Two checks shrink the window before either PR merges. Neither closes it; only the queue or the up-to-date rule does.
+
+- **A sibling PR adds or tightens a check: run its checker against your tree.** Whichever of the two merges second turns the base red, and neither PR's pipeline can show it, because each runs only its own copy of the check. When the check is a self-contained script, take it from the sibling's branch and run it in your worktree. A sibling from a fork has no branch in `origin`; fetch `refs/pull/<N>/head` instead:
+
+  ```bash
+  git fetch origin "refs/pull/<N>/head"
+  G=$(mktemp)
+  git show "FETCH_HEAD:<path/to/guard>" > "$G"
+  bash "$G"            # run it the way the sibling's workflow runs it, from your worktree root
+  ```
+
+  A finding there is yours to fix now, or a conflict to settle with the sibling's author before either merges. When the check is a shared config (rule set, linter preset) instead of a script, check out the sibling's config files into a scratch worktree of your branch and run the linter there.
+- **A sibling PR changes rendered output: rebase and run the suite before marking ready.** Fixtures pin what the code emits, so a merged change to a string, a template or a class name leaves every other branch's expected output stale, and the last green run on your branch predates it. Before taking a PR out of draft or asking for the final review, fetch, compare `git merge-base HEAD origin/<base>` with `origin/<base>`, and when the base moved, rebase and run the full test suite rather than trusting the earlier run.
+
 ### A stack needs push access to the repository the PRs target
 
 A pull request's base must be a branch **in the repository the PR is opened
@@ -2927,6 +2970,21 @@ bottom-up — but two GitHub behaviours break the naive loop:
    recovery below is for a merge made by hand or by an older copy of the
    script.
 
+   Withholding the flag is not enough when the repository deletes head
+   branches itself. With `delete_branch_on_merge: true` GitHub deletes the
+   merged branch whether or not `--delete-branch` was passed, and
+   `pr-merge.sh` does not read that setting. Read it before the first merge
+   of a stack:
+
+   ```bash
+   gh api "repos/OWNER/REPO" --jq .delete_branch_on_merge
+   ```
+
+   When it is `true`, retarget every open child to the parent's base
+   (`gh pr edit <CHILD> --base main`) before merging the parent, so no open
+   PR is based on the branch that is about to disappear. Until the parent
+   lands, the child's diff also shows the parent's commits.
+
    The two obvious repairs block each other, so only one order moves:
 
    ```bash
@@ -2976,7 +3034,8 @@ gh pr merge <CHILD_NUMBER> --merge       # NO --delete-branch mid-stack
 ```
 
 Delete all stack branches in one pass **after the last PR merged** (a repo
-with "automatically delete head branches" usually does it for you).
+with "automatically delete head branches" does it for you, which is why its
+children must be retargeted before each merge, not after).
 
 #### GitHub-native stacked PRs: merge the tip, not each PR in turn
 

@@ -245,6 +245,28 @@ while true; do
 done
 ```
 
+Reach for `pr-status.sh --watch` (below) before writing such a loop. A
+hand-rolled loop that reports a gate as settled has to meet four conditions,
+each of which a plausible loop skips:
+
+- **Bound to one head.** Take the full SHA from `headRefOid` and filter by it
+  ([server-side, full SHA](#when-you-want-run-level-state-filter-server-side-with-head_sha)).
+  The first row of `gh run list` can be a run from another commit.
+- **The expected check set, not "no pending".** A rollup with one entry and
+  no pending checks reads as settled while the other checks have not been
+  created yet. Compare the names that reported against the required contexts
+  (`gh api repos/OWNER/REPO/rules/branches/BASE`, plus classic branch
+  protection) or the check list of the previous head
+  ([vacuously true](#every-run-has-finished-is-true-before-any-run-exists--and-a-second-query-cannot-repair-it)).
+- **The same verdict on two consecutive polls.** Checks are created over
+  several seconds, so one poll can catch a list that is still growing. This
+  guards against a growing list only; a signal that is wrong stays wrong on
+  every poll ([re-queuing](#re-queuing-cancels-the-run-already-in-flight)).
+- **A failed probe is not a state.** An API error, an empty extraction or an
+  unreadable answer keeps the loop waiting; it neither ends the wait nor
+  counts toward "settled"
+  ([emptiness guard](#the-emptiness-guard-must-test-the-extracted-value-not-the-response)).
+
 Watching several PRs in one loop needs one latch **per PR** (`declare -A seen`),
 not one shared variable — otherwise two PRs reaching the same state alternate and
 each re-emits.
@@ -311,6 +333,13 @@ harness with "the system is running low on memory" while CI queued for hours; th
 same watch under Monitor ran to its event. A watch that was killed reports
 nothing, so after such a stop, read the gate once directly
 (`pr-status.sh -R OWNER/REPO "$PR"`) before arming the next one.
+
+A watch that returns immediately twice in a row with the same reason is a
+dead end, not a slow gate: the event it fires on is already true, and
+re-arming it fires again. Read the reason, then change the instrument —
+`--ignore-action <action>` when the returned action is one you have decided
+to hold through (the quota-dead review case above), a single direct read of
+the gate, or a watcher on the different event you are actually waiting for.
 
 ### Key the verdict on `--json .next.action`, never on the `NEXT:` prose
 

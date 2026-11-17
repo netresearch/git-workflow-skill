@@ -37,14 +37,14 @@ Releases: `github-release`. BLOCKED-PR diagnosis: `github-project`.
 |-----------|-----------------|
 | `references/merge-dependencies.md` | Prerequisite discovery, stacked PR/MR safeguards, GitLab CE discussion gates and native dependencies |
 | `references/commit-conventions.md` | Conventional commits, DCO sign-off |
-| `references/pull-request-workflow.md` | PR merge gate, signed rebase, posting a review with inline suggestions |
+| `references/pull-request-workflow.md` | PR merge gate, signed rebase, posting a review with inline suggestions, writing or updating the PR body, merging a stack, sibling PRs that change checks or output |
 | `references/ci-cd-integration.md` | CI watching, git mirrors |
 | `references/advanced-git.md` | Rebase (incl. non-interactive `rebase -i`), cherry-pick, bisect, stash, worktrees, reflog, hanging push/fetch (SSH mux), parsing git output in a script (flags that pin diff/log/status output against user config), fetching one branch in a single-branch clone (refspec) |
 | `references/github-releases.md` | → `github-release` skill |
 | `references/git-hooks-setup.md` | Hook frameworks, hooks per stage |
 | `references/claude-code-hooks.md` | `settings.json` merge gate, cache-path rejection, auto-lint |
 | `references/code-quality-tools.md` | shellcheck, shfmt, git-absorb, difftastic |
-| `references/merge-gate-watcher.md` | Waiting on a gate, a watcher the harness killed, merge-driver loop, check taxonomy, stale-SHA rerun, rerun of a superseded run cancelling the newer one, merge-queue entry dropped or stuck in `AWAITING_CHECKS` |
+| `references/merge-gate-watcher.md` | Waiting on a gate, a hand-rolled watch loop, a watch that returns at once, a watcher the harness killed, merge-driver loop, check taxonomy, stale-SHA rerun, rerun of a superseded run cancelling the newer one, merge-queue entry dropped or stuck in `AWAITING_CHECKS` |
 | `references/spec-cleanup.md` | Planning artifacts off the base branch |
 | `references/no-editorializing.md` | No self-praise, no narrating the expected |
 
