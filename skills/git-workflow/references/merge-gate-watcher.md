@@ -254,9 +254,13 @@ each of which a plausible loop skips:
   The first row of `gh run list` can be a run from another commit.
 - **The expected check set, not "no pending".** A rollup with one entry and
   no pending checks reads as settled while the other checks have not been
-  created yet. Compare the names that reported against the required contexts
+  created yet. Compare what reported against the current required contexts
   (`gh api repos/OWNER/REPO/rules/branches/BASE`, plus classic branch
-  protection) or the check list of the previous head
+  protection). Where a requirement names an app (`integration_id`), only a
+  check from that app satisfies it, so match the app as well as the name
+  ([stuck in `AWAITING_CHECKS`](#an-entry-stuck-in-awaiting_checks-after-its-queue-runs-finished-green)).
+  The check list of the previous head can add non-required checks to wait
+  for; it never replaces the required set, which may have grown since
   ([vacuously true](#every-run-has-finished-is-true-before-any-run-exists--and-a-second-query-cannot-repair-it)).
 - **The same verdict on two consecutive polls.** Checks are created over
   several seconds, so one poll can catch a list that is still growing. This

@@ -2855,17 +2855,20 @@ The second way PR-green diverges from main-green needs no `push:`-gated job: a P
 
 Two checks shrink the window before either PR merges. Neither closes it; only the queue or the up-to-date rule does.
 
-- **A sibling PR adds or tightens a check: run its checker against your tree.** Whichever of the two merges second turns the base red, and neither PR's pipeline can show it, because each runs only its own copy of the check. When the check is a self-contained script, take it from the sibling's branch and run it in your worktree. A sibling from a fork has no branch in `origin`; fetch `refs/pull/<N>/head` instead:
+- **A sibling PR adds or tightens a check: run its checker against your tree.** Whichever of the two merges second turns the base red, and neither PR's pipeline can show it, because each runs only its own copy of the check. When the check is a self-contained script, take it from the sibling's head and run it in your worktree. `refs/pull/<N>/head` exists for every PR, from a fork or not, but only in the repository the PR targets; in a fork checkout `origin` is your fork, so fetch from the remote that names the target repository (`git remote -v` says which):
 
   ```bash
-  git fetch origin "refs/pull/<N>/head"
+  UPSTREAM=origin      # the remote whose URL is the repository the PRs target
+  git fetch "$UPSTREAM" "refs/pull/<N>/head"
   G=$(mktemp)
-  git show "FETCH_HEAD:<path/to/guard>" > "$G"
-  bash "$G"            # run it the way the sibling's workflow runs it, from your worktree root
+  git show "FETCH_HEAD:<path/to/guard>" > "$G" \
+    && bash "$G"       # run it the way the sibling's workflow runs it, from your worktree root
   ```
 
+  The `&&` matters: when the path is wrong, `git show` fails and leaves `$G` empty, and running an empty file exits 0 — a pass for a check that never ran.
+
   A finding there is yours to fix now, or a conflict to settle with the sibling's author before either merges. When the check is a shared config (rule set, linter preset) instead of a script, check out the sibling's config files into a scratch worktree of your branch and run the linter there.
-- **A sibling PR changes rendered output: rebase and run the suite before marking ready.** Fixtures pin what the code emits, so a merged change to a string, a template or a class name leaves every other branch's expected output stale, and the last green run on your branch predates it. Before taking a PR out of draft or asking for the final review, fetch, compare `git merge-base HEAD origin/<base>` with `origin/<base>`, and when the base moved, rebase and run the full test suite rather than trusting the earlier run.
+- **A sibling PR changes rendered output: rebase and run the suite before marking ready.** Fixtures pin what the code emits, so a merged change to a string, a template or a class name leaves every other branch's expected output stale, and the last green run on your branch predates it. Before taking a PR out of draft or asking for the final review, fetch the base from the target repository (`git fetch "$UPSTREAM" <base>`, the same remote as above; in a fork checkout `origin/<base>` is your fork's copy and can lag), compare `git merge-base HEAD FETCH_HEAD` with `FETCH_HEAD`, and when the base moved, rebase onto it and run the full test suite rather than trusting the earlier run.
 
 ### A stack needs push access to the repository the PRs target
 
