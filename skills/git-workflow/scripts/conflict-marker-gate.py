@@ -66,8 +66,28 @@ def is_git_commit(command):
     return False
 
 
+def marker_count(revision_path):
+    """Conflict markers in a blob such as ':path' or 'HEAD:path'; 0 if it does not exist."""
+    blob = subprocess.run(
+        ["git", "show", revision_path],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if blob.returncode != 0:
+        return 0
+    return len(MARKER.findall(blob.stdout))
+
+
 def staged_conflict_files():
-    """Names of staged files whose staged content carries conflict markers."""
+    """Names of staged files whose staged content adds conflict markers.
+
+    A file counts only when its staged content holds more markers than the
+    committed version: documentation that shows a conflict as an example
+    already carries markers on HEAD, and every later commit to it would be
+    denied otherwise.
+    """
     try:
         names = subprocess.run(
             ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
@@ -83,14 +103,8 @@ def staged_conflict_files():
             name = name.strip()
             if not name:
                 continue
-            blob = subprocess.run(
-                ["git", "show", f":{name}"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            if blob.returncode == 0 and MARKER.search(blob.stdout):
+            staged = marker_count(f":{name}")
+            if staged > marker_count(f"HEAD:{name}"):
                 hits.append(name)
             if len(hits) >= 5:
                 break
