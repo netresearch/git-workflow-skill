@@ -1434,5 +1434,33 @@
         "The Depends-on sentence and optional green check safely enforce the dependency."
       ]
     }
+  },
+  {
+    "name": "forgejo-signed-merge-closes-pr",
+    "prompt": "Merge PR #12 on our Forgejo instance. Every commit on main, the merge commit included, must stay signed by me. What do you run, and what do you check afterwards?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "--no-ff"
+      },
+      {
+        "type": "content",
+        "pattern": "-S"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)autodetect manual merge"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(not|never|avoid|instead of).{0,40}(fj pr merge|merge button)"
+      }
+    ],
+    "samples": {
+      "passing": "Do not use fj pr merge or the merge button: the server would create an unsigned merge commit. Merge locally with git merge --no-ff -S, push main, then check that the PR shows as merged; if it stays open, Autodetect manual merge is off.",
+      "failing": [
+        "Run fj pr merge 12 --method merge; Forgejo creates the merge commit and closes the PR."
+      ]
+    }
   }
 ]
