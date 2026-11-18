@@ -4136,6 +4136,70 @@ own work, then wait for the new pipeline before merging. Observed on a two-MR
 stack in a `rebase_merge` project: after step 3 the child's diff held only its
 own commit.
 
+## Forgejo / Gitea: signed local merges and repository merge settings
+
+The GitHub scripts above do not apply. PRs are handled with the `fj` CLI
+(forgejo-cli); repository settings with the REST API (`/api/v1`) and an admin
+token.
+
+### The merge button does not carry your signature
+
+Forgejo's merge button and `fj pr merge` (any `--method`) create the merge
+commit on the server. It is unsigned unless the instance configures
+`[repository.signing]`, and even then it carries the server's key, not the
+author's. To keep every commit signed by the person merging, merge locally and
+push:
+
+```bash
+git switch main && git pull --ff-only && git merge --no-ff -S <branch>
+git log --show-signature -1
+git push origin main
+```
+
+Forgejo marks the PR as merged after that push only when the repository has
+**"Autodetect manual merge"** (`autodetect_manual_merge`) enabled. The check runs
+asynchronously, so a PR can still read *Open* right after the push; read it
+again. If it stays open, the setting is off: report that instead of closing the
+PR by hand, which would record it as closed, not merged.
+
+### Repository merge settings live per repository
+
+- `app.ini` `[repository.pull-request]` only has `DEFAULT_MERGE_STYLE` and
+  `DEFAULT_UPDATE_STYLE`. They preselect values for **new** repositories; a new
+  repository still allows every merge style. Restricting merge styles means
+  changing each repository.
+- `PATCH /api/v1/repos/{owner}/{repo}` ignores every pull-request field
+  (`allow_merge_commits`, `allow_squash_merge`, `default_merge_style`,
+  `autodetect_manual_merge`, ...) unless the body also sends
+  `"has_pull_requests": true`. Sending it to a repository without the PR unit
+  switches the unit on, so skip those repositories.
+- `GET /api/v1/repos/{owner}/{repo}` returns most of these fields but **not**
+  `allow_manual_merge` or `autodetect_manual_merge`. A "compare, then PATCH only
+  on difference" loop cannot see those two through the API: read them from the
+  database (`repo_unit.config` where `type = 3`, keys `AllowManualMerge` and
+  `AutodetectManualMerge`), or accept that they are sent on every run.
+- As an admin, `GET /api/v1/repos/search` also returns other users' and
+  organisations' private repositories. Page with `limit` (capped by `[api]
+  MAX_RESPONSE_ITEMS`, default 50) and compare the result against the
+  `X-Total-Count` header.
+
+### A login-prohibited account cannot use its tokens
+
+An account with **"Prohibit login"** (`prohibit_login`) is refused on every API
+request, token included: `403 This account is prohibited from signing in`. A
+locked break-glass admin account is therefore unusable for automation. Use a
+dedicated admin service account whose random password nobody keeps:
+
+```bash
+forgejo admin user create --admin --username <svc> --email <address> \
+  --random-password --must-change-password=false >/dev/null
+forgejo admin user generate-access-token --username <svc> \
+  --token-name <name> --scopes write:repository --raw
+```
+
+`write:repository` is enough for an admin to list every repository and change
+its merge settings.
+
 ## Upstream and Community PRs: the Maintainer Is Watching Every Push
 
 In your own repository, churn is private until someone looks. In a foreign
