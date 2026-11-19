@@ -20,6 +20,14 @@
 #   pr-merge.sh 123
 #   pr-merge.sh -R owner/repo 123
 #   pr-merge.sh -R owner/repo 123 --dry-run   # print the command, run nothing
+#   pr-merge.sh -R owner/repo 123 --retarget-stacked
+#                                     # the repository deletes merged head
+#                                     # branches itself (delete_branch_on_merge)
+#                                     # and open pull requests are based on
+#                                     # this one's head branch: retarget them
+#                                     # to this pull request's base first, then
+#                                     # merge. Without the flag the merge is
+#                                     # refused (exit 2) with the commands.
 #   pr-merge.sh -R owner/repo 123 --self-reviewed
 #                                     # the review the gate demands is one an
 #                                     # exhausted Copilot quota (or two failed
@@ -36,7 +44,8 @@
 # Exit codes: 0 merged (or queued) AND confirmed by reading the PR back, 1 the
 # gate is shut and nothing was attempted, 2 an error — usage, lookup, the merge
 # call itself failed, or it exited 0 while nothing merged and nothing entered
-# the queue. 1 is retryable later; 2 needs a human.
+# the queue — or a merge that would close stacked pull requests (see
+# --retarget-stacked). 1 is retryable later; 2 needs a human.
 
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: Netresearch DTT GmbH
@@ -74,7 +83,7 @@ skill_version() {
     printf 'path: %s/%s\n' "$here" "$(basename "${BASH_SOURCE[0]}")"
 }
 
-REPO=""; PR=""; DRY=0; SELF_REVIEWED=0
+REPO=""; PR=""; DRY=0; SELF_REVIEWED=0; RETARGET=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 die() { printf 'pr-merge: %s\n' "$1" >&2; exit 2; }
@@ -85,6 +94,7 @@ while [ $# -gt 0 ]; do
     -R|--repo) need "$@"; REPO="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --self-reviewed) SELF_REVIEWED=1; shift ;;
+    --retarget-stacked) RETARGET=1; shift ;;
     --version) skill_version; exit 0 ;;
     -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     -*) die "unknown flag: $1" ;;
@@ -112,10 +122,11 @@ read_status() {
       (.queue_active|tostring),
       (.merge_methods|join(",")),
       (.cross_repository|tostring),
-      (.head // "")
+      (.head // ""),
+      (.base // "")
     ] | @tsv') || die "pr-status.sh returned unexpected JSON"
 
-  IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS CROSS HEADREF <<EOF
+  IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS CROSS HEADREF BASEREF <<EOF
 $FIELDS
 EOF
   [ -n "$ACTION" ] && [ -n "$REPO" ] && [ -n "$PR" ] || die "pr-status.sh returned no action"
@@ -242,6 +253,57 @@ if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ]; then
     STACKED_UNKNOWN=$(tr '\n' ' ' < "$TMPERR")
     [ -n "$STACKED_UNKNOWN" ] || STACKED_UNKNOWN="gh pr list failed"
   fi
+fi
+
+# Withholding --delete-branch keeps nothing when the repository deletes merged
+# head branches itself: with delete_branch_on_merge on, GitHub deletes the
+# branch whatever the flag says, and every open pull request based on it is
+# closed (#460). So when anything is, or may be, stacked on this branch, the
+# setting decides. A failed read of the setting is not "off".
+RETARGET_CMDS=()
+if [ -n "$STACKED" ] || [ -n "$STACKED_UNKNOWN" ]; then
+  AUTODEL=$(gh api "repos/$REPO" --jq .delete_branch_on_merge 2>"$TMPERR") \
+    || die "could not read delete_branch_on_merge of $REPO, so whether merging deletes $HEADREF is unknown: $(tr '\n' ' ' < "$TMPERR")"
+  if [ "$AUTODEL" = "true" ]; then
+    if [ -n "$STACKED_UNKNOWN" ]; then
+      die "not merging: $REPO deletes merged head branches (delete_branch_on_merge: true), and whether open pull requests are based on ${HEADREF:-(unknown)} could not be checked: $STACKED_UNKNOWN"
+    fi
+    [ -n "$BASEREF" ] || die "pr-status.sh reported no base branch, so the stacked pull requests ($STACKED) have no retarget target"
+    for child in $STACKED; do
+      RETARGET_CMDS+=("${child#\#}")
+    done
+    if [ "$RETARGET" != "1" ]; then
+      {
+        printf 'pr-merge: not merging %s#%s — %s deletes merged head branches (delete_branch_on_merge: true),\n' "$REPO" "$PR" "$REPO"
+        printf '  which would close the open pull requests based on %s: %s.\n' "$HEADREF" "$STACKED"
+        printf '  Retarget them first:\n'
+        for child in "${RETARGET_CMDS[@]}"; do
+          printf '    gh pr edit %s --repo %s --base %s\n' "$child" "$REPO" "$BASEREF"
+        done
+        printf '  or run this script again with --retarget-stacked, which does that before merging.\n'
+      } >&2
+      # 2, not 1: waiting does not open this gate, so a sweep that retries
+      # exit 1 on its next pass would wait out its whole timeout in silence.
+      exit 2
+    fi
+  fi
+fi
+
+if [ "${#RETARGET_CMDS[@]}" -gt 0 ]; then
+  for child in "${RETARGET_CMDS[@]}"; do
+    if [ "$DRY" = "1" ]; then
+      printf '%q ' gh pr edit "$child" --repo "$REPO" --base "$BASEREF"; printf '\n'
+      continue
+    fi
+    gh pr edit "$child" --repo "$REPO" --base "$BASEREF" >/dev/null 2>"$TMPERR" \
+      || die "retargeting #$child to $BASEREF failed, nothing merged: $(tr '\n' ' ' < "$TMPERR")"
+    # Read the base back: a retarget that did not land leaves the child on the
+    # branch the merge is about to delete.
+    NOW=$(gh pr view "$child" --repo "$REPO" --json baseRefName --jq .baseRefName 2>/dev/null) || NOW=""
+    [ "$NOW" = "$BASEREF" ] \
+      || die "#$child still reports base '${NOW:-unreadable}' after the retarget to $BASEREF, nothing merged"
+    printf 'pr-merge: retargeted %s#%s to %s\n' "$REPO" "$child" "$BASEREF" >&2
+  done
 fi
 
 CMD=(gh pr merge "$PR" --repo "$REPO" "$METHOD")

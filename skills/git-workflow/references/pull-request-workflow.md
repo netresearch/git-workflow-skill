@@ -2975,9 +2975,13 @@ bottom-up — but two GitHub behaviours break the naive loop:
 
    Withholding the flag is not enough when the repository deletes head
    branches itself. With `delete_branch_on_merge: true` GitHub deletes the
-   merged branch whether or not `--delete-branch` was passed, and
-   `pr-merge.sh` does not read that setting. Read it before the first merge
-   of a stack:
+   merged branch whether or not `--delete-branch` was passed. `pr-merge.sh`
+   reads that setting when open pull requests are based on the head branch:
+   it refuses the merge (exit 2) and prints one `gh pr edit <n> --base <base>`
+   per child, or with `--retarget-stacked` retargets them to the merged pull
+   request's base, reads each base back, and then merges. A merge through a
+   merge queue is not covered by this check. For a merge by hand, read the
+   setting before the first merge of a stack:
 
    ```bash
    gh api "repos/OWNER/REPO" --jq .delete_branch_on_merge

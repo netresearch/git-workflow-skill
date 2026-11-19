@@ -14,6 +14,10 @@
 # case goes further than the flag: a query that fails after printing must not
 # have its partial output reported as the list of dependent pull requests.
 #
+# Cases 6 to 11 cover a repository with delete_branch_on_merge on, where
+# GitHub deletes the branch even without --delete-branch (#460): the merge is
+# refused with the retarget commands, or --retarget-stacked retargets first.
+#
 # Runs against a stubbed pr-status.sh and a stubbed `gh`, so it needs no
 # network and no repo.
 
@@ -46,7 +50,7 @@ cat <<'JSON'
 {
   "repo": "o/r", "number": 107, "queue_active": false,
   "merge_methods": ["merge"], "cross_repository": false,
-  "head": "feature/base-of-another",
+  "head": "feature/base-of-another", "base": "main",
   "headOid": "deadbeefcafe0000", "author": "a-maintainer",
   "author_is_bot": false, "self_review_on_head": true,
   "next": {"action": "merge", "why": "clean", "method": "--merge"}
@@ -56,7 +60,7 @@ STUB
     chmod +x "$STUB_DIR/pr-status.sh"
 }
 
-# gh stub. Args: <pr-list-stdout> <pr-list-exit> [stderr]
+# gh stub. Args: <pr-list-stdout> <pr-list-exit> [stderr] [delete_branch_on_merge] [its exit]
 # It records its own argv, so a query against the wrong branch or the wrong
 # repository is a test failure rather than an invisible regression.
 make_gh_stub() {
@@ -68,6 +72,18 @@ if [ "\$1" = "pr" ] && [ "\$2" = "list" ]; then
   printf '%s' '$1'
   printf '%s' '${3:-}' >&2
   exit $2
+fi
+if [ "\$1" = "api" ] && [ "\$2" = "repos/o/r" ]; then
+  printf '%s\n' '${4:-false}'
+  exit ${5:-0}
+fi
+if [ "\$1" = "api" ] && [ "\$2" = "graphql" ]; then
+  printf '%s' '{"data":{"repository":{"pullRequest":{"state":"MERGED","isInMergeQueue":false,"autoMergeRequest":null}}}}'
+  exit 0
+fi
+if [ "\$1" = "pr" ] && [ "\$2" = "view" ]; then
+  printf 'main\n'
+  exit 0
 fi
 exit 0
 STUB
@@ -129,6 +145,65 @@ out=$(run); err=$(cat "$STUB_DIR/err")
 says_not "keeps the branch"          "--delete-branch"                    "$out"
 says     "says it could not check"   "could not check for dependent"      "$err"
 says_not "invents no dependents"     "#901 #902"                          "$err"
+
+# The repository can delete the merged head branch itself. With
+# delete_branch_on_merge on, withholding --delete-branch keeps nothing, so a
+# merge with open children is refused until they are retargeted.
+echo "case 6: delete_branch_on_merge is on — refuse, name the retarget"
+make_status_stub
+make_gh_stub '#108 #109' 0 '' true
+out=$(run); rc=$?; err=$(cat "$STUB_DIR/err"); args=$(cat "$STUB_DIR/gh-args")
+says     "exits 2 (needs a human)"   "rc=2"                               "rc=$rc"
+says_not "does not merge"            "gh pr merge"                        "$out"
+says     "names the dependent PRs"   "#108 #109"                          "$err"
+says     "names the setting"         "delete_branch_on_merge"             "$err"
+says     "gives the retarget command" "gh pr edit 108 --repo o/r --base main" "$err"
+says     "for every child"           "gh pr edit 109 --repo o/r --base main" "$err"
+says     "names the flag"            "--retarget-stacked"                 "$err"
+says     "reads the setting"         "api repos/o/r"                      "$args"
+
+echo "case 7: delete_branch_on_merge is off — merge and keep the branch, as before"
+make_gh_stub '#108' 0 '' false
+out=$(run); rc=$?; err=$(cat "$STUB_DIR/err")
+says     "exits 0"                   "rc=0"                               "rc=$rc"
+says     "merges"                    "gh pr merge 107 --repo o/r --merge" "$out"
+says_not "keeps the branch"          "--delete-branch"                    "$out"
+
+echo "case 8: the setting cannot be read — no merge on a guess"
+make_gh_stub '#108' 0 '' '' 1
+out=$(run); rc=$?; err=$(cat "$STUB_DIR/err")
+says     "exits 2"                   "rc=2"                               "rc=$rc"
+says_not "does not merge"            "gh pr merge"                        "$out"
+says     "says what it could not read" "delete_branch_on_merge"           "$err"
+
+echo "case 9: dependents unknown and the setting is on — no merge"
+make_gh_stub '' 1 'gh: HTTP 403' true
+out=$(run); rc=$?; err=$(cat "$STUB_DIR/err")
+says     "exits 2"                   "rc=2"                               "rc=$rc"
+says_not "does not merge"            "gh pr merge"                        "$out"
+says     "relays why"                "HTTP 403"                           "$err"
+
+echo "case 10: --retarget-stacked --dry-run prints the retargets before the merge"
+make_gh_stub '#108 #109' 0 '' true
+out=$(PATH="$STUB_DIR:$PATH" "$SCRIPT" -R o/r 107 --retarget-stacked --dry-run 2>"$STUB_DIR/err"); rc=$?
+args=$(cat "$STUB_DIR/gh-args")
+says     "exits 0"                   "rc=0"                               "rc=$rc"
+says     "prints the retarget"       "gh pr edit 108 --repo o/r --base main" "$out"
+says     "prints the merge"          "gh pr merge 107 --repo o/r --merge" "$out"
+says_not "edits nothing in a dry run" "pr edit"                           "$args"
+
+echo "case 11: --retarget-stacked retargets each child, then merges"
+make_gh_stub '#108 #109' 0 '' true
+out=$(PATH="$STUB_DIR:$PATH" "$SCRIPT" -R o/r 107 --retarget-stacked 2>"$STUB_DIR/err"); rc=$?
+args=$(cat "$STUB_DIR/gh-args")
+says     "exits 0"                   "rc=0"                               "rc=$rc"
+says     "retargets #108"            "pr edit 108 --repo o/r --base main" "$args"
+says     "retargets #109"            "pr edit 109 --repo o/r --base main" "$args"
+says     "reads the base back"       "pr view 108"                        "$args"
+says     "merges after"              "pr merge 107 --repo o/r --merge"    "$args"
+first_edit=$(grep -n 'pr edit' <<<"$args" | head -n1 | cut -d: -f1)
+merge_line=$(grep -n 'pr merge' <<<"$args" | head -n1 | cut -d: -f1)
+says     "retargets before merging"  "yes"                                "$([ "${first_edit:-99}" -lt "${merge_line:-0}" ] && echo yes)"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
