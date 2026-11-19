@@ -103,6 +103,55 @@ check "staged conflict markers are denied" 1 "$(grep -ci 'deny' <<<"$out")"
 out=$(marker_gate "$repo" "git status")
 check "a non-commit command passes through" 0 "$(grep -ci 'deny' <<<"$out")"
 
+# A committed file that shows a conflict as a documentation example keeps
+# its markers; changing another line of it must still commit.
+repo="$WORK/cm-doc"
+mkdir -p "$repo"
+git -C "$repo" init -q -b main
+git -C "$repo" config user.name t; git -C "$repo" config user.email t@e.com
+printf 'intro\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n' > "$repo/guide.md"
+git -C "$repo" add guide.md
+git -C "$repo" commit -q -m "docs: seed example"
+printf 'intro, edited\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n' > "$repo/guide.md"
+git -C "$repo" add guide.md
+out=$(marker_gate "$repo" "git commit -m 'docs: edit intro'")
+check "markers already on HEAD are not denied" 0 "$(grep -ci 'deny' <<<"$out")"
+
+printf '>>>>>>> stray\n' >> "$repo/guide.md"
+git -C "$repo" add guide.md
+out=$(marker_gate "$repo" "git commit -m 'docs: add stray marker'")
+check "a marker added to a file with an example is denied" 1 "$(grep -ci 'deny' <<<"$out")"
+
+# A file whose committed content is not valid UTF-8 still gets its staged
+# markers counted; a decoding error must not end the gate without a verdict.
+repo="$WORK/cm-bin"
+mkdir -p "$repo"
+git -C "$repo" init -q -b main
+git -C "$repo" config user.name t; git -C "$repo" config user.email t@e.com
+printf '\377\n' > "$repo/data.txt"
+git -C "$repo" add data.txt
+git -C "$repo" commit -q -m "chore: seed binary"
+printf '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n' > "$repo/data.txt"
+git -C "$repo" add data.txt
+out=$(marker_gate "$repo" "git commit -m 'chore: markers over binary'")
+check "markers replacing non-UTF-8 content are denied" 1 "$(grep -ci 'deny' <<<"$out")"
+
+printf '\377\376 binary\n' > "$repo/data.txt"
+git -C "$repo" add data.txt
+out=$(marker_gate "$repo" "git commit -m 'chore: binary without markers'")
+check "non-UTF-8 content without markers passes without a traceback" 0 "$(grep -ci 'deny\|traceback' <<<"$out")"
+
+# A staged file with a non-ASCII name is checked too; git quotes such names
+# in --name-only output unless -z is used.
+repo="$WORK/cm-name"
+mkdir -p "$repo"
+git -C "$repo" init -q -b main
+git -C "$repo" config user.name t; git -C "$repo" config user.email t@e.com
+printf '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n' > "$repo/$(printf 'r\303\244tsel.md')"
+git -C "$repo" add -A
+out=$(marker_gate "$repo" "git commit -m 'docs: markers in a non-ASCII file name'")
+check "markers in a file with a non-ASCII name are denied" 1 "$(grep -ci 'deny' <<<"$out")"
+
 # Fails open outside a repository — a hook that hard-errors would block every
 # command in a non-repo directory.
 out=$(marker_gate "$WORK" "git commit -m x")

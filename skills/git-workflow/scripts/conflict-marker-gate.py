@@ -33,7 +33,7 @@ import sys
 
 # Real markers are at line start. `=======` alone is excluded on purpose: it is
 # a legitimate RST section underline and would fire on every docs commit.
-MARKER = re.compile(r"^(<<<<<<< |>>>>>>> )", re.MULTILINE)
+MARKER = re.compile(rb"^(<<<<<<< |>>>>>>> )", re.MULTILINE)
 
 GUIDANCE = (
     "Staged content still contains merge-conflict markers ({files}). "
@@ -66,32 +66,49 @@ def is_git_commit(command):
     return False
 
 
+def marker_count(revision_path):
+    """Conflict markers in a blob such as ':path' or 'HEAD:path'; 0 if it does not exist.
+
+    The blob is read as bytes: a file that is not valid UTF-8 must still be
+    counted instead of ending the gate with a decoding error.
+    """
+    blob = subprocess.run(
+        ["git", "show", revision_path],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    if blob.returncode != 0:
+        return 0
+    return len(MARKER.findall(blob.stdout))
+
+
 def staged_conflict_files():
-    """Names of staged files whose staged content carries conflict markers."""
+    """Names of staged files whose staged content adds conflict markers.
+
+    A file counts only when its staged content holds more markers than the
+    committed version: documentation that shows a conflict as an example
+    already carries markers on HEAD, and every later commit to it would be
+    denied otherwise.
+    """
     try:
+        # -z: NUL-separated raw names; without it git quotes non-ASCII names
+        # and `git show` cannot resolve the quoted form.
         names = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+            ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"],
             capture_output=True,
-            text=True,
             timeout=10,
             check=False,
         )
         if names.returncode != 0:
             return []
         hits = []
-        for name in names.stdout.split("\n"):
-            name = name.strip()
+        for name in names.stdout.split(b"\0"):
             if not name:
                 continue
-            blob = subprocess.run(
-                ["git", "show", f":{name}"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            if blob.returncode == 0 and MARKER.search(blob.stdout):
-                hits.append(name)
+            staged = marker_count(b":" + name)
+            if staged > marker_count(b"HEAD:" + name):
+                hits.append(name.decode("utf-8", "replace"))
             if len(hits) >= 5:
                 break
         return hits
