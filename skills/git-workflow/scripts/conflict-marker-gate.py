@@ -33,7 +33,7 @@ import sys
 
 # Real markers are at line start. `=======` alone is excluded on purpose: it is
 # a legitimate RST section underline and would fire on every docs commit.
-MARKER = re.compile(r"^(<<<<<<< |>>>>>>> )", re.MULTILINE)
+MARKER = re.compile(rb"^(<<<<<<< |>>>>>>> )", re.MULTILINE)
 
 GUIDANCE = (
     "Staged content still contains merge-conflict markers ({files}). "
@@ -67,11 +67,14 @@ def is_git_commit(command):
 
 
 def marker_count(revision_path):
-    """Conflict markers in a blob such as ':path' or 'HEAD:path'; 0 if it does not exist."""
+    """Conflict markers in a blob such as ':path' or 'HEAD:path'; 0 if it does not exist.
+
+    The blob is read as bytes: a file that is not valid UTF-8 must still be
+    counted instead of ending the gate with a decoding error.
+    """
     blob = subprocess.run(
         ["git", "show", revision_path],
         capture_output=True,
-        text=True,
         timeout=10,
         check=False,
     )

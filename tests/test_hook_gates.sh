@@ -122,6 +122,25 @@ git -C "$repo" add guide.md
 out=$(marker_gate "$repo" "git commit -m 'docs: add stray marker'")
 check "a marker added to a file with an example is denied" 1 "$(grep -ci 'deny' <<<"$out")"
 
+# A file whose committed content is not valid UTF-8 still gets its staged
+# markers counted; a decoding error must not end the gate without a verdict.
+repo="$WORK/cm-bin"
+mkdir -p "$repo"
+git -C "$repo" init -q -b main
+git -C "$repo" config user.name t; git -C "$repo" config user.email t@e.com
+printf '\377\n' > "$repo/data.txt"
+git -C "$repo" add data.txt
+git -C "$repo" commit -q -m "chore: seed binary"
+printf '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n' > "$repo/data.txt"
+git -C "$repo" add data.txt
+out=$(marker_gate "$repo" "git commit -m 'chore: markers over binary'")
+check "markers replacing non-UTF-8 content are denied" 1 "$(grep -ci 'deny' <<<"$out")"
+
+printf '\377\376 binary\n' > "$repo/data.txt"
+git -C "$repo" add data.txt
+out=$(marker_gate "$repo" "git commit -m 'chore: binary without markers'")
+check "non-UTF-8 content without markers passes without a traceback" 0 "$(grep -ci 'deny\|traceback' <<<"$out")"
+
 # Fails open outside a repository — a hook that hard-errors would block every
 # command in a non-repo directory.
 out=$(marker_gate "$WORK" "git commit -m x")
