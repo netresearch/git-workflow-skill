@@ -324,7 +324,11 @@ if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ] && [ -z "$STACKED" ] && [ -z
   CMD+=(--delete-branch)
 fi
 
-if [ -n "$STACKED" ]; then
+if [ "${#RETARGET_CMDS[@]}" -gt 0 ]; then
+  # The children were retargeted above, and the repository deletes the branch.
+  printf 'pr-merge: %s deletes %s on merge (delete_branch_on_merge); its dependent pull requests now target %s\n' \
+    "$REPO" "$HEADREF" "$BASEREF" >&2
+elif [ -n "$STACKED" ]; then
   printf 'pr-merge: keeping branch %s — open pull requests are based on it: %s. Retarget them, then delete it.\n' \
     "$HEADREF" "$STACKED" >&2
 elif [ -n "$STACKED_UNKNOWN" ]; then

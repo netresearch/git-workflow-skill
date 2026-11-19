@@ -215,6 +215,9 @@ says     "retargets #108"            "pr edit 108 --repo o/r --base main" "$args
 says     "retargets #109"            "pr edit 109 --repo o/r --base main" "$args"
 says     "reads the base back"       "pr view 108"                        "$args"
 says     "merges after"              "pr merge 107 --repo o/r --merge"    "$args"
+err=$(cat "$STUB_DIR/err")
+says_not "does not ask to retarget what it retargeted" "Retarget them" "$err"
+says     "says the repository deletes the branch" "deletes feature/base-of-another" "$err"
 first_edit=$(grep -n 'pr edit' <<<"$args" | head -n1 | cut -d: -f1)
 merge_line=$(grep -n 'pr merge' <<<"$args" | head -n1 | cut -d: -f1)
 says     "retargets before merging"  "yes"                                "$([ "${first_edit:-99}" -lt "${merge_line:-0}" ] && echo yes)"
