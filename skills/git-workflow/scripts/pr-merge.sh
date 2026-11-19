@@ -221,8 +221,8 @@ if [ -z "$METHOD" ]; then
   esac
 fi
 
-# A merge queue rejects --delete-branch outright, and deletes the branch itself
-# once the entry merges. On a pull request from a FORK the head branch is not
+# A merge queue rejects --delete-branch outright; whether the branch is deleted
+# after a queued merge depends on delete_branch_on_merge (read below).
 # ours to delete: `gh` happily deletes it when the token carries push rights
 # through maintainerCanModify, and the contributor loses the branch their work
 # is on — the one case where the flag destroys somebody else's state rather
