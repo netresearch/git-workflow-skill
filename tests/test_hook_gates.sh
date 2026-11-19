@@ -227,6 +227,29 @@ check "every call sets an empty GIT_ALLOW_PROTOCOL" "$calls" "$(grep -c 'allow=\
 check "every call sets GIT_NO_LAZY_FETCH" "$calls" "$(grep -c 'lazy=1' "$WORK/git-calls")"
 check "every call refuses transports and fsmonitor" "$calls" "$(grep -c 'core.fsmonitor=false -c protocol.allow=never' "$WORK/git-calls")"
 
+# diff.relative=true makes a diff run in a subdirectory list only the files
+# below it; a commit made with -C <subdir> still includes the rest.
+rel="$WORK/cm-rel"
+git init -q -b main "$rel"; mkdir -p "$rel/sub"
+git -C "$rel" config diff.relative true
+printf '<<<<<<< HEAD\nx\n>>>>>>> o\n' > "$rel/top.txt"; git -C "$rel" add top.txt
+out=$(marker_gate "$other" "git -C $rel/sub commit -m x")
+check "-C <subdir> with diff.relative still sees markers above it" 1 "$(grep -ci 'deny' <<<"$out")"
+
+# A committed example whose HEAD blob cannot be read (missing from a partial
+# clone) is unknown, not zero markers: an edit that keeps the example passes.
+miss="$WORK/cm-miss"
+git init -q -b main "$miss"
+git -C "$miss" config user.name t; git -C "$miss" config user.email t@e.com
+printf 'intro\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n' > "$miss/guide.md"
+git -C "$miss" add guide.md; git -C "$miss" commit -q -m "docs: seed example"
+oid=$(git -C "$miss" rev-parse HEAD:guide.md)
+rm -f "$miss/.git/objects/${oid:0:2}/${oid:2}"
+printf 'intro, edited\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n' > "$miss/guide.md"
+git -C "$miss" add guide.md
+out=$(marker_gate "$other" "git -C $miss commit -m 'docs: edit intro'")
+check "an unreadable HEAD blob is not counted as zero markers" 0 "$(grep -ci 'deny' <<<"$out")"
+
 # Fails open outside a repository — a hook that hard-errors would block every
 # command in a non-repo directory.
 out=$(marker_gate "$WORK" "git commit -m x")

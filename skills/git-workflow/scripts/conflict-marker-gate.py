@@ -109,11 +109,24 @@ def commit_locations(command):
 
 
 def marker_count(location, revision_path):
-    """Conflict markers in a blob such as ':path' or 'HEAD:path'; 0 if it does not exist.
+    """Conflict markers in a blob such as ':path' or 'HEAD:path'.
+
+    0 when the path does not exist there (a new file). None when the path
+    exists but its blob cannot be read, e.g. a partial clone that lacks it:
+    that is unknown, not zero markers, and fetching is refused on purpose.
 
     The blob is read as bytes: a file that is not valid UTF-8 must still be
     counted instead of ending the gate with a decoding error.
     """
+    exists = subprocess.run(
+        [*SAFE_GIT, *location, "rev-parse", "--verify", "--quiet", revision_path],
+        capture_output=True,
+        env=SAFE_ENV,
+        timeout=10,
+        check=False,
+    )
+    if exists.returncode != 0:
+        return 0
     blob = subprocess.run(
         [*SAFE_GIT, *location, "cat-file", "blob", revision_path],
         capture_output=True,
@@ -122,7 +135,7 @@ def marker_count(location, revision_path):
         check=False,
     )
     if blob.returncode != 0:
-        return 0
+        return None
     return len(MARKER.findall(blob.stdout))
 
 
@@ -145,6 +158,9 @@ def staged_conflict_files(location):
                 "--no-ext-diff",
                 "--no-textconv",
                 "--cached",
+                # --no-relative: diff.relative=true would list only the files
+                # below a -C subdirectory, while the commit includes them all.
+                "--no-relative",
                 "--name-only",
                 "-z",
                 "--diff-filter=ACMR",
@@ -161,7 +177,11 @@ def staged_conflict_files(location):
             if not name:
                 continue
             staged = marker_count(location, b":" + name)
-            if staged > marker_count(location, b"HEAD:" + name):
+            committed = marker_count(location, b"HEAD:" + name)
+            # An unreadable blob on either side: the gate cannot decide.
+            if staged is None or committed is None:
+                continue
+            if staged > committed:
                 hits.append(name.decode("utf-8", "replace"))
             if len(hits) >= 5:
                 break
