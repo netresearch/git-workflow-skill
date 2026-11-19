@@ -162,6 +162,13 @@ says     "for every child"           "gh pr edit 109 --repo o/r --base main" "$e
 says     "names the flag"            "--retarget-stacked"                 "$err"
 says     "reads the setting"         "api repos/o/r"                      "$args"
 
+echo "case 6b: a base branch name with shell syntax is printed quoted"
+sed -i 's/"base": "main"/"base": "rel;touch x"/' "$STUB_DIR/pr-status.sh"
+make_gh_stub '#108' 0 '' true
+out=$(run); err=$(cat "$STUB_DIR/err")
+says     "quotes the base"           'rel\;touch\ x'                      "$err"
+make_status_stub
+
 echo "case 7: delete_branch_on_merge is off — merge and keep the branch, as before"
 make_gh_stub '#108' 0 '' false
 out=$(run); rc=$?; err=$(cat "$STUB_DIR/err")

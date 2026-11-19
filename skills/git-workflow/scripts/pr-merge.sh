@@ -277,8 +277,10 @@ if [ -n "$STACKED" ] || [ -n "$STACKED_UNKNOWN" ]; then
         printf 'pr-merge: not merging %s#%s — %s deletes merged head branches (delete_branch_on_merge: true),\n' "$REPO" "$PR" "$REPO"
         printf '  which would close the open pull requests based on %s: %s.\n' "$HEADREF" "$STACKED"
         printf '  Retarget them first:\n'
+        # %q: the base branch name is remote data, and this line is meant to
+        # be pasted into a shell.
         for child in "${RETARGET_CMDS[@]}"; do
-          printf '    gh pr edit %s --repo %s --base %s\n' "$child" "$REPO" "$BASEREF"
+          printf '    '; printf '%q ' gh pr edit "$child" --repo "$REPO" --base "$BASEREF"; printf '\n'
         done
         printf '  or run this script again with --retarget-stacked, which does that before merging.\n'
       } >&2
