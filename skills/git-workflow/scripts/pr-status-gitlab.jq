@@ -31,7 +31,9 @@ def running:  . as $s | ["created","pending","running","waiting_for_resource","p
 | (.project_settings // {}) as $ps
 | ($ps.merge_method // "merge") as $method
 | ({"opened":"OPEN","merged":"MERGED","closed":"CLOSED","locked":"CLOSED"}[$mr.state] // ($mr.state | ascii_upcase)) as $state
-| ("glab api --hostname \(.host) -X PUT projects/\(.project | @uri)/merge_requests/\($mr.iid)/merge -f squash=false") as $merge_cmd
+| # sha pins the merge to the head this verdict was built on: GitLab refuses it
+# when a push moved the head after the read.
+("glab api --hostname \(.host) -X PUT projects/\(.project | @uri)/merge_requests/\($mr.iid)/merge -f squash=false -f sha=\($mr.sha)") as $merge_cmd
 | ($pl != null and (($pl.status // "") | terminal)) as $pl_done
 | {
     forge: "gitlab",

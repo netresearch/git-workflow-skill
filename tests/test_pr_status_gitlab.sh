@@ -31,6 +31,7 @@ says() { case "$3" in *"$2"*) echo "  ok   $1" ;; *) echo "  FAIL $1: output doe
 cat > "$STUB/glab" <<STUBEOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$WORK/glab.log"
+printf 'token=%s\n' "\${GITLAB_TOKEN:-}" >> "$WORK/glab.env"
 paginate=0; path=""
 for a in "\$@"; do
   case "\$a" in
@@ -85,7 +86,7 @@ echo "case 1: everything clear — merge, with a non-squashing merge command"
 fixture mergeable success
 out=$(run --json)
 check "action"          "merge"  "$(jq -r .next.action <<<"$out")"
-says  "merge command"   "-X PUT projects/group%2Fsub%2Fproject/merge_requests/7/merge -f squash=false" "$(jq -r .next.cmd <<<"$out")"
+says  "merge command"   "-X PUT projects/group%2Fsub%2Fproject/merge_requests/7/merge -f squash=false -f sha=$HEAD" "$(jq -r .next.cmd <<<"$out")"
 check "state mapped"    "OPEN"   "$(jq -r .state <<<"$out")"
 check "repo kept whole" "gitlab.example.com/group/sub/project" "$(jq -r .repo <<<"$out")"
 check "gh never called" "0"      "$(wc -l < "$WORK/gh.log")"
@@ -168,6 +169,14 @@ check "exit 2" "2" "$rc"
 says  "says why" "GitHub pull requests only" "$out"
 check "no glab call" "0" "$(wc -l < "$WORK/glab.log")"
 check "no gh call"   "0" "$(wc -l < "$WORK/gh.log")"
+
+echo "case 14b: an environment token reaches only the GITLAB_HOST host"
+fixture mergeable success; : > "$WORK/glab.env"
+GITLAB_TOKEN=secret GITLAB_HOST=other.example.com run --json >/dev/null
+check "not sent to another host" "0" "$(grep -c 'token=secret' "$WORK/glab.env")"
+: > "$WORK/glab.env"
+GITLAB_TOKEN=secret GITLAB_HOST=gitlab.example.com run --json >/dev/null
+check "sent to the GITLAB_HOST host" "1" "$([ "$(grep -c 'token=secret' "$WORK/glab.env")" -gt 0 ] && echo 1 || echo 0)"
 
 echo "case 15: a GitHub owner/repo is still GitHub"
 : > "$WORK/gh.log"; : > "$WORK/glab.log"

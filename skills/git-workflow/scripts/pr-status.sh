@@ -818,7 +818,18 @@ local_head_sync() {
 # approvals, its discussions (paginated), the project's merge settings, and the
 # jobs of the head pipeline. pr-status-gitlab.jq turns them into the same
 # --json contract and NEXT vocabulary the GitHub path emits (#331).
-gl() { glab api --hostname "$GL_HOST" "$@"; }
+# A token in the environment (GITLAB_TOKEN and its aliases) is not bound to a
+# host, so a mistyped -R would hand it to that host. It is passed on only for
+# the host GITLAB_HOST names; any other host gets the token glab stored for
+# that host, or none.
+gl() {
+  if [ "$GL_HOST" = "${GITLAB_HOST:-}" ]; then
+    glab api --hostname "$GL_HOST" "$@"
+  else
+    env -u GITLAB_TOKEN -u GITLAB_ACCESS_TOKEN -u OAUTH_TOKEN \
+      glab api --hostname "$GL_HOST" "$@"
+  fi
+}
 
 # A paginated list: glab --paginate prints one JSON array per page, so the
 # pages are merged; a failed read is a failure, never an empty list.
