@@ -294,6 +294,8 @@ def partial_clone_fetch_case() -> bool:
             "-C", repo, "config", "remote.origin.url", "ssh://git@example.invalid/x.git"
         )
         _git("-C", repo, "config", "core.sshCommand", script)
+        # A per-protocol allow outranks the command line's protocol.allow.
+        _git("-C", repo, "config", "protocol.ssh.allow", "always")
         with open(os.path.join(repo, "stray.txt"), "w") as fh:
             fh.write("junk\n")
         got = run(f"git -C {repo} add -A")
