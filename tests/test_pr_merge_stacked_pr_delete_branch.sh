@@ -275,6 +275,9 @@ says     "exits 0"                   "rc=0"                               "rc=$r
 says     "merges"                    "gh pr merge 107 --repo o/r --merge" "$out"
 says_not "retargets nothing"         "gh pr edit"                         "$out"
 says     "reads the rules"           "rules/branches/feature%2Fbase-of-another" "$(cat "$STUB_DIR/gh-args")"
+err=$(cat "$STUB_DIR/err")
+says     "says the children need nothing" "need nothing"                  "$err"
+says_not "does not ask to retarget"  "Retarget them"                      "$err"
 
 echo "case 13b: classic protection with allow_deletions off keeps the head"
 make_gh_stub '#108' 0 '' true
@@ -295,6 +298,13 @@ says     "exits 2"                   "rc=2"                               "rc=$r
 says_not "does not merge"            "gh pr merge"                        "$out"
 says_not "does not retarget"         "gh pr edit"                         "$out"
 says     "says why"                  "could not be read"                  "$err"
+
+echo "case 13f: protected, unreadable, and the dependent list failed — say so"
+make_gh_stub '' 1 'gh: HTTP 502' true
+out=$(STUB_PROTECTED=true run_flag); rc=$?; err=$(cat "$STUB_DIR/err")
+says     "exits 2"                   "rc=2"                               "rc=$rc"
+says     "relays the list failure"   "HTTP 502"                           "$err"
+says_not "names no empty retarget"   "retarget  to"                       "$err"
 
 echo "case 13e: protected by a ruleset without a deletion rule (no classic protection) — retarget"
 make_gh_stub '#108' 0 '' true

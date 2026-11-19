@@ -312,6 +312,9 @@ if [ -n "$STACKED" ] || [ -n "$STACKED_UNKNOWN" ]; then
           # nothing keeps the branch.
           :
         else
+          if [ -n "$STACKED_UNKNOWN" ]; then
+            die "not merging: $HEADREF is protected, whether its protection forbids deletion could not be read (classic protection needs admin rights), and the pull requests based on it could not be listed: $STACKED_UNKNOWN"
+          fi
           die "not merging: $HEADREF is protected, and whether its protection forbids deletion could not be read (classic protection needs admin rights). If it does, merge by hand; if not, retarget $STACKED to $BASEREF first."
         fi
       elif [ "$HEADPROT" != "false" ]; then
@@ -378,6 +381,9 @@ if [ "${#RETARGET_CMDS[@]}" -gt 0 ]; then
     printf 'pr-merge: %s deletes %s on merge (delete_branch_on_merge); its dependent pull requests now target %s\n' \
       "$REPO" "$HEADREF" "$BASEREF" >&2
   fi
+elif [ -n "$STACKED" ] && [ "$AUTODEL" = "kept" ]; then
+  printf 'pr-merge: keeping branch %s — %s keeps it from being deleted, so the pull requests based on it (%s) need nothing\n' \
+    "$HEADREF" "$HEADKEPT" "$STACKED" >&2
 elif [ -n "$STACKED" ]; then
   printf 'pr-merge: keeping branch %s — open pull requests are based on it: %s. Retarget them, then delete it.\n' \
     "$HEADREF" "$STACKED" >&2
