@@ -133,6 +133,7 @@ check "action" "resolve-conflicts" "$(next)"
 echo "case 6: draft — ready"
 fixture draft_status none; mr_set '.draft = true'
 check "action" "ready" "$(next)"
+check "cmd names the host as a URL" "glab mr update 7 --ready --repo https://gitlab.example.com/group/sub/project" "$(run --json | jq -r .next.cmd)"
 
 echo "case 7: an unmapped status is actionable and names itself"
 fixture jira_association_missing success

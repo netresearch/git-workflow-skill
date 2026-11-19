@@ -95,15 +95,17 @@ def running:  . as $s | ["created","pending","running","waiting_for_resource","p
     remove_source_branch: ($mr.force_remove_source_branch // $ps.remove_source_branch_after_merge // false)
   }
 | . as $s
+# glab reads the host from --repo only in URL form; host/group/project would be
+# sent to its default host as one project path.
 | .next =
   ( if $s.state != "OPEN" then {action:"none", why:"merge request is \($mr.state)"}
     elif $s.draft then {action:"ready", why:"merge request is a draft",
-         cmd:"glab mr update \($mr.iid) --ready --repo \($s.repo)"}
+         cmd:"glab mr update \($mr.iid) --ready --repo https://\($s.repo)"}
     elif $s.has_conflicts or $dms == "conflict" then
          {action:"resolve-conflicts", why:"merge conflict with \($s.base)"}
     elif $dms == "need_rebase" then
          {action:"rebase", why:"the project merges with \($method) and the branch is behind \($s.base)",
-          cmd:"glab mr rebase \($mr.iid) --repo \($s.repo)"}
+          cmd:"glab mr rebase \($mr.iid) --repo https://\($s.repo)"}
     elif $pl != null and ($pl_on_head | not) then
          {action:"wait", why:"the head pipeline \($pl.id) is for \(($pl.sha // "")[0:8]), not the head \($mr.sha[0:8]); a pipeline for the new head has not been reported yet"}
     elif ($failing | length) > 0 then
@@ -134,7 +136,7 @@ def running:  . as $s | ["created","pending","running","waiting_for_resource","p
          {action:"resolve-threads", why:"detailed_merge_status: discussions_not_resolved"}
     elif $dms == "draft_status" then
          {action:"ready", why:"detailed_merge_status: draft_status",
-          cmd:"glab mr update \($mr.iid) --ready --repo \($s.repo)"}
+          cmd:"glab mr update \($mr.iid) --ready --repo https://\($s.repo)"}
     elif $dms == "mergeable" then
       if ($ps.squash_option // "") == "always" then
          {action:"blocked", why:"the project squashes every merge (squash_option: always), and squash is not used"}
