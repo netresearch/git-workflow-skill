@@ -252,7 +252,9 @@ if [ "$CROSS" != "true" ]; then
     # branch leaves the same doubt a failed query does, and is answered the
     # same way.
     STACKED_UNKNOWN="pr-status.sh reported no head branch"
-  elif ! STACKED=$(gh pr list --repo "$REPO" --base "$HEADREF" --state open \
+  # --limit: gh pr list stops at 30 by default, and a child past the limit
+  # would be neither retargeted nor named.
+  elif ! STACKED=$(gh pr list --repo "$REPO" --base "$HEADREF" --state open --limit 1000 \
       --json number --jq '[.[].number | "#" + tostring] | join(" ")' 2>"$TMPERR"); then
     STACKED=""
     STACKED_UNKNOWN=$(tr '\n' ' ' < "$TMPERR")
@@ -280,6 +282,19 @@ if [ -n "$STACKED" ] || [ -n "$STACKED_UNKNOWN" ]; then
     true|false) ;;
     *) die "delete_branch_on_merge of $REPO read as '${AUTODEL}', neither true nor false, so whether merging deletes $HEADREF is unknown" ;;
   esac
+  # Branch protection and rules can keep a branch from being deleted
+  # automatically: a protected head (develop -> main in git-flow) stays, so its
+  # children need nothing. Read whether the head is protected; a failed read is
+  # not "unprotected".
+  if [ "$AUTODEL" = "true" ] && [ -n "$HEADREF" ]; then
+    HEADPROT=$(gh api "repos/$REPO/branches/$(printf '%s' "$HEADREF" | jq -sRr @uri)" --jq .protected 2>"$TMPERR") \
+      || die "could not read whether $HEADREF is protected, so whether merging deletes it is unknown: $(tr '\n' ' ' < "$TMPERR")"
+    case "$HEADPROT" in
+      true) AUTODEL=protected ;;
+      false) ;;
+      *) die "the protection of $HEADREF read as '${HEADPROT}', neither true nor false" ;;
+    esac
+  fi
   if [ "$AUTODEL" = "true" ]; then
     if [ -n "$STACKED_UNKNOWN" ]; then
       die "not merging: $REPO deletes merged head branches (delete_branch_on_merge: true), and whether open pull requests are based on ${HEADREF:-(unknown)} could not be checked: $STACKED_UNKNOWN"

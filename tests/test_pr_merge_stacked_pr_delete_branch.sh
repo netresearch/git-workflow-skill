@@ -81,6 +81,10 @@ if [ "\$1" = "api" ] && [ "\$2" = "graphql" ]; then
   printf '%s' '{"data":{"repository":{"pullRequest":{"state":"MERGED","isInMergeQueue":false,"autoMergeRequest":null}}}}'
   exit 0
 fi
+if [ "\$1" = "api" ] && [ "\$2" = "repos/o/r/branches/feature%2Fbase-of-another" ]; then
+  printf '%s\n' "\${STUB_PROTECTED:-false}"
+  exit 0
+fi
 if [ "\$1" = "pr" ] && [ "\$2" = "view" ]; then
   printf 'main\n'
   exit 0
@@ -104,6 +108,7 @@ says     "names the branch"          "feature/base-of-another"            "$err"
 says     "asks about the HEAD branch" "--base feature/base-of-another"    "$args"
 says     "asks the right repository" "--repo o/r"                         "$args"
 says     "asks for open PRs only"    "--state open"                       "$args"
+says     "asks past gh's default of 30" "--limit 1000"                    "$args"
 
 echo "case 2: nothing is based on it — the flag is still passed"
 make_gh_stub '' 0
@@ -249,6 +254,17 @@ make_gh_stub '' 0 '' true
 out=$(run); rc=$?
 says     "an unstacked queued merge goes ahead" "gh pr merge 107 --repo o/r --merge" "$out"
 says_not "and never passes --delete-branch to the queue" "--delete-branch" "$out"
+
+echo "case 13: a protected head branch is not deleted — merge as before, retarget nothing"
+make_status_stub
+make_gh_stub '#108' 0 '' true
+out=$(STUB_PROTECTED=true PATH="$STUB_DIR:$PATH" "$SCRIPT" -R o/r 107 --retarget-stacked --dry-run 2>"$STUB_DIR/err"); rc=$?
+err=$(cat "$STUB_DIR/err"); args=$(cat "$STUB_DIR/gh-args")
+says     "exits 0"                   "rc=0"                               "rc=$rc"
+says     "merges"                    "gh pr merge 107 --repo o/r --merge" "$out"
+says_not "keeps the branch"          "--delete-branch"                    "$out"
+says_not "retargets nothing"         "gh pr edit"                         "$out"
+says     "reads the protection"      "branches/feature%2Fbase-of-another" "$args"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
