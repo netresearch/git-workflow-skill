@@ -114,6 +114,15 @@
 #   classic_protection last_push_rulesets awaiting_approval
 #   next
 #
+# A GitLab merge request emits a subset, plus forge: "gitlab": state mergeable
+# mergeState draft number title repo url author author_is_bot viewer
+# viewer_is_author base head headOid cross_repository pipeline checks
+# checks_settled threads unresolved_threads blocking_discussions_resolved
+# has_conflicts approved_by approvals_required reviewDecision
+# has_review_on_head coderabbit_on_head copilot_quota_exhausted
+# copilot_error_count self_review_on_head merge_methods squash_option
+# queue_active queue_entry remove_source_branch next. Any other key is absent.
+#
 # `checks` is {total,pass,fail,pending,skip,...} and `next` is
 # {action,why,cmd} — the same two things the prose rendering leads with.
 # On `investigate` only, `next.evidence` carries what the extra reads found
@@ -863,8 +872,13 @@ snapshot_gitlab() {
   ps=$(gl "projects/$enc") || die "could not read the project settings of $GL_PROJECT"
   jobs='[]'
   pid=$(jq -r '.head_pipeline.id // empty' <<<"$mr")
+  # The pipeline of a merge request from a fork usually runs in the fork, and
+  # the target project answers 404 for it: read it in its own project.
+  local plproj
+  plproj=$(jq -r '.head_pipeline.project_id // empty' <<<"$mr")
+  [ -n "$plproj" ] || plproj="$enc"
   if [ -n "$pid" ]; then
-    jobs=$(gl_list "projects/$enc/pipelines/$pid/jobs?per_page=100") \
+    jobs=$(gl_list "projects/$plproj/pipelines/$pid/jobs?per_page=100") \
       || die "could not read the jobs of pipeline $pid"
   fi
   # A merged results pipeline (ref .../merge) and a merge train pipeline (ref
@@ -875,7 +889,7 @@ snapshot_gitlab() {
   plref=$(jq -r '.head_pipeline.ref // ""' <<<"$mr")
   if [ -n "$plsha" ] && [ "$plsha" != "$(jq -r '.sha' <<<"$mr")" ] \
      && { [ "$plref" = "refs/merge-requests/$PR/merge" ] || [ "$plref" = "refs/merge-requests/$PR/train" ]; }; then
-    parents=$(gl "projects/$enc/repository/commits/$plsha" | jq -c '.parent_ids // []') \
+    parents=$(gl "projects/$plproj/repository/commits/$plsha" | jq -c '.parent_ids // []') \
       || die "could not read the merge commit $plsha of pipeline $pid"
   fi
   viewer=$(gl user 2>/dev/null | jq -r '.username // ""' 2>/dev/null) || viewer=""

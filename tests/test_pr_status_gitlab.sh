@@ -47,6 +47,7 @@ case "\$path" in
   projects/group%2Fsub%2Fproject/merge_requests/7/discussions) cat "$FX"/discussions.*.json ;;
   projects/group%2Fsub%2Fproject) cat "$FX/project.json" ;;
   projects/group%2Fsub%2Fproject/pipelines/*/jobs) cat "$FX/jobs.json" ;;
+  projects/42/pipelines/*/jobs) cat "$FX/jobs.json" ;;
   projects/group%2Fsub%2Fproject/repository/commits/*) cat "$FX/commit.json" ;;
   user) echo '{"username":"viewer"}' ;;
   *) echo "glab stub: unknown path \$path" >&2; exit 1 ;;
@@ -125,6 +126,13 @@ echo "{\"parent_ids\": [\"3333333333333333333333333333333333333333\", \"$HEAD\"]
 mr_set '.head_pipeline.ref = "refs/merge-requests/7/train" | .head_pipeline.status = "failed"'
 echo '[{"name": "lint", "status": "failed", "allow_failure": false}]' > "$FX/jobs.json"
 check "a red merge train pipeline of the head answers fix-ci" "fix-ci" "$(next)"
+
+echo "case 4c: a fork's pipeline is read in the fork's project"
+fixture mergeable failed
+mr_set '.source_project_id = 42 | .head_pipeline.project_id = 42'
+echo '[{"name": "lint", "status": "failed", "allow_failure": false}]' > "$FX/jobs.json"
+check "action" "fix-ci" "$(next)"
+says  "jobs read in the fork" "projects/42/pipelines/900/jobs" "$(cat "$WORK/glab.log")"
 
 echo "case 5: conflicts reported while the status still says mergeable"
 fixture mergeable success; mr_set '.has_conflicts = true'

@@ -4,10 +4,10 @@
 # pr-status-gitlab.jq — the GitLab merge-request half of pr-status.sh.
 #
 # Input: one object {host, project, mr, approvals, discussions, project_settings,
-# jobs, viewer, merge_parents} assembled from the REST API. Output: the same --json contract
-# the GitHub path emits, with the fields GitLab has no counterpart for set to
-# neutral values, and the same NEXT vocabulary, so pr-status.sh --watch and its
-# callers need no second ladder (#331).
+# jobs, viewer, merge_parents} assembled from the REST API. Output: a subset of
+# the --json contract the GitHub path emits (pr-status.sh lists its keys), and
+# the same NEXT vocabulary, so pr-status.sh --watch and its callers need no
+# second ladder (#331).
 #
 # detailed_merge_status names only the gates the project enforces. The
 # pipeline, the threads and the conflict flag are read on their own, so a
