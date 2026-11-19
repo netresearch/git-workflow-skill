@@ -188,6 +188,20 @@ out=$(marker_gate "$other" "git -C $evil commit -m x")
 check "the -C repository's core.fsmonitor does not run" 0 "$([ -e "$WORK/fsmonitor-ran" ] && echo 1 || echo 0)"
 check "its staged markers are still denied" 1 "$(grep -ci 'deny' <<<"$out")"
 
+# A partial clone fetches a missing blob from its promisor remote when it is
+# read, and the remote's uploadpack setting names the program that runs.
+lazy="$WORK/cm-lazy"
+git init -q -b main "$lazy"
+git -C "$lazy" config core.repositoryformatversion 1
+git -C "$lazy" config extensions.partialClone origin
+git -C "$lazy" config remote.origin.url "file://$WORK/nowhere"
+git -C "$lazy" config remote.origin.promisor true
+printf '#!/bin/sh\ntouch "%s/uploadpack-ran"\nexit 1\n' "$WORK" > "$WORK/up.sh"; chmod +x "$WORK/up.sh"
+git -C "$lazy" config remote.origin.uploadpack "$WORK/up.sh"
+git -C "$lazy" update-index --add --cacheinfo 100644,1111111111111111111111111111111111111111,f.txt
+marker_gate "$other" "git -C $lazy commit -m x" >/dev/null
+check "a partial clone's missing blob does not start a fetch" 0 "$([ -e "$WORK/uploadpack-ran" ] && echo 1 || echo 0)"
+
 # Fails open outside a repository — a hook that hard-errors would block every
 # command in a non-repo directory.
 out=$(marker_gate "$WORK" "git commit -m x")

@@ -23,7 +23,9 @@ Wire it as a PreToolUse hook with matcher "Bash" — see
 references/claude-code-hooks.md, Recipe 6.
 
 The check runs in the repository the commit names with `-C`, `--git-dir` or
-`--work-tree`; without them, in the current directory.
+`--work-tree`; without them, in the current directory. A location written as
+a shell variable or command substitution (`-C "$DIR"`) reaches the gate
+unexpanded; git cannot find that directory and the gate allows the command.
 
 Fails open: any error, non-repo cwd, or unreadable diff allows the command.
 """
@@ -54,10 +56,16 @@ LOCATION_OPTIONS = ("-C", "--git-dir", "--work-tree")
 
 # The location comes from a command the user has not approved yet, so the
 # repository it names is untrusted: its config must not run a program while the
-# gate reads it. core.fsmonitor runs on every index read; command-line -c
-# outranks the repository's config. Blobs are read with cat-file, which applies
-# no textconv, and the diff runs without external diff drivers.
-SAFE_GIT = ("git", "-c", "core.fsmonitor=false")
+# gate reads it. Command-line -c outranks the repository's config.
+# - core.fsmonitor runs a program on every index read.
+# - A partial clone fetches a missing blob when it is read, through a transport
+#   the repository configures (remote.<name>.uploadpack names a program).
+#   protocol.allow=never refuses every transport, and GIT_NO_LAZY_FETCH (git
+#   2.45+) stops the fetch before a transport is chosen.
+# Blobs are read with cat-file, which applies no textconv, and the diff runs
+# without external diff drivers.
+SAFE_GIT = ("git", "-c", "core.fsmonitor=false", "-c", "protocol.allow=never")
+SAFE_ENV = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
 
 
 def commit_locations(command):
@@ -104,6 +112,7 @@ def marker_count(location, revision_path):
     blob = subprocess.run(
         [*SAFE_GIT, *location, "cat-file", "blob", revision_path],
         capture_output=True,
+        env=SAFE_ENV,
         timeout=10,
         check=False,
     )
@@ -136,6 +145,7 @@ def staged_conflict_files(location):
                 "--diff-filter=ACMR",
             ],
             capture_output=True,
+            env=SAFE_ENV,
             timeout=10,
             check=False,
         )
