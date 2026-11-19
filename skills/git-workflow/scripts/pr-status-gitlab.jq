@@ -23,7 +23,7 @@ def running:  . as $s | ["created","pending","running","waiting_for_resource","p
 # A merged results pipeline runs on a merge commit, so its sha is not the
 # head; it belongs to the head when that merge commit has the head as a parent
 # (merge_parents, read by pr-status.sh for a refs/merge-requests/<iid>/merge
-# pipeline only).
+# or /train pipeline only).
 | ($pl != null and (($pl.sha // "") == $mr.sha
      or ((.merge_parents // []) | index($mr.sha) != null))) as $pl_on_head
 | (if $pl_on_head then $jobs else [] end) as $hj

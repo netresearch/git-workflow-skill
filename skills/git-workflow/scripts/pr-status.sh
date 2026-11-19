@@ -867,13 +867,14 @@ snapshot_gitlab() {
     jobs=$(gl_list "projects/$enc/pipelines/$pid/jobs?per_page=100") \
       || die "could not read the jobs of pipeline $pid"
   fi
-  # A merged results pipeline (merge trains need them) runs on a merge commit:
+  # A merged results pipeline (ref .../merge) and a merge train pipeline (ref
+  # .../train) run on a merge commit:
   # read that commit's parents, so the evaluator can tell it belongs to the head.
   local parents='[]' plsha plref
   plsha=$(jq -r '.head_pipeline.sha // ""' <<<"$mr")
   plref=$(jq -r '.head_pipeline.ref // ""' <<<"$mr")
   if [ -n "$plsha" ] && [ "$plsha" != "$(jq -r '.sha' <<<"$mr")" ] \
-     && [ "$plref" = "refs/merge-requests/$PR/merge" ]; then
+     && { [ "$plref" = "refs/merge-requests/$PR/merge" ] || [ "$plref" = "refs/merge-requests/$PR/train" ]; }; then
     parents=$(gl "projects/$enc/repository/commits/$plsha" | jq -c '.parent_ids // []') \
       || die "could not read the merge commit $plsha of pipeline $pid"
   fi

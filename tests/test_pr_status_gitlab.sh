@@ -121,6 +121,10 @@ echo "{\"parent_ids\": [\"3333333333333333333333333333333333333333\", \"$HEAD\"]
 check "action" "merge" "$(next)"
 echo '{"parent_ids": ["3333333333333333333333333333333333333333", "4444444444444444444444444444444444444444"]}' > "$FX/commit.json"
 check "a merge commit of another head still waits" "wait" "$(next)"
+echo "{\"parent_ids\": [\"3333333333333333333333333333333333333333\", \"$HEAD\"]}" > "$FX/commit.json"
+mr_set '.head_pipeline.ref = "refs/merge-requests/7/train" | .head_pipeline.status = "failed"'
+echo '[{"name": "lint", "status": "failed", "allow_failure": false}]' > "$FX/jobs.json"
+check "a red merge train pipeline of the head answers fix-ci" "fix-ci" "$(next)"
 
 echo "case 5: conflicts reported while the status still says mergeable"
 fixture mergeable success; mr_set '.has_conflicts = true'

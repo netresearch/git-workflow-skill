@@ -87,8 +87,8 @@ head pipeline. NEXT uses the same actions as on GitHub, so `--watch` and
 pipeline, the unresolved threads and `has_conflicts` are read on their own: a
 red pipeline answers `fix-ci` even where the project does not require a green
 one. A pipeline whose `sha` is not the merge request's head answers `wait`,
-except a merged results pipeline (`refs/merge-requests/<iid>/merge`) whose merge
-commit has the head as a parent.
+except a merged results or merge train pipeline (`refs/merge-requests/<iid>/merge`
+or `/train`) whose merge commit has the head as a parent.
 A value the ladder does not map, such as the Jira-association or title-regex
 check, answers `blocked` with the raw value in the reason.
 
