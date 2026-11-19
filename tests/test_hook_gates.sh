@@ -175,6 +175,19 @@ check "--git-dir <repo>/.git as a separate argument is checked there" 1 "$(grep 
 out=$(marker_gate "$other" "git status && git -C $repo commit -m 'docs: second segment'")
 check "a commit in a later segment of the line is checked in its own -C" 1 "$(grep -ci 'deny' <<<"$out")"
 
+# The -C directory comes from a command the user has not approved yet. Its
+# repository config must not run code while the gate reads the index: a
+# core.fsmonitor command would otherwise execute before the approval prompt.
+evil="$WORK/cm-evil"
+mkdir -p "$evil"
+git -C "$evil" init -q -b main
+printf '<<<<<<< HEAD\nx\n>>>>>>> o\n' > "$evil/f.txt"; git -C "$evil" add f.txt
+printf '#!/bin/sh\ntouch "%s/fsmonitor-ran"\n' "$WORK" > "$WORK/fsmon.sh"; chmod +x "$WORK/fsmon.sh"
+git -C "$evil" config core.fsmonitor "$WORK/fsmon.sh"
+out=$(marker_gate "$other" "git -C $evil commit -m x")
+check "the -C repository's core.fsmonitor does not run" 0 "$([ -e "$WORK/fsmonitor-ran" ] && echo 1 || echo 0)"
+check "its staged markers are still denied" 1 "$(grep -ci 'deny' <<<"$out")"
+
 # Fails open outside a repository — a hook that hard-errors would block every
 # command in a non-repo directory.
 out=$(marker_gate "$WORK" "git commit -m x")

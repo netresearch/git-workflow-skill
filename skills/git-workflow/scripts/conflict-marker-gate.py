@@ -52,6 +52,13 @@ GUIDANCE = (
 # commit writes to instead of the hook's current directory.
 LOCATION_OPTIONS = ("-C", "--git-dir", "--work-tree")
 
+# The location comes from a command the user has not approved yet, so the
+# repository it names is untrusted: its config must not run a program while the
+# gate reads it. core.fsmonitor runs on every index read; command-line -c
+# outranks the repository's config. Blobs are read with cat-file, which applies
+# no textconv, and the diff runs without external diff drivers.
+SAFE_GIT = ("git", "-c", "core.fsmonitor=false")
+
 
 def commit_locations(command):
     """Location options of each `git commit` in the shell line, one list per commit.
@@ -95,7 +102,7 @@ def marker_count(location, revision_path):
     counted instead of ending the gate with a decoding error.
     """
     blob = subprocess.run(
-        ["git", *location, "show", revision_path],
+        [*SAFE_GIT, *location, "cat-file", "blob", revision_path],
         capture_output=True,
         timeout=10,
         check=False,
@@ -118,9 +125,11 @@ def staged_conflict_files(location):
         # and `git show` cannot resolve the quoted form.
         names = subprocess.run(
             [
-                "git",
+                *SAFE_GIT,
                 *location,
                 "diff",
+                "--no-ext-diff",
+                "--no-textconv",
                 "--cached",
                 "--name-only",
                 "-z",
