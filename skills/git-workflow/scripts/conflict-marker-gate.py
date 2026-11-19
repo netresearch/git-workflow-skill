@@ -92,23 +92,23 @@ def staged_conflict_files():
     denied otherwise.
     """
     try:
+        # -z: NUL-separated raw names; without it git quotes non-ASCII names
+        # and `git show` cannot resolve the quoted form.
         names = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+            ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"],
             capture_output=True,
-            text=True,
             timeout=10,
             check=False,
         )
         if names.returncode != 0:
             return []
         hits = []
-        for name in names.stdout.split("\n"):
-            name = name.strip()
+        for name in names.stdout.split(b"\0"):
             if not name:
                 continue
-            staged = marker_count(f":{name}")
-            if staged > marker_count(f"HEAD:{name}"):
-                hits.append(name)
+            staged = marker_count(b":" + name)
+            if staged > marker_count(b"HEAD:" + name):
+                hits.append(name.decode("utf-8", "replace"))
             if len(hits) >= 5:
                 break
         return hits

@@ -141,6 +141,17 @@ git -C "$repo" add data.txt
 out=$(marker_gate "$repo" "git commit -m 'chore: binary without markers'")
 check "non-UTF-8 content without markers passes without a traceback" 0 "$(grep -ci 'deny\|traceback' <<<"$out")"
 
+# A staged file with a non-ASCII name is checked too; git quotes such names
+# in --name-only output unless -z is used.
+repo="$WORK/cm-name"
+mkdir -p "$repo"
+git -C "$repo" init -q -b main
+git -C "$repo" config user.name t; git -C "$repo" config user.email t@e.com
+printf '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n' > "$repo/$(printf 'r\303\244tsel.md')"
+git -C "$repo" add -A
+out=$(marker_gate "$repo" "git commit -m 'docs: markers in a non-ASCII file name'")
+check "markers in a file with a non-ASCII name are denied" 1 "$(grep -ci 'deny' <<<"$out")"
+
 # Fails open outside a repository — a hook that hard-errors would block every
 # command in a non-repo directory.
 out=$(marker_gate "$WORK" "git commit -m x")
