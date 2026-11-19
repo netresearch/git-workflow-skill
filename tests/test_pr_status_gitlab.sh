@@ -204,6 +204,10 @@ check "sent to the GITLAB_HOST host" "1" "$([ "$(grep -c 'token=secret' "$WORK/g
 GITLAB_TOKEN=secret GITLAB_HOST='' GITLAB_URL=https://gitlab.example.com/ run --json >/dev/null
 check "GITLAB_URL in URL form names the same host" "1" "$([ "$(grep -c 'token=secret' "$WORK/glab.env")" -gt 0 ] && echo 1 || echo 0)"
 
+: > "$WORK/glab.env"
+GITLAB_TOKEN=secret GITLAB_HOST='' GL_HOST=gitlab.example.com run --json >/dev/null
+check "GL_HOST names the same host" "1" "$([ "$(grep -c 'token=secret' "$WORK/glab.env")" -gt 0 ] && echo 1 || echo 0)"
+
 echo "case 15: a GitHub owner/repo is still GitHub"
 : > "$WORK/gh.log"; : > "$WORK/glab.log"
 PATH="$STUB:$PATH" "$SCRIPTS/pr-status.sh" -R owner/repo 1 --json >/dev/null 2>&1

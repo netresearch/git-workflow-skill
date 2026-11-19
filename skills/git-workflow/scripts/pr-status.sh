@@ -263,11 +263,11 @@ fi
 
 # A GitLab merge request is named host/group[/subgroup…]/project: three or
 # more segments, the first one a host name (#331). Everything else is GitHub.
-FORGE=github; GL_HOST=""; GL_PROJECT=""
+FORGE=github; FORGE_HOST=""; FORGE_PROJECT=""
 case "$REPO" in
   */*/*)
     case "${REPO%%/*}" in
-      *.*) FORGE=gitlab; GL_HOST="${REPO%%/*}"; GL_PROJECT="${REPO#*/}" ;;
+      *.*) FORGE=gitlab; FORGE_HOST="${REPO%%/*}"; FORGE_PROJECT="${REPO#*/}" ;;
     esac ;;
 esac
 if [ "$FORGE" = "gitlab" ]; then
@@ -831,17 +831,18 @@ local_head_sync() {
 # host, so a mistyped -R would hand it to that host. It is passed on only for
 # the host GITLAB_HOST names; any other host gets the token glab stored for
 # that host, or none.
-# glab takes its default host from GITLAB_HOST, GITLAB_URI or GITLAB_URL, as a
-# bare host or a URL; compare host names only.
+# glab takes its default host from GITLAB_HOST, GITLAB_URI, FORGE_HOST or
+# GITLAB_URL, as a bare host or a URL; compare host names only.
 env_host() { local h="${1#*://}"; printf '%s' "${h%%/*}"; }
 gl() {
-  if [ "$GL_HOST" = "$(env_host "${GITLAB_HOST:-}")" ] \
-     || [ "$GL_HOST" = "$(env_host "${GITLAB_URI:-}")" ] \
-     || [ "$GL_HOST" = "$(env_host "${GITLAB_URL:-}")" ]; then
-    glab api --hostname "$GL_HOST" "$@"
+  if [ "$FORGE_HOST" = "$(env_host "${GITLAB_HOST:-}")" ] \
+     || [ "$FORGE_HOST" = "$(env_host "${GITLAB_URI:-}")" ] \
+     || [ "$FORGE_HOST" = "$(env_host "${GL_HOST:-}")" ] \
+     || [ "$FORGE_HOST" = "$(env_host "${GITLAB_URL:-}")" ]; then
+    glab api --hostname "$FORGE_HOST" "$@"
   else
     env -u GITLAB_TOKEN -u GITLAB_ACCESS_TOKEN -u OAUTH_TOKEN \
-      glab api --hostname "$GL_HOST" "$@"
+      glab api --hostname "$FORGE_HOST" "$@"
   fi
 }
 
@@ -855,21 +856,21 @@ gl_list() {
 
 snapshot_gitlab() {
   local enc mrp mr ap disc ps jobs pid viewer
-  enc=$(printf '%s' "$GL_PROJECT" | jq -sRr @uri)
+  enc=$(printf '%s' "$FORGE_PROJECT" | jq -sRr @uri)
   mrp="projects/$enc/merge_requests/$PR"
-  mr=$(gl "$mrp") || die "could not read merge request $GL_PROJECT!$PR on $GL_HOST"
+  mr=$(gl "$mrp") || die "could not read merge request $FORGE_PROJECT!$PR on $FORGE_HOST"
   # GitLab recomputes mergeability lazily, like GitHub: a first read can
   # answer unchecked or checking. Ask once more before building a verdict on it.
   case "$(jq -r '.detailed_merge_status // ""' <<<"$mr")" in
     unchecked|checking|preparing)
       if [ "$(jq -r '.state' <<<"$mr")" = "opened" ]; then
         sleep 2
-        mr=$(gl "$mrp") || die "could not read merge request $GL_PROJECT!$PR on $GL_HOST"
+        mr=$(gl "$mrp") || die "could not read merge request $FORGE_PROJECT!$PR on $FORGE_HOST"
       fi ;;
   esac
-  ap=$(gl "$mrp/approvals") || die "could not read the approvals of $GL_PROJECT!$PR"
-  disc=$(gl_list "$mrp/discussions?per_page=100") || die "could not read the discussions of $GL_PROJECT!$PR"
-  ps=$(gl "projects/$enc") || die "could not read the project settings of $GL_PROJECT"
+  ap=$(gl "$mrp/approvals") || die "could not read the approvals of $FORGE_PROJECT!$PR"
+  disc=$(gl_list "$mrp/discussions?per_page=100") || die "could not read the discussions of $FORGE_PROJECT!$PR"
+  ps=$(gl "projects/$enc") || die "could not read the project settings of $FORGE_PROJECT"
   jobs='[]'
   pid=$(jq -r '.head_pipeline.id // empty' <<<"$mr")
   # The pipeline of a merge request from a fork usually runs in the fork, and
@@ -896,7 +897,7 @@ snapshot_gitlab() {
   # Through stdin, not --argjson: discussions and jobs grow with the merge
   # request and would pass the argument length limit.
   printf '%s\n' "$mr" "$ap" "$disc" "$ps" "$jobs" "$parents" \
-    | jq -cn --arg host "$GL_HOST" --arg project "$GL_PROJECT" --arg viewer "$viewer" \
+    | jq -cn --arg host "$FORGE_HOST" --arg project "$FORGE_PROJECT" --arg viewer "$viewer" \
         '[inputs] as [$mr, $ap, $d, $ps, $j, $mp]
          | {host: $host, project: $project, viewer: $viewer, mr: $mr,
             approvals: $ap, discussions: $d, project_settings: $ps, jobs: $j,
