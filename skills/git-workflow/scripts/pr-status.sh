@@ -822,8 +822,13 @@ local_head_sync() {
 # host, so a mistyped -R would hand it to that host. It is passed on only for
 # the host GITLAB_HOST names; any other host gets the token glab stored for
 # that host, or none.
+# glab takes its default host from GITLAB_HOST, GITLAB_URI or GITLAB_URL, as a
+# bare host or a URL; compare host names only.
+env_host() { local h="${1#*://}"; printf '%s' "${h%%/*}"; }
 gl() {
-  if [ "$GL_HOST" = "${GITLAB_HOST:-}" ]; then
+  if [ "$GL_HOST" = "$(env_host "${GITLAB_HOST:-}")" ] \
+     || [ "$GL_HOST" = "$(env_host "${GITLAB_URI:-}")" ] \
+     || [ "$GL_HOST" = "$(env_host "${GITLAB_URL:-}")" ]; then
     glab api --hostname "$GL_HOST" "$@"
   else
     env -u GITLAB_TOKEN -u GITLAB_ACCESS_TOKEN -u OAUTH_TOKEN \
@@ -862,14 +867,25 @@ snapshot_gitlab() {
     jobs=$(gl_list "projects/$enc/pipelines/$pid/jobs?per_page=100") \
       || die "could not read the jobs of pipeline $pid"
   fi
+  # A merged results pipeline (merge trains need them) runs on a merge commit:
+  # read that commit's parents, so the evaluator can tell it belongs to the head.
+  local parents='[]' plsha plref
+  plsha=$(jq -r '.head_pipeline.sha // ""' <<<"$mr")
+  plref=$(jq -r '.head_pipeline.ref // ""' <<<"$mr")
+  if [ -n "$plsha" ] && [ "$plsha" != "$(jq -r '.sha' <<<"$mr")" ] \
+     && [ "$plref" = "refs/merge-requests/$PR/merge" ]; then
+    parents=$(gl "projects/$enc/repository/commits/$plsha" | jq -c '.parent_ids // []') \
+      || die "could not read the merge commit $plsha of pipeline $pid"
+  fi
   viewer=$(gl user 2>/dev/null | jq -r '.username // ""' 2>/dev/null) || viewer=""
   # Through stdin, not --argjson: discussions and jobs grow with the merge
   # request and would pass the argument length limit.
-  printf '%s\n' "$mr" "$ap" "$disc" "$ps" "$jobs" \
+  printf '%s\n' "$mr" "$ap" "$disc" "$ps" "$jobs" "$parents" \
     | jq -cn --arg host "$GL_HOST" --arg project "$GL_PROJECT" --arg viewer "$viewer" \
-        '[inputs] as [$mr, $ap, $d, $ps, $j]
+        '[inputs] as [$mr, $ap, $d, $ps, $j, $mp]
          | {host: $host, project: $project, viewer: $viewer, mr: $mr,
-            approvals: $ap, discussions: $d, project_settings: $ps, jobs: $j}' \
+            approvals: $ap, discussions: $d, project_settings: $ps, jobs: $j,
+            merge_parents: $mp}' \
     | jq -c -f "$SCRIPT_DIR/pr-status-gitlab.jq"
 }
 

@@ -4,7 +4,7 @@
 # pr-status-gitlab.jq — the GitLab merge-request half of pr-status.sh.
 #
 # Input: one object {host, project, mr, approvals, discussions, project_settings,
-# jobs, viewer} assembled from the REST API. Output: the same --json contract
+# jobs, viewer, merge_parents} assembled from the REST API. Output: the same --json contract
 # the GitHub path emits, with the fields GitLab has no counterpart for set to
 # neutral values, and the same NEXT vocabulary, so pr-status.sh --watch and its
 # callers need no second ladder (#331).
@@ -20,7 +20,12 @@ def running:  . as $s | ["created","pending","running","waiting_for_resource","p
 .mr as $mr
 | (.jobs // []) as $jobs
 | ($mr.head_pipeline // null) as $pl
-| ($pl != null and ($pl.sha // "") == $mr.sha) as $pl_on_head
+# A merged results pipeline runs on a merge commit, so its sha is not the
+# head; it belongs to the head when that merge commit has the head as a parent
+# (merge_parents, read by pr-status.sh for a refs/merge-requests/<iid>/merge
+# pipeline only).
+| ($pl != null and (($pl.sha // "") == $mr.sha
+     or ((.merge_parents // []) | index($mr.sha) != null))) as $pl_on_head
 | (if $pl_on_head then $jobs else [] end) as $hj
 | ($hj | map(select(.status == "failed" and (.allow_failure | not)) | .name) | unique) as $failing
 | ($hj | map(select(.status | running) | .name) | unique) as $pending

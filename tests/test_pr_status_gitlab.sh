@@ -47,6 +47,7 @@ case "\$path" in
   projects/group%2Fsub%2Fproject/merge_requests/7/discussions) cat "$FX"/discussions.*.json ;;
   projects/group%2Fsub%2Fproject) cat "$FX/project.json" ;;
   projects/group%2Fsub%2Fproject/pipelines/*/jobs) cat "$FX/jobs.json" ;;
+  projects/group%2Fsub%2Fproject/repository/commits/*) cat "$FX/commit.json" ;;
   user) echo '{"username":"viewer"}' ;;
   *) echo "glab stub: unknown path \$path" >&2; exit 1 ;;
 esac
@@ -113,6 +114,14 @@ echo "case 4: the head pipeline is for an older sha — wait, not merge"
 fixture mergeable success 1111111111111111111111111111111111111111
 check "action" "wait" "$(next)"
 
+echo "case 4b: a merged results pipeline on a merge commit of the head — merge"
+fixture mergeable success 2222222222222222222222222222222222222222
+mr_set '.head_pipeline.ref = "refs/merge-requests/7/merge"'
+echo "{\"parent_ids\": [\"3333333333333333333333333333333333333333\", \"$HEAD\"]}" > "$FX/commit.json"
+check "action" "merge" "$(next)"
+echo '{"parent_ids": ["3333333333333333333333333333333333333333", "4444444444444444444444444444444444444444"]}' > "$FX/commit.json"
+check "a merge commit of another head still waits" "wait" "$(next)"
+
 echo "case 5: conflicts reported while the status still says mergeable"
 fixture mergeable success; mr_set '.has_conflicts = true'
 check "action" "resolve-conflicts" "$(next)"
@@ -122,10 +131,10 @@ fixture draft_status none; mr_set '.draft = true'
 check "action" "ready" "$(next)"
 
 echo "case 7: an unmapped status is actionable and names itself"
-fixture jira_association success
+fixture jira_association_missing success
 out=$(run --json)
 check "action" "blocked" "$(jq -r .next.action <<<"$out")"
-says  "raw value in why" "jira_association" "$(jq -r .next.why <<<"$out")"
+says  "raw value in why" "jira_association_missing" "$(jq -r .next.why <<<"$out")"
 
 echo "case 8: a pipeline still running — await-checks"
 fixture ci_still_running running
@@ -177,6 +186,10 @@ check "not sent to another host" "0" "$(grep -c 'token=secret' "$WORK/glab.env")
 : > "$WORK/glab.env"
 GITLAB_TOKEN=secret GITLAB_HOST=gitlab.example.com run --json >/dev/null
 check "sent to the GITLAB_HOST host" "1" "$([ "$(grep -c 'token=secret' "$WORK/glab.env")" -gt 0 ] && echo 1 || echo 0)"
+
+: > "$WORK/glab.env"
+GITLAB_TOKEN=secret GITLAB_HOST='' GITLAB_URL=https://gitlab.example.com/ run --json >/dev/null
+check "GITLAB_URL in URL form names the same host" "1" "$([ "$(grep -c 'token=secret' "$WORK/glab.env")" -gt 0 ] && echo 1 || echo 0)"
 
 echo "case 15: a GitHub owner/repo is still GitHub"
 : > "$WORK/gh.log"; : > "$WORK/glab.log"
