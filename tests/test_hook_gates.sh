@@ -166,7 +166,7 @@ out=$(marker_gate "$repo" "git -C $other commit -m 'chore: clean elsewhere'")
 check "git -C <clean repo> commit from a repo with markers passes" 0 "$(grep -ci 'deny' <<<"$out")"
 out=$(marker_gate "$WORK" "git -C cm-name commit -m 'docs: relative -C'")
 check "a relative -C resolves against the current directory" 1 "$(grep -ci 'deny' <<<"$out")"
-out=$(marker_gate "$WORK" "git -C $WORK -C cm-name commit -m 'docs: chained -C'")
+out=$(marker_gate "$other" "git -C $WORK -C cm-name commit -m 'docs: chained -C'")
 check "successive -C options combine as git combines them" 1 "$(grep -ci 'deny' <<<"$out")"
 out=$(marker_gate "$other" "git --git-dir=$repo/.git --work-tree=$repo commit -m 'docs: git-dir'")
 check "--git-dir=<repo>/.git with --work-tree is checked in that repository" 1 "$(grep -ci 'deny' <<<"$out")"
@@ -202,6 +202,30 @@ git -C "$lazy" config protocol.file.allow always
 git -C "$lazy" update-index --add --cacheinfo 100644,1111111111111111111111111111111111111111,f.txt
 marker_gate "$other" "git -C $lazy commit -m x" >/dev/null
 check "a partial clone's missing blob does not start a fetch, protocol.file.allow=always or not" 0 "$([ -e "$WORK/uploadpack-ran" ] && echo 1 || echo 0)"
+
+# A tilde: bash expands `-C ~/x` but leaves `--git-dir=~/x` alone, and the
+# gate reads the path git receives.
+out=$(HOME="$WORK" marker_gate "$other" "git -C ~/cm-name commit -m 'docs: tilde'")
+check "-C ~/<repo> is read in \$HOME/<repo>" 1 "$(grep -ci 'deny' <<<"$out")"
+out=$(HOME="$WORK" marker_gate "$other" "git --git-dir=~/cm-name/.git --work-tree=~/cm-name commit -m 'docs: tilde in ='")
+check "--git-dir=~/<repo> is not expanded, as in bash" 0 "$(grep -ci 'deny' <<<"$out")"
+
+# Every git call the gate makes carries the hardening. GIT_NO_LAZY_FETCH alone
+# stops a lazy fetch on git 2.45+, so the partial-clone case above cannot show
+# that GIT_ALLOW_PROTOCOL is set; a git wrapper on PATH records each call.
+wrap="$WORK/gitwrap"; mkdir -p "$wrap"
+real_git=$(command -v git)
+# shellcheck disable=SC2016  # the $-expressions belong to the wrapper, not this shell
+printf '#!/bin/sh\nprintf "allow=[%%s] set=%%s lazy=%%s args=%%s\\n" "$GIT_ALLOW_PROTOCOL" "${GIT_ALLOW_PROTOCOL+yes}" "$GIT_NO_LAZY_FETCH" "$*" >> "%s/git-calls"\nexec "%s" "$@"\n' "$WORK" "$real_git" > "$wrap/git"
+chmod +x "$wrap/git"
+: > "$WORK/git-calls"
+printf '{"tool_input":{"command":"%s"}}' "git -C $repo commit -m x" \
+    | ( cd "$other" && PATH="$wrap:$PATH" python3 "$SCRIPTS/conflict-marker-gate.py" >/dev/null 2>&1 )
+calls=$(wc -l < "$WORK/git-calls")
+check "the gate made git calls through the wrapper" 1 "$([ "$calls" -gt 0 ] && echo 1 || echo 0)"
+check "every call sets an empty GIT_ALLOW_PROTOCOL" "$calls" "$(grep -c 'allow=\[\] set=yes' "$WORK/git-calls")"
+check "every call sets GIT_NO_LAZY_FETCH" "$calls" "$(grep -c 'lazy=1' "$WORK/git-calls")"
+check "every call refuses transports and fsmonitor" "$calls" "$(grep -c 'core.fsmonitor=false -c protocol.allow=never' "$WORK/git-calls")"
 
 # Fails open outside a repository — a hook that hard-errors would block every
 # command in a non-repo directory.

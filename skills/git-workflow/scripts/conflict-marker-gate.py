@@ -99,7 +99,9 @@ def commit_locations(command):
                 if option in LOCATION_OPTIONS and j < len(tokens):
                     location += [option, os.path.expanduser(tokens[j])]
             elif has_value and name in LOCATION_OPTIONS[1:]:
-                location.append(f"{name}={os.path.expanduser(value)}")
+                # No tilde expansion: bash leaves `--git-dir=~/x` as it is, so
+                # git receives the tilde, and the gate must read the same path.
+                location.append(f"{name}={value}")
             j += 1
         if j < len(tokens) and tokens[j] == "commit":
             commits.append(location)
