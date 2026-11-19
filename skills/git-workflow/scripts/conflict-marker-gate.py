@@ -22,10 +22,14 @@ commit-time gate, and it looks at staged content for every file extension.
 Wire it as a PreToolUse hook with matcher "Bash" — see
 references/claude-code-hooks.md, Recipe 6.
 
+The check runs in the repository the commit names with `-C`, `--git-dir` or
+`--work-tree`; without them, in the current directory.
+
 Fails open: any error, non-repo cwd, or unreadable diff allows the command.
 """
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -43,37 +47,55 @@ GUIDANCE = (
 )
 
 
-def is_git_commit(command):
-    """True when the command runs `git commit` in any segment of the shell line."""
+# Global options that choose the repository a git command runs in. They are
+# passed on to the gate's own git calls, so the check reads the repository the
+# commit writes to instead of the hook's current directory.
+LOCATION_OPTIONS = ("-C", "--git-dir", "--work-tree")
+
+
+def commit_locations(command):
+    """Location options of each `git commit` in the shell line, one list per commit.
+
+    `git -C ../other commit` yields [["-C", "../other"]]; a plain `git commit`
+    yields [[]]. A line without a commit yields [].
+    """
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
         tokens = list(lexer)
     except ValueError:  # unbalanced quotes — nothing reliable to say
-        return False
+        return []
 
+    commits = []
     for i, token in enumerate(tokens):
         if token != "git":
             continue
         # Skip global options and their values (-C <dir>, -c <k=v>, --git-dir=…)
+        location = []
         j = i + 1
         while j < len(tokens) and tokens[j].startswith("-"):
-            if tokens[j] in ("-C", "-c", "--git-dir", "--work-tree"):
+            option = tokens[j]
+            name, has_value, value = option.partition("=")
+            if option in ("-C", "-c", "--git-dir", "--work-tree"):
                 j += 1
+                if option in LOCATION_OPTIONS and j < len(tokens):
+                    location += [option, os.path.expanduser(tokens[j])]
+            elif has_value and name in LOCATION_OPTIONS[1:]:
+                location.append(f"{name}={os.path.expanduser(value)}")
             j += 1
         if j < len(tokens) and tokens[j] == "commit":
-            return True
-    return False
+            commits.append(location)
+    return commits
 
 
-def marker_count(revision_path):
+def marker_count(location, revision_path):
     """Conflict markers in a blob such as ':path' or 'HEAD:path'; 0 if it does not exist.
 
     The blob is read as bytes: a file that is not valid UTF-8 must still be
     counted instead of ending the gate with a decoding error.
     """
     blob = subprocess.run(
-        ["git", "show", revision_path],
+        ["git", *location, "show", revision_path],
         capture_output=True,
         timeout=10,
         check=False,
@@ -83,7 +105,7 @@ def marker_count(revision_path):
     return len(MARKER.findall(blob.stdout))
 
 
-def staged_conflict_files():
+def staged_conflict_files(location):
     """Names of staged files whose staged content adds conflict markers.
 
     A file counts only when its staged content holds more markers than the
@@ -95,7 +117,15 @@ def staged_conflict_files():
         # -z: NUL-separated raw names; without it git quotes non-ASCII names
         # and `git show` cannot resolve the quoted form.
         names = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"],
+            [
+                "git",
+                *location,
+                "diff",
+                "--cached",
+                "--name-only",
+                "-z",
+                "--diff-filter=ACMR",
+            ],
             capture_output=True,
             timeout=10,
             check=False,
@@ -106,8 +136,8 @@ def staged_conflict_files():
         for name in names.stdout.split(b"\0"):
             if not name:
                 continue
-            staged = marker_count(b":" + name)
-            if staged > marker_count(b"HEAD:" + name):
+            staged = marker_count(location, b":" + name)
+            if staged > marker_count(location, b"HEAD:" + name):
                 hits.append(name.decode("utf-8", "replace"))
             if len(hits) >= 5:
                 break
@@ -123,10 +153,12 @@ def main():
         return 0
 
     command = (payload.get("tool_input") or {}).get("command") or ""
-    if not command or not is_git_commit(command):
+    if not command:
         return 0
 
-    files = staged_conflict_files()
+    files = []
+    for location in commit_locations(command):
+        files += [f for f in staged_conflict_files(location) if f not in files]
     if not files:
         return 0
 

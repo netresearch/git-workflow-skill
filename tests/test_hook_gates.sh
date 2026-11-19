@@ -152,6 +152,29 @@ git -C "$repo" add -A
 out=$(marker_gate "$repo" "git commit -m 'docs: markers in a non-ASCII file name'")
 check "markers in a file with a non-ASCII name are denied" 1 "$(grep -ci 'deny' <<<"$out")"
 
+# `git -C <dir> commit` is checked in <dir>, not in the hook's current
+# directory: markers staged elsewhere must be denied, and markers staged in the
+# current directory must not deny a commit to another repository.
+other="$WORK/cm-other"
+mkdir -p "$other"
+git -C "$other" init -q -b main
+git -C "$other" config user.name t; git -C "$other" config user.email t@e.com
+printf 'clean\n' > "$other/ok.txt"; git -C "$other" add ok.txt
+out=$(marker_gate "$other" "git -C $repo commit -m 'docs: from elsewhere'")
+check "git -C <repo with markers> commit from a clean repo is denied" 1 "$(grep -ci 'deny' <<<"$out")"
+out=$(marker_gate "$repo" "git -C $other commit -m 'chore: clean elsewhere'")
+check "git -C <clean repo> commit from a repo with markers passes" 0 "$(grep -ci 'deny' <<<"$out")"
+out=$(marker_gate "$WORK" "git -C cm-name commit -m 'docs: relative -C'")
+check "a relative -C resolves against the current directory" 1 "$(grep -ci 'deny' <<<"$out")"
+out=$(marker_gate "$WORK" "git -C $WORK -C cm-name commit -m 'docs: chained -C'")
+check "successive -C options combine as git combines them" 1 "$(grep -ci 'deny' <<<"$out")"
+out=$(marker_gate "$other" "git --git-dir=$repo/.git --work-tree=$repo commit -m 'docs: git-dir'")
+check "--git-dir=<repo>/.git with --work-tree is checked in that repository" 1 "$(grep -ci 'deny' <<<"$out")"
+out=$(marker_gate "$other" "git --git-dir $repo/.git commit -m 'docs: git-dir separate value'")
+check "--git-dir <repo>/.git as a separate argument is checked there" 1 "$(grep -ci 'deny' <<<"$out")"
+out=$(marker_gate "$other" "git status && git -C $repo commit -m 'docs: second segment'")
+check "a commit in a later segment of the line is checked in its own -C" 1 "$(grep -ci 'deny' <<<"$out")"
+
 # Fails open outside a repository — a hook that hard-errors would block every
 # command in a non-repo directory.
 out=$(marker_gate "$WORK" "git commit -m x")
