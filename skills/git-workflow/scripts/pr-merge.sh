@@ -267,10 +267,15 @@ fi
 # setting decides. A failed read of the setting is not "off".
 RETARGET_CMDS=()
 if [ -n "$STACKED" ] || [ -n "$STACKED_UNKNOWN" ]; then
-  AUTODEL=$(gh api "repos/$REPO" --jq .delete_branch_on_merge 2>"$TMPERR") \
+  # GraphQL, not REST: repos/<o>/<r> leaves delete_branch_on_merge out for a
+  # caller without admin rights, while deleteBranchOnMerge answers at read
+  # permission.
+  # shellcheck disable=SC2016  # $owner/$name are GraphQL variables, not shell
+  AUTODEL=$(gh api graphql -f owner="${REPO%%/*}" -f name="${REPO##*/}" -f query='
+    query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ deleteBranchOnMerge } }' \
+    --jq '.data.repository.deleteBranchOnMerge' 2>"$TMPERR") \
     || die "could not read delete_branch_on_merge of $REPO, so whether merging deletes $HEADREF is unknown: $(tr '\n' ' ' < "$TMPERR")"
-  # Only a literal answer counts: `null` or an empty line (a token without
-  # admin rights may not see the field) is not "off".
+  # Only a literal answer counts: `null` or an empty line is not "off".
   case "$AUTODEL" in
     true|false) ;;
     *) die "delete_branch_on_merge of $REPO read as '${AUTODEL}', neither true nor false, so whether merging deletes $HEADREF is unknown" ;;
@@ -326,8 +331,13 @@ fi
 
 if [ "${#RETARGET_CMDS[@]}" -gt 0 ]; then
   # The children were retargeted above, and the repository deletes the branch.
-  printf 'pr-merge: %s deletes %s on merge (delete_branch_on_merge); its dependent pull requests now target %s\n' \
-    "$REPO" "$HEADREF" "$BASEREF" >&2
+  if [ "$DRY" = "1" ]; then
+    printf 'pr-merge: dry-run — %s deletes %s on merge (delete_branch_on_merge); the commands above would retarget its dependent pull requests to %s\n' \
+      "$REPO" "$HEADREF" "$BASEREF" >&2
+  else
+    printf 'pr-merge: %s deletes %s on merge (delete_branch_on_merge); its dependent pull requests now target %s\n' \
+      "$REPO" "$HEADREF" "$BASEREF" >&2
+  fi
 elif [ -n "$STACKED" ]; then
   printf 'pr-merge: keeping branch %s — open pull requests are based on it: %s. Retarget them, then delete it.\n' \
     "$HEADREF" "$STACKED" >&2

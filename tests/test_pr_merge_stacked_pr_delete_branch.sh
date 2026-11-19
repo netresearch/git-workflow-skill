@@ -73,7 +73,7 @@ if [ "\$1" = "pr" ] && [ "\$2" = "list" ]; then
   printf '%s' '${3:-}' >&2
   exit $2
 fi
-if [ "\$1" = "api" ] && [ "\$2" = "repos/o/r" ]; then
+if [ "\$1" = "api" ] && [ "\$2" = "graphql" ] && printf '%s' "\$*" | grep -q deleteBranchOnMerge; then
   printf '%s\n' '${4:-false}'
   exit ${5:-0}
 fi
@@ -160,7 +160,7 @@ says     "names the setting"         "delete_branch_on_merge"             "$err"
 says     "gives the retarget command" "gh pr edit 108 --repo o/r --base main" "$err"
 says     "for every child"           "gh pr edit 109 --repo o/r --base main" "$err"
 says     "names the flag"            "--retarget-stacked"                 "$err"
-says     "reads the setting"         "api repos/o/r"                      "$args"
+says     "reads the setting through GraphQL" "deleteBranchOnMerge"      "$args"
 
 echo "case 6b: a base branch name with shell syntax is printed quoted"
 sed -i 's/"base": "main"/"base": "rel;touch x"/' "$STUB_DIR/pr-status.sh"
@@ -205,6 +205,9 @@ says     "exits 0"                   "rc=0"                               "rc=$r
 says     "prints the retarget"       "gh pr edit 108 --repo o/r --base main" "$out"
 says     "prints the merge"          "gh pr merge 107 --repo o/r --merge" "$out"
 says_not "edits nothing in a dry run" "pr edit"                           "$args"
+err=$(cat "$STUB_DIR/err")
+says     "says the retarget would happen" "would retarget"               "$err"
+says_not "does not claim it happened" "now target"                        "$err"
 
 echo "case 11: --retarget-stacked retargets each child, then merges"
 make_gh_stub '#108 #109' 0 '' true
