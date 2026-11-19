@@ -2981,8 +2981,11 @@ bottom-up — but two GitHub behaviours break the naive loop:
    per child, or with `--retarget-stacked` retargets them to the merged pull
    request's base, reads each base back, and then merges. A merge through a
    merge queue is checked the same way, because whether the queue deletes the
-   branch is not documented. A protected head branch (`develop` into `main`) is
-   not deleted automatically, so its children are left alone. For a merge by hand, read the setting before the
+   branch is not documented. A head branch whose deletion is restricted (a
+   ruleset `deletion` rule, or classic protection with deletions off, as for a
+   `develop` merged into `main`) is not deleted, so its children are left alone;
+   when the head is protected but that cannot be read without admin rights,
+   nothing is merged or retargeted. For a merge by hand, read the setting before the
    first merge of a stack:
 
    ```bash

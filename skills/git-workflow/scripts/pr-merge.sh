@@ -282,18 +282,43 @@ if [ -n "$STACKED" ] || [ -n "$STACKED_UNKNOWN" ]; then
     true|false) ;;
     *) die "delete_branch_on_merge of $REPO read as '${AUTODEL}', neither true nor false, so whether merging deletes $HEADREF is unknown" ;;
   esac
-  # Branch protection and rules can keep a branch from being deleted
-  # automatically: a protected head (develop -> main in git-flow) stays, so its
-  # children need nothing. Read whether the head is protected; a failed read is
-  # not "unprotected".
+  # A deletion rule (rulesets) or classic protection with allow_deletions off
+  # keeps the branch from being deleted automatically: then its children need
+  # nothing (develop -> main in git-flow). "protected" alone is not that: a
+  # ruleset that only requires checks also makes a branch protected.
+  # rules/branches answers at read permission; classic protection only to an
+  # admin, so for a protected head whose classic protection cannot be read the
+  # outcome is unknown, and nothing is merged or retargeted on a guess.
+  HEADKEPT=""
   if [ "$AUTODEL" = "true" ] && [ -n "$HEADREF" ]; then
-    HEADPROT=$(gh api "repos/$REPO/branches/$(printf '%s' "$HEADREF" | jq -sRr @uri)" --jq .protected 2>"$TMPERR") \
-      || die "could not read whether $HEADREF is protected, so whether merging deletes it is unknown: $(tr '\n' ' ' < "$TMPERR")"
-    case "$HEADPROT" in
-      true) AUTODEL=protected ;;
-      false) ;;
-      *) die "the protection of $HEADREF read as '${HEADPROT}', neither true nor false" ;;
-    esac
+    HEADENC=$(printf '%s' "$HEADREF" | jq -sRr @uri)
+    DELRULE=$(gh api "repos/$REPO/rules/branches/$HEADENC" --paginate \
+        --jq '[.[] | select(.type == "deletion")] | length' 2>"$TMPERR") \
+      || die "could not read the rules of $HEADREF, so whether merging deletes it is unknown: $(tr '\n' ' ' < "$TMPERR")"
+    if [ "$(printf '%s\n' "$DELRULE" | awk '{s += $1} END {print s + 0}')" -gt 0 ]; then
+      HEADKEPT="a deletion rule"
+    else
+      HEADPROT=$(gh api "repos/$REPO/branches/$HEADENC" --jq .protected 2>"$TMPERR") \
+        || die "could not read whether $HEADREF is protected, so whether merging deletes it is unknown: $(tr '\n' ' ' < "$TMPERR")"
+      if [ "$HEADPROT" = "true" ]; then
+        if ALLOWDEL=$(gh api "repos/$REPO/branches/$HEADENC/protection" --jq '.allow_deletions.enabled' 2>"$TMPERR"); then
+          case "$ALLOWDEL" in
+            false) HEADKEPT="classic branch protection" ;;
+            true) ;;
+            *) die "the classic protection of $HEADREF read allow_deletions as '${ALLOWDEL}'" ;;
+          esac
+        elif grep -q 'Branch not protected' "$TMPERR"; then
+          # Protected by a ruleset only, and no deletion rule (read above):
+          # nothing keeps the branch.
+          :
+        else
+          die "not merging: $HEADREF is protected, and whether its protection forbids deletion could not be read (classic protection needs admin rights). If it does, merge by hand; if not, retarget $STACKED to $BASEREF first."
+        fi
+      elif [ "$HEADPROT" != "false" ]; then
+        die "the protection of $HEADREF read as '${HEADPROT}', neither true nor false"
+      fi
+    fi
+    [ -n "$HEADKEPT" ] && AUTODEL=kept
   fi
   if [ "$AUTODEL" = "true" ]; then
     if [ -n "$STACKED_UNKNOWN" ]; then

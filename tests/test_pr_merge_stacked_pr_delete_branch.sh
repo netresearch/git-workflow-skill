@@ -81,6 +81,16 @@ if [ "\$1" = "api" ] && [ "\$2" = "graphql" ]; then
   printf '%s' '{"data":{"repository":{"pullRequest":{"state":"MERGED","isInMergeQueue":false,"autoMergeRequest":null}}}}'
   exit 0
 fi
+if [ "\$1" = "api" ] && [ "\$2" = "repos/o/r/rules/branches/feature%2Fbase-of-another" ]; then
+  printf '%s\n' "\${STUB_DELRULE:-0}"
+  exit 0
+fi
+if [ "\$1" = "api" ] && [ "\$2" = "repos/o/r/branches/feature%2Fbase-of-another/protection" ]; then
+  [ -n "\${STUB_ALLOWDEL:-}" ] || { echo "gh: Must have admin rights to Repository. (HTTP 403)" >&2; exit 1; }
+  [ "\$STUB_ALLOWDEL" != "none" ] || { echo "gh: Branch not protected (HTTP 404)" >&2; exit 1; }
+  printf '%s\n' "\$STUB_ALLOWDEL"
+  exit 0
+fi
 if [ "\$1" = "api" ] && [ "\$2" = "repos/o/r/branches/feature%2Fbase-of-another" ]; then
   printf '%s\n' "\${STUB_PROTECTED:-false}"
   exit 0
@@ -255,16 +265,41 @@ out=$(run); rc=$?
 says     "an unstacked queued merge goes ahead" "gh pr merge 107 --repo o/r --merge" "$out"
 says_not "and never passes --delete-branch to the queue" "--delete-branch" "$out"
 
-echo "case 13: a protected head branch is not deleted — merge as before, retarget nothing"
+run_flag() { PATH="$STUB_DIR:$PATH" "$SCRIPT" -R o/r 107 --retarget-stacked --dry-run 2>"$STUB_DIR/err"; }
+
+echo "case 13: a deletion rule keeps the head — merge as before, retarget nothing"
 make_status_stub
 make_gh_stub '#108' 0 '' true
-out=$(STUB_PROTECTED=true PATH="$STUB_DIR:$PATH" "$SCRIPT" -R o/r 107 --retarget-stacked --dry-run 2>"$STUB_DIR/err"); rc=$?
-err=$(cat "$STUB_DIR/err"); args=$(cat "$STUB_DIR/gh-args")
+out=$(STUB_DELRULE=1 run_flag); rc=$?
 says     "exits 0"                   "rc=0"                               "rc=$rc"
 says     "merges"                    "gh pr merge 107 --repo o/r --merge" "$out"
-says_not "keeps the branch"          "--delete-branch"                    "$out"
 says_not "retargets nothing"         "gh pr edit"                         "$out"
-says     "reads the protection"      "branches/feature%2Fbase-of-another" "$args"
+says     "reads the rules"           "rules/branches/feature%2Fbase-of-another" "$(cat "$STUB_DIR/gh-args")"
+
+echo "case 13b: classic protection with allow_deletions off keeps the head"
+make_gh_stub '#108' 0 '' true
+out=$(STUB_PROTECTED=true STUB_ALLOWDEL=false run_flag); rc=$?
+says     "exits 0"                   "rc=0"                               "rc=$rc"
+says_not "retargets nothing"         "gh pr edit"                         "$out"
+
+echo "case 13c: protected, deletion allowed — the head is deleted, so retarget"
+make_gh_stub '#108' 0 '' true
+out=$(STUB_PROTECTED=true STUB_ALLOWDEL=true run_flag); rc=$?
+says     "exits 0"                   "rc=0"                               "rc=$rc"
+says     "retargets"                 "gh pr edit 108 --repo o/r --base main" "$out"
+
+echo "case 13d: protected, protection unreadable (no admin) — nothing on a guess"
+make_gh_stub '#108' 0 '' true
+out=$(STUB_PROTECTED=true run_flag); rc=$?; err=$(cat "$STUB_DIR/err")
+says     "exits 2"                   "rc=2"                               "rc=$rc"
+says_not "does not merge"            "gh pr merge"                        "$out"
+says_not "does not retarget"         "gh pr edit"                         "$out"
+says     "says why"                  "could not be read"                  "$err"
+
+echo "case 13e: protected by a ruleset without a deletion rule (no classic protection) — retarget"
+make_gh_stub '#108' 0 '' true
+out=$(STUB_PROTECTED=true STUB_DELRULE=0 STUB_ALLOWDEL=none run_flag); rc=$?
+says     "retargets"                 "gh pr edit 108 --repo o/r --base main" "$out"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
