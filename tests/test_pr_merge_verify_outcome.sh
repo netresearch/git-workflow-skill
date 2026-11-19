@@ -57,6 +57,7 @@ make_status() {
 {
   "repo": "o/r", "number": 559, "queue_active": $1,
   "merge_methods": ["merge", "rebase"],
+  "head": "feature/x", "cross_repository": false,
   "next": {"action": "merge", "why": "clean", "method": "--merge"}
 }
 JSON
@@ -77,6 +78,10 @@ make_gh() {
 printf '%s\n' "\$1 \$2" >> "$STUB_DIR/calls.log"
 if [ "\$1 \$2" = "pr merge" ]; then
   echo "Merging pull request #559"
+  exit 0
+fi
+# The dependent-PR query pr-merge.sh makes before merging: nothing is stacked.
+if [ "\$1 \$2" = "pr list" ]; then
   exit 0
 fi
 n=\$(grep -c '^api graphql\$' "$STUB_DIR/calls.log")
@@ -213,11 +218,14 @@ check "exit code"    "1" "$rc"
 check "no gh calls"  "0" "$(wc -l < "$STUB_DIR/calls.log")"
 says  "names the gate" "not merging o/r#559 — fix-ci" "$err"
 
-echo "case 10: --dry-run prints the command and calls nothing"
+# A dry run reads (the dependent-PR query runs for a queued merge too, #460)
+# but writes nothing: no merge, no retarget, no comment.
+echo "case 10: --dry-run prints the command and writes nothing"
 make_status true; make_gh; reset
 out=$(PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 --dry-run 2>&1); rc=$?
 check "exit code"   "0" "$rc"
-check "no gh calls" "0" "$(wc -l < "$STUB_DIR/calls.log")"
+check "no gh write calls" "0" "$(grep -cE '^pr (merge|edit|comment)' "$STUB_DIR/calls.log")"
+check "only the dependent query was read" "pr list" "$(tr -d '\n' < "$STUB_DIR/calls.log")"
 says  "prints the merge command" "gh pr merge 559 --repo o/r --merge" "$out"
 
 if [ "$fail" -eq 0 ]; then

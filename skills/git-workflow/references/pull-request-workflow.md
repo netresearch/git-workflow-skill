@@ -2980,8 +2980,9 @@ bottom-up — but two GitHub behaviours break the naive loop:
    it refuses the merge (exit 2) and prints one `gh pr edit <n> --base <base>`
    per child, or with `--retarget-stacked` retargets them to the merged pull
    request's base, reads each base back, and then merges. A merge through a
-   merge queue is not covered by this check. For a merge by hand, read the
-   setting before the first merge of a stack:
+   merge queue is checked the same way, because whether the queue deletes the
+   branch is not documented. For a merge by hand, read the setting before the
+   first merge of a stack:
 
    ```bash
    gh api "repos/OWNER/REPO" --jq .delete_branch_on_merge

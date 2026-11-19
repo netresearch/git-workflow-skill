@@ -241,7 +241,12 @@ STACKED=""
 STACKED_UNKNOWN=""
 TMPERR=$(mktemp)
 trap 'rm -f "$TMPERR"' EXIT
-if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ]; then
+# The query also runs for a merge queue. The queue never takes --delete-branch,
+# but whether delete_branch_on_merge (below) deletes the branch after a queued
+# merge is not documented, so the queue is treated like a direct merge: a
+# refusal that was not needed costs a retarget, a merge that closes the
+# children cannot be undone.
+if [ "$CROSS" != "true" ]; then
   if [ -z "$HEADREF" ]; then
     # Nothing to ask about: an older pr-status.sh that does not report the head
     # branch leaves the same doubt a failed query does, and is answered the
@@ -264,6 +269,12 @@ RETARGET_CMDS=()
 if [ -n "$STACKED" ] || [ -n "$STACKED_UNKNOWN" ]; then
   AUTODEL=$(gh api "repos/$REPO" --jq .delete_branch_on_merge 2>"$TMPERR") \
     || die "could not read delete_branch_on_merge of $REPO, so whether merging deletes $HEADREF is unknown: $(tr '\n' ' ' < "$TMPERR")"
+  # Only a literal answer counts: `null` or an empty line (a token without
+  # admin rights may not see the field) is not "off".
+  case "$AUTODEL" in
+    true|false) ;;
+    *) die "delete_branch_on_merge of $REPO read as '${AUTODEL}', neither true nor false, so whether merging deletes $HEADREF is unknown" ;;
+  esac
   if [ "$AUTODEL" = "true" ]; then
     if [ -n "$STACKED_UNKNOWN" ]; then
       die "not merging: $REPO deletes merged head branches (delete_branch_on_merge: true), and whether open pull requests are based on ${HEADREF:-(unknown)} could not be checked: $STACKED_UNKNOWN"

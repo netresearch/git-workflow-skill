@@ -183,6 +183,13 @@ says     "exits 2"                   "rc=2"                               "rc=$r
 says_not "does not merge"            "gh pr merge"                        "$out"
 says     "says what it could not read" "delete_branch_on_merge"           "$err"
 
+echo "case 8b: the setting reads as null — not 'off'"
+make_gh_stub '#108' 0 '' null
+out=$(run); rc=$?; err=$(cat "$STUB_DIR/err")
+says     "exits 2"                   "rc=2"                               "rc=$rc"
+says_not "does not merge"            "gh pr merge"                        "$out"
+says     "names the value"           "'null'"                             "$err"
+
 echo "case 9: dependents unknown and the setting is on — no merge"
 make_gh_stub '' 1 'gh: HTTP 403' true
 out=$(run); rc=$?; err=$(cat "$STUB_DIR/err")
@@ -211,6 +218,31 @@ says     "merges after"              "pr merge 107 --repo o/r --merge"    "$args
 first_edit=$(grep -n 'pr edit' <<<"$args" | head -n1 | cut -d: -f1)
 merge_line=$(grep -n 'pr merge' <<<"$args" | head -n1 | cut -d: -f1)
 says     "retargets before merging"  "yes"                                "$([ "${first_edit:-99}" -lt "${merge_line:-0}" ] && echo yes)"
+
+echo "case 12: a merge queue is checked the same way"
+cat > "$STUB_DIR/pr-status.sh" <<'STUB'
+#!/usr/bin/env bash
+cat <<'JSON'
+{
+  "repo": "o/r", "number": 107, "queue_active": true,
+  "merge_methods": ["merge"], "cross_repository": false,
+  "head": "feature/base-of-another", "base": "main",
+  "headOid": "deadbeefcafe0000", "author": "a-maintainer",
+  "author_is_bot": false, "self_review_on_head": true,
+  "next": {"action": "merge", "why": "clean", "method": "--merge"}
+}
+JSON
+STUB
+chmod +x "$STUB_DIR/pr-status.sh"
+make_gh_stub '#108' 0 '' true
+out=$(run); rc=$?; err=$(cat "$STUB_DIR/err")
+says     "exits 2"                   "rc=2"                               "rc=$rc"
+says_not "does not enqueue"          "gh pr merge"                        "$out"
+says     "names the dependent PR"    "#108"                               "$err"
+make_gh_stub '' 0 '' true
+out=$(run); rc=$?
+says     "an unstacked queued merge goes ahead" "gh pr merge 107 --repo o/r --merge" "$out"
+says_not "and never passes --delete-branch to the queue" "--delete-branch" "$out"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"

@@ -55,6 +55,7 @@ make_status_json() {
 {
   "repo": "o/r", "number": 559, "queue_active": false,
   "merge_methods": ["merge", "rebase"],
+  "head": "feature/x", "cross_repository": false,
   "headOid": "$HEAD_OID", "author": "${PR_AUTHOR:-the-author}",
   "author_is_bot": ${AUTHOR_IS_BOT:-false},
   "copilot_quota_exhausted": true, "copilot_error_count": 2,
