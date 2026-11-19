@@ -102,6 +102,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# A GitLab merge request (host/group/project, #331) is read by pr-status.sh,
+# but this script merges with gh only. Refuse before anything is called and
+# name the command pr-status.sh prints for it.
+case "$REPO" in
+  */*/*)
+    case "${REPO%%/*}" in
+      *.*) die "$REPO is a GitLab project; pr-merge.sh merges GitHub pull requests only. Read the gate with pr-status.sh -R $REPO ${PR:-<iid>} and run the cmd it prints on NEXT: merge" ;;
+    esac ;;
+esac
+
 command -v gh >/dev/null || die "gh not found"
 command -v jq >/dev/null || die "jq not found"
 [ -x "$SCRIPT_DIR/pr-status.sh" ] || die "pr-status.sh not found next to this script"
