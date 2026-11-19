@@ -198,9 +198,10 @@ git -C "$lazy" config remote.origin.url "file://$WORK/nowhere"
 git -C "$lazy" config remote.origin.promisor true
 printf '#!/bin/sh\ntouch "%s/uploadpack-ran"\nexit 1\n' "$WORK" > "$WORK/up.sh"; chmod +x "$WORK/up.sh"
 git -C "$lazy" config remote.origin.uploadpack "$WORK/up.sh"
+git -C "$lazy" config protocol.file.allow always
 git -C "$lazy" update-index --add --cacheinfo 100644,1111111111111111111111111111111111111111,f.txt
 marker_gate "$other" "git -C $lazy commit -m x" >/dev/null
-check "a partial clone's missing blob does not start a fetch" 0 "$([ -e "$WORK/uploadpack-ran" ] && echo 1 || echo 0)"
+check "a partial clone's missing blob does not start a fetch, protocol.file.allow=always or not" 0 "$([ -e "$WORK/uploadpack-ran" ] && echo 1 || echo 0)"
 
 # Fails open outside a repository — a hook that hard-errors would block every
 # command in a non-repo directory.

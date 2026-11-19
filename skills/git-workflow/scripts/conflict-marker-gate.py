@@ -65,7 +65,10 @@ LOCATION_OPTIONS = ("-C", "--git-dir", "--work-tree")
 # Blobs are read with cat-file, which applies no textconv, and the diff runs
 # without external diff drivers.
 SAFE_GIT = ("git", "-c", "core.fsmonitor=false", "-c", "protocol.allow=never")
-SAFE_ENV = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
+# GIT_ALLOW_PROTOCOL set (empty: no transport) makes git ignore every
+# protocol.*.allow entry, which a repository could otherwise set back to
+# "always" per protocol and so outrank the -c above.
+SAFE_ENV = {**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": ""}
 
 
 def commit_locations(command):
