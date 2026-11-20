@@ -833,7 +833,8 @@ local_head_sync() {
 # --json contract and NEXT vocabulary the GitHub path emits (#331).
 # glab binds a token in the environment (GITLAB_TOKEN and its aliases) to its
 # default host: the host GITLAB_HOST, GL_HOST, GITLAB_URI or GITLAB_URL names
-# (as a bare host or a URL), or gitlab.com when none is set. A mistyped -R must
+# (as a bare host or a URL), else the host in glab's configuration, else
+# gitlab.com. A mistyped -R must
 # not hand that token to another host, so it is passed on only for the default
 # host; any other host gets the token glab stored for it, or none.
 env_host() { local h="${1#*://}"; printf '%s' "${h%%/*}"; }
@@ -843,7 +844,10 @@ glab_default_host() {
     h=$(env_host "$v")
     [ -n "$h" ] && { printf '%s' "$h"; return; }
   done
-  printf 'gitlab.com'
+  # No host variable: glab's own configured default host, else gitlab.com.
+  h=$(glab config get host 2>/dev/null) || h=""
+  h=$(env_host "$h")
+  printf '%s' "${h:-gitlab.com}"
 }
 gl() {
   if [ "$FORGE_HOST" = "$(glab_default_host)" ]; then

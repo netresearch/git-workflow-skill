@@ -30,6 +30,10 @@ says() { case "$3" in *"$2"*) echo "  ok   $1" ;; *) echo "  FAIL $1: output doe
 # list prints the page files list.1, list.2 … one array each, as glab does.
 cat > "$STUB/glab" <<STUBEOF
 #!/usr/bin/env bash
+if [ "\$1" = "config" ] && [ "\$2" = "get" ] && [ "\$3" = "host" ]; then
+  printf '%s\n' "\${STUB_CONFIG_HOST:-}"
+  exit 0
+fi
 printf '%s\n' "\$*" >> "$WORK/glab.log"
 printf 'token=%s\n' "\${GITLAB_TOKEN:-}" >> "$WORK/glab.env"
 paginate=0; path=""
@@ -216,6 +220,27 @@ check "the token reaches gitlab.com" "1" "$([ "$(grep -c 'token=secret' "$WORK/g
 : > "$WORK/glab.env"
 GITLAB_TOKEN=secret GITLAB_HOST='' GL_HOST='' GITLAB_URI='' GITLAB_URL='' run --json >/dev/null
 check "and no other host" "0" "$(grep -c 'token=secret' "$WORK/glab.env")"
+
+echo "case 14d: no host variable, glab configured for the host — the token reaches it"
+: > "$WORK/glab.env"
+GITLAB_TOKEN=secret GITLAB_HOST='' GL_HOST='' GITLAB_URI='' GITLAB_URL='' STUB_CONFIG_HOST=gitlab.example.com run --json >/dev/null
+check "the configured host gets the token" "1" "$([[ "$(grep -c 'token=secret' "$WORK/glab.env")" -gt 0 ]] && echo 1 || echo 0)"
+
+echo "case 16: an explicit false from GitLab stays false"
+fixture mergeable success; mr_set '.blocking_discussions_resolved = false'
+out=$(run --json)
+check "field" "false" "$(jq -r .blocking_discussions_resolved <<<"$out")"
+check "action" "resolve-threads" "$(jq -r .next.action <<<"$out")"
+fixture mergeable success; mr_set '.force_remove_source_branch = false'
+echo '{"merge_method": "merge", "squash_option": "default_on", "remove_source_branch_after_merge": true}' > "$FX/project.json"
+check "an explicit false on the merge request wins" "false" "$(run --json | jq -r .remove_source_branch)"
+
+echo "case 17: a job retried after a green pipeline — await-checks, not merge"
+fixture mergeable success
+echo '[{"name": "test", "status": "pending", "allow_failure": false}]' > "$FX/jobs.json"
+out=$(run --json)
+check "action" "await-checks" "$(jq -r .next.action <<<"$out")"
+check "not settled" "false" "$(jq -r .checks_settled <<<"$out")"
 
 echo "case 15: a GitHub owner/repo is still GitHub"
 : > "$WORK/gh.log"; : > "$WORK/glab.log"

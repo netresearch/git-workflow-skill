@@ -73,7 +73,7 @@ were PR-status probing**, the rulesets endpoint was queried exactly once, and
 number of subgroups) and pass the merge request iid:
 
 ```bash
-pr-status.sh -R gitlab.example.com/group/project 123          # or --json, --watch
+bash "$GW/scripts/pr-status.sh" -R gitlab.example.com/group/project 123   # or --json, --watch
 ```
 
 The first segment must be a host name; that is how the script tells a GitLab

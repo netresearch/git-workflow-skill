@@ -75,10 +75,13 @@ def running:  . as $s | ["created","pending","running","waiting_for_resource","p
       cancelled: $cancelled,
       stale: 0
     },
-    checks_settled: ($pl == null or ($pl_on_head and $pl_done)),
+    # A job retried after the pipeline was read is pending although the
+    # pipeline status still says success: unfinished jobs keep it unsettled.
+    checks_settled: ($pl == null or ($pl_on_head and $pl_done and ($pending | length) == 0)),
     threads: ($open_threads | length),
     unresolved_threads: ($open_threads | length),
-    blocking_discussions_resolved: ($mr.blocking_discussions_resolved // true),
+    # `//` would replace an explicit false too; default only a missing value.
+    blocking_discussions_resolved: (if $mr.blocking_discussions_resolved == null then true else $mr.blocking_discussions_resolved end),
     has_conflicts: ($mr.has_conflicts // false),
     approved_by: [(.approvals.approved_by // [])[] | .user.username],
     approvals_required: (.approvals.approvals_required // null),
@@ -92,7 +95,9 @@ def running:  . as $s | ["created","pending","running","waiting_for_resource","p
     squash_option: ($ps.squash_option // ""),
     queue_active: false,
     queue_entry: null,
-    remove_source_branch: ($mr.force_remove_source_branch // $ps.remove_source_branch_after_merge // false)
+    remove_source_branch: (if $mr.force_remove_source_branch != null then $mr.force_remove_source_branch
+                           elif $ps.remove_source_branch_after_merge != null then $ps.remove_source_branch_after_merge
+                           else false end)
   }
 | . as $s
 # glab reads the host from --repo only in URL form; host/group/project would be
@@ -116,7 +121,7 @@ def running:  . as $s | ["created","pending","running","waiting_for_resource","p
          {action:"triage-ci", why:"pipeline \($pl.id) was canceled — re-run it, do not debug"}
     elif $pl != null and ($pl.status == "manual") then
          {action:"triage-ci", why:"pipeline \($pl.id) waits for a manual job"}
-    elif $pl != null and ($pl.status | running) then
+    elif $pl != null and (($pl.status | running) or ($pending | length) > 0) then
          {action:"await-checks", why:"pipeline \($pl.id) is \($pl.status) (\($pending | length) job(s) not finished)"}
     elif ($open_threads | length) > 0 or ($s.blocking_discussions_resolved | not) then
          {action:"resolve-threads", why:"\($open_threads | length) unresolved thread(s)"}
