@@ -71,6 +71,28 @@ SAFE_GIT = ("git", "-c", "core.fsmonitor=false", "-c", "protocol.allow=never")
 SAFE_ENV = {**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": ""}
 
 
+def _global_options(tokens, start):
+    """Location options among the git global options at tokens[start:].
+
+    Returns (location, index of the first token after the options).
+    """
+    location = []
+    j = start
+    while j < len(tokens) and tokens[j].startswith("-"):
+        option = tokens[j]
+        name, has_value, value = option.partition("=")
+        if option in ("-C", "-c", "--git-dir", "--work-tree"):
+            j += 1
+            if option in LOCATION_OPTIONS and j < len(tokens):
+                location += [option, os.path.expanduser(tokens[j])]
+        elif has_value and name in LOCATION_OPTIONS[1:]:
+            # No tilde expansion: bash leaves `--git-dir=~/x` as it is, so
+            # git receives the tilde, and the gate must read the same path.
+            location.append(f"{name}={value}")
+        j += 1
+    return location, j
+
+
 def commit_locations(command):
     """Location options of each `git commit` in the shell line, one list per commit.
 
@@ -89,20 +111,7 @@ def commit_locations(command):
         if token != "git":
             continue
         # Skip global options and their values (-C <dir>, -c <k=v>, --git-dir=…)
-        location = []
-        j = i + 1
-        while j < len(tokens) and tokens[j].startswith("-"):
-            option = tokens[j]
-            name, has_value, value = option.partition("=")
-            if option in ("-C", "-c", "--git-dir", "--work-tree"):
-                j += 1
-                if option in LOCATION_OPTIONS and j < len(tokens):
-                    location += [option, os.path.expanduser(tokens[j])]
-            elif has_value and name in LOCATION_OPTIONS[1:]:
-                # No tilde expansion: bash leaves `--git-dir=~/x` as it is, so
-                # git receives the tilde, and the gate must read the same path.
-                location.append(f"{name}={value}")
-            j += 1
+        location, j = _global_options(tokens, i + 1)
         if j < len(tokens) and tokens[j] == "commit":
             commits.append(location)
     return commits

@@ -185,7 +185,7 @@ printf '<<<<<<< HEAD\nx\n>>>>>>> o\n' > "$evil/f.txt"; git -C "$evil" add f.txt
 printf '#!/bin/sh\ntouch "%s/fsmonitor-ran"\n' "$WORK" > "$WORK/fsmon.sh"; chmod +x "$WORK/fsmon.sh"
 git -C "$evil" config core.fsmonitor "$WORK/fsmon.sh"
 out=$(marker_gate "$other" "git -C $evil commit -m x")
-check "the -C repository's core.fsmonitor does not run" 0 "$([ -e "$WORK/fsmonitor-ran" ] && echo 1 || echo 0)"
+check "the -C repository's core.fsmonitor does not run" 0 "$([[ -e "$WORK/fsmonitor-ran" ]] && echo 1 || echo 0)"
 check "its staged markers are still denied" 1 "$(grep -ci 'deny' <<<"$out")"
 
 # A partial clone fetches a missing blob from its promisor remote when it is
@@ -201,7 +201,7 @@ git -C "$lazy" config remote.origin.uploadpack "$WORK/up.sh"
 git -C "$lazy" config protocol.file.allow always
 git -C "$lazy" update-index --add --cacheinfo 100644,1111111111111111111111111111111111111111,f.txt
 marker_gate "$other" "git -C $lazy commit -m x" >/dev/null
-check "a partial clone's missing blob does not start a fetch, protocol.file.allow=always or not" 0 "$([ -e "$WORK/uploadpack-ran" ] && echo 1 || echo 0)"
+check "a partial clone's missing blob does not start a fetch, protocol.file.allow=always or not" 0 "$([[ -e "$WORK/uploadpack-ran" ]] && echo 1 || echo 0)"
 
 # A tilde: bash expands `-C ~/x` but leaves `--git-dir=~/x` alone, and the
 # gate reads the path git receives.
@@ -222,7 +222,7 @@ chmod +x "$wrap/git"
 printf '{"tool_input":{"command":"%s"}}' "git -C $repo commit -m x" \
     | ( cd "$other" && PATH="$wrap:$PATH" python3 "$SCRIPTS/conflict-marker-gate.py" >/dev/null 2>&1 )
 calls=$(wc -l < "$WORK/git-calls")
-check "the gate made git calls through the wrapper" 1 "$([ "$calls" -gt 0 ] && echo 1 || echo 0)"
+check "the gate made git calls through the wrapper" 1 "$([[ "$calls" -gt 0 ]] && echo 1 || echo 0)"
 check "every call sets an empty GIT_ALLOW_PROTOCOL" "$calls" "$(grep -c 'allow=\[\] set=yes' "$WORK/git-calls")"
 check "every call sets GIT_NO_LAZY_FETCH" "$calls" "$(grep -c 'lazy=1' "$WORK/git-calls")"
 check "every call refuses transports and fsmonitor" "$calls" "$(grep -c 'core.fsmonitor=false -c protocol.allow=never' "$WORK/git-calls")"
