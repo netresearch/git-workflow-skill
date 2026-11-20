@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: CC-BY-SA-4.0
 # SPDX-FileCopyrightText: Netresearch DTT GmbH
 name: git-workflow
-description: "Use when branching strategies, implementing Conventional Commits, creating or reviewing PRs, dependent/stacked PR/MR safeguards, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, verifying a merge didn't silently drop changes, syncing a long-diverged branch (e.g. master into integration), rebasing a long-lived branch onto a moved base or splitting one into several PRs, integrating Git with CI/CD, setting up git hooks (lefthook, captainhook, husky, pre-commit), debugging hook-install failures in git worktrees, or working in a bare-repo plus per-branch-worktree layout, including consolidating a directory that holds both a plain clone and a .bare. The pull-request tooling is GitHub-only; references/pull-request-workflow.md carries the GitLab equivalents. Not for creating releases (use github-release) or diagnosing BLOCKED/won't-merge PRs (use github-project)."
+description: "Use when branching strategies, implementing Conventional Commits, creating or reviewing PRs, dependent/stacked PR/MR safeguards, resolving PR review comments, merging PRs (including CI verification, auto-merge queues, and post-merge cleanup), managing PR review threads, merging PRs with signed commits, handling merge conflicts, verifying a merge didn't silently drop changes, syncing a long-diverged branch (e.g. master into integration), rebasing a long-lived branch onto a moved base or splitting one into several PRs, integrating Git with CI/CD, setting up git hooks (lefthook, captainhook, husky, pre-commit), debugging hook-install failures in git worktrees, or working in a bare-repo plus per-branch-worktree layout, including consolidating a directory that holds both a plain clone and a .bare. pr-status.sh also reads GitLab MRs; references/pull-request-workflow.md carries the other GitLab equivalents. Not for creating releases (use github-release) or diagnosing BLOCKED/won't-merge PRs (use github-project)."
 license: "(MIT AND CC-BY-SA-4.0). See LICENSE-MIT and LICENSE-CC-BY-SA-4.0"
 compatibility: "Requires uv (runs the scripts on Python 3.11 or later), git, gh CLI; yq for .spec-cleanup.yml. The plugin hook fails closed from Claude Code v2.1.295 (onFailure)."
 metadata:
@@ -18,7 +18,7 @@ allowed-tools: Bash(git:*) Bash(gh:*) Read Write
 
 Releases: `github-release`. BLOCKED-PR diagnosis: `github-project`.
 
-**GitHub only.** Everything below the branching and commit sections — `pr-status.sh`, `pr-merge.sh`, the merge gate, review threads — speaks GitHub GraphQL. For a GitLab merge request the equivalent `glab` calls are in `references/pull-request-workflow.md` § *GitLab: the same gate with `glab`*.
+**GitHub first.** `pr-status.sh` also reads a GitLab merge request (`-R host/group/project <iid>`, needs `glab`) and prints the `glab` merge command; `pr-merge.sh`, `pr-sweep.sh`, the merge gate and review-thread handling speak GitHub only. For the rest of a GitLab merge request the `glab` calls are in `references/pull-request-workflow.md` § *GitLab: the same gate with `glab`*.
 
 ## Critical Rules (Non-Negotiable)
 
@@ -85,7 +85,7 @@ Before merging: threads resolved, CI green (incl. annotations), rebased, signed,
 ```bash
 ./scripts/verify-git-workflow.sh /path/to/repository
 # Gate state, next action:
-./scripts/pr-status.sh [-R owner/repo] [PR] [--json] [--watch] [--stuck-after MIN]
+./scripts/pr-status.sh [-R owner/repo | -R host/group/project] [PR] [--json] [--watch] [--stuck-after MIN]
 # Merge; refuses when the gate is shut:
 ./scripts/pr-merge.sh [-R owner/repo] [PR] [--dry-run|--self-reviewed|--retarget-stacked]
 # Many PRs (`owner/repo N` per line) to merge; stops on any NEXT it does not handle:

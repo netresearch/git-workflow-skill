@@ -69,23 +69,38 @@ Measured on a 40-PR rollout that did not have it: **183 of 370 shell calls
 were PR-status probing**, the rulesets endpoint was queried exactly once, and
 `copilot_code_review` blocked four merges by surprise.
 
-**GitHub only.** The script speaks GitHub GraphQL, so it cannot answer for a
-GitLab merge request — `-R git.netresearch.de/group/project` is accepted at the
-command line and then fails with a bare `pr-status: GraphQL query failed`, and
-`--watch` produces nothing at all until it is killed. Nothing in the name says
-so, which is how a GitLab MR ended up behind a watcher that could never fire.
-For GitLab the equivalent is one `glab api` call:
+**GitLab merge requests.** Name the project as `host/group/project` (any
+number of subgroups) and pass the merge request iid:
 
 ```bash
-P=$(printf %s 'group/project' | jq -sRr @uri)   # the path must be URI-encoded
-glab api "projects/$P/merge_requests/123" \
-  | jq '{state, detailed_merge_status, pipeline: .head_pipeline.status}'
-glab api "projects/$P/merge_requests/123/discussions" \
-  | jq '[.[] | select(.notes[0].resolvable==true and .notes[0].resolved==false)] | length'
+bash "$GW/scripts/pr-status.sh" -R gitlab.example.com/group/project 123   # or --json, --watch
 ```
 
-`detailed_merge_status` is GitLab's counterpart to `mergeStateStatus` and,
-unlike it, does name the reason.
+The first segment must be a host name; that is how the script tells a GitLab
+project from a GitHub `owner/repo`. It reads the merge request with `glab api`
+(`gh` is not needed): the merge request with its `head_pipeline`, the
+approvals, the discussions, the project's merge settings and the jobs of the
+head pipeline. NEXT uses the same actions as on GitHub, so `--watch` and
+`--ignore-action` work unchanged.
+
+`detailed_merge_status` names only the gates the project enforces, so the
+pipeline, the unresolved threads and `has_conflicts` are read on their own: a
+red pipeline answers `fix-ci` even where the project does not require a green
+one. A pipeline whose `sha` is not the merge request's head answers `wait`,
+except a merged results or merge train pipeline (`refs/merge-requests/<iid>/merge`
+or `/train`) whose merge commit has the head as a parent.
+A value the ladder does not map, such as the Jira-association or title-regex
+check, answers `blocked` with the raw value in the reason.
+
+On `NEXT: merge` the `cmd` line is a `glab api … /merge -f squash=false` call:
+`pr-merge.sh` and `pr-sweep.sh` merge GitHub pull requests only and refuse a
+GitLab project. `squash=false` matters because a project with
+`squash_option: default_on` squashes a plain `glab mr merge`. A project with
+`squash_option: always` answers `blocked`.
+
+GitLab answers `mergeable` without an approval when the project has no
+approval rule. The merge line then says that nobody approved; the review rule
+of this skill still applies.
 
 ## Then Merge: `scripts/pr-merge.sh`
 

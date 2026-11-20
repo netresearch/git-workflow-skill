@@ -32,6 +32,10 @@
 #   pr-status.sh                      # PR for the current branch
 #   pr-status.sh 123                  # PR number in the current repo
 #   pr-status.sh -R owner/repo 123
+#   pr-status.sh -R gitlab.example.com/group/project 7
+#                                     # a GitLab merge request (iid), read
+#                                     # with glab; NEXT and --watch work the
+#                                     # same, the merge command is printed
 #   pr-status.sh --json               # machine-readable, no prose
 #   pr-status.sh --watch              # return on the FIRST actionable event
 #   pr-status.sh --watch --ignore-action request-review
@@ -109,6 +113,15 @@
 #   rulesets rules_fetched required_contexts undispatched unsigned
 #   classic_protection last_push_rulesets awaiting_approval
 #   next
+#
+# A GitLab merge request emits a subset, plus forge: "gitlab": state mergeable
+# mergeState draft number title repo url author author_is_bot viewer
+# viewer_is_author base head headOid cross_repository pipeline checks
+# checks_settled threads unresolved_threads blocking_discussions_resolved
+# has_conflicts approved_by approvals_required reviewDecision
+# has_review_on_head coderabbit_on_head copilot_quota_exhausted
+# copilot_error_count self_review_on_head merge_methods squash_option
+# queue_active queue_entry remove_source_branch next. Any other key is absent.
 #
 # `checks` is {total,pass,fail,pending,skip,...} and `next` is
 # {action,why,cmd} — the same two things the prose rendering leads with.
@@ -248,14 +261,33 @@ if [ -n "$IGNORE" ] && [ "$WATCH" = "0" ]; then
   die "--ignore-action is only meaningful with --watch"
 fi
 
-command -v gh  >/dev/null || die "gh not found"
+# A GitLab merge request is named host/group[/subgroup…]/project: three or
+# more segments, the first one a host name (#331). Everything else is GitHub.
+FORGE=github; FORGE_HOST=""; FORGE_PROJECT=""
+case "$REPO" in
+  */*/*)
+    case "${REPO%%/*}" in
+      *.*) FORGE=gitlab; FORGE_HOST="${REPO%%/*}"; FORGE_PROJECT="${REPO#*/}" ;;
+      *) ;;
+    esac ;;
+  *) ;;
+esac
+if [ "$FORGE" = "gitlab" ]; then
+  command -v glab >/dev/null || die "glab not found; it reads the GitLab merge request $REPO"
+else
+  command -v gh >/dev/null || die "gh not found"
+fi
 command -v jq  >/dev/null || die "jq not found"
 # Checked once here: a missing program would otherwise make every --watch poll
 # read as an unreadable gate until --max-wait ran out.
-for f in pr-status-evaluate.jq pr-status-investigate.jq; do
+for f in pr-status-evaluate.jq pr-status-investigate.jq pr-status-gitlab.jq; do
   [ -f "$SCRIPT_DIR/$f" ] || die "$SCRIPT_DIR/$f is missing; it ships beside pr-status.sh"
 done
 
+if [ "$FORGE" = "gitlab" ]; then
+  [ -n "$PR" ] || die "pass the merge request number (iid) for $REPO"
+  case "$PR" in *[!0-9]*) die "\"$PR\" is not a merge request number" ;; *) ;; esac
+fi
 if [ -z "$REPO" ]; then
   REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) \
     || die "not in a repo; pass -R owner/repo"
@@ -266,19 +298,22 @@ if [ -z "$PR" ]; then
 fi
 OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
 
-# This script speaks GitHub GraphQL and nothing else. A GitLab project reads
-# host/group/project, which parses here without complaint and then dies deep in
-# the query as a bare "GraphQL query failed" — and --watch heartbeats into its
-# timeout on a query that can never succeed. Refuse it up front and name where
-# the answer lives instead (#250).
-case "$REPO" in
-  */*/*)
-    die "\"$REPO\" is not owner/repo. pr-status.sh is GitHub-only; for a GitLab merge request see references/pull-request-workflow.md § \"GitLab: the same gate with glab\"" ;;
-esac
-case "${OWNER}" in
-  *.*)
-    die "\"$OWNER\" looks like a host, not a GitHub owner. pr-status.sh is GitHub-only; for a GitLab merge request see references/pull-request-workflow.md § \"GitLab: the same gate with glab\"" ;;
-esac
+# A repository name that is neither owner/repo nor host/group/project would
+# parse here without complaint and then die deep in the query as a bare
+# "GraphQL query failed", and --watch would heartbeat into its timeout on a
+# query that can never succeed. Refuse it up front (#250).
+if [ "$FORGE" = "github" ]; then
+  case "$REPO" in
+    */*/*)
+      die "\"$REPO\" is neither owner/repo (GitHub) nor host/group/project (GitLab: the first segment must be a host name)" ;;
+    *) ;;
+  esac
+  case "${OWNER}" in
+    *.*)
+      die "\"$OWNER\" looks like a host, not a GitHub owner. A GitLab merge request is named host/group/project, e.g. gitlab.example.com/group/project" ;;
+    *) ;;
+  esac
+fi
 
 # --------------------------------------------------------- quota marker -----
 # The Copilot review quota is account-wide and monthly; the evidence for it is
@@ -791,7 +826,118 @@ local_head_sync() {
   jq -c --arg n "$note" '.next.note = (if .next.note then "\(.next.note); \($n)" else $n end)' <<<"$out"
 }
 
+# ------------------------------------------------------------- GitLab -----
+# One read per resource: the merge request (with head_pipeline), its
+# approvals, its discussions (paginated), the project's merge settings, and the
+# jobs of the head pipeline. pr-status-gitlab.jq turns them into the same
+# --json contract and NEXT vocabulary the GitHub path emits (#331).
+# glab binds a token in the environment (GITLAB_TOKEN and its aliases) to its
+# default host: the host GITLAB_HOST, GL_HOST, GITLAB_URI or GITLAB_URL names
+# (as a bare host or a URL), else the host in glab's configuration, else
+# gitlab.com. A mistyped -R must
+# not hand that token to another host, so it is passed on only for the default
+# host; any other host gets the token glab stored for it, or none.
+env_host() { local h="${1#*://}"; printf '%s' "${h%%/*}"; }
+glab_default_host() {
+  local v h
+  for v in "${GITLAB_HOST:-}" "${GL_HOST:-}" "${GITLAB_URI:-}" "${GITLAB_URL:-}"; do
+    h=$(env_host "$v")
+    [ -n "$h" ] && { printf '%s' "$h"; return; }
+  done
+  # No host variable: glab's own configured default host, else gitlab.com.
+  h=$(glab config get host 2>/dev/null) || h=""
+  h=$(env_host "$h")
+  printf '%s' "${h:-gitlab.com}"
+}
+gl() {
+  if [ "$FORGE_HOST" = "$(glab_default_host)" ]; then
+    glab api --hostname "$FORGE_HOST" "$@"
+  else
+    env -u GITLAB_TOKEN -u GITLAB_ACCESS_TOKEN -u OAUTH_TOKEN \
+      glab api --hostname "$FORGE_HOST" "$@"
+  fi
+}
+
+# A paginated list: glab --paginate prints one JSON array per page, so the
+# pages are merged; a failed read is a failure, never an empty list.
+gl_list() {
+  local out
+  out=$(gl --paginate "$1") || return 1
+  jq -cs 'add // []' <<<"$out"
+}
+
+snapshot_gitlab() {
+  local enc mrp mr ap disc ps jobs pid viewer
+  enc=$(printf '%s' "$FORGE_PROJECT" | jq -sRr @uri)
+  mrp="projects/$enc/merge_requests/$PR"
+  mr=$(gl "$mrp") || die "could not read merge request $FORGE_PROJECT!$PR on $FORGE_HOST"
+  # GitLab recomputes mergeability lazily, like GitHub: a first read can
+  # answer unchecked or checking. Ask once more before building a verdict on it.
+  case "$(jq -r '.detailed_merge_status // ""' <<<"$mr")" in
+    unchecked|checking|preparing)
+      if [ "$(jq -r '.state' <<<"$mr")" = "opened" ]; then
+        sleep 2
+        mr=$(gl "$mrp") || die "could not read merge request $FORGE_PROJECT!$PR on $FORGE_HOST"
+      fi ;;
+    *) ;;
+  esac
+  ap=$(gl "$mrp/approvals") || die "could not read the approvals of $FORGE_PROJECT!$PR"
+  disc=$(gl_list "$mrp/discussions?per_page=100") || die "could not read the discussions of $FORGE_PROJECT!$PR"
+  ps=$(gl "projects/$enc") || die "could not read the project settings of $FORGE_PROJECT"
+  jobs='[]'
+  pid=$(jq -r '.head_pipeline.id // empty' <<<"$mr")
+  # The pipeline of a merge request from a fork usually runs in the fork, and
+  # the target project answers 404 for it: read it in its own project.
+  local plproj
+  plproj=$(jq -r '.head_pipeline.project_id // empty' <<<"$mr")
+  [ -n "$plproj" ] || plproj="$enc"
+  if [ -n "$pid" ]; then
+    jobs=$(gl_list "projects/$plproj/pipelines/$pid/jobs?per_page=100") \
+      || die "could not read the jobs of pipeline $pid"
+  fi
+  # A merged results pipeline (ref .../merge) and a merge train pipeline (ref
+  # .../train) run on a merge commit:
+  # read that commit's parents, so the evaluator can tell it belongs to the head.
+  local parents='[]' plsha plref
+  plsha=$(jq -r '.head_pipeline.sha // ""' <<<"$mr")
+  plref=$(jq -r '.head_pipeline.ref // ""' <<<"$mr")
+  if [ -n "$plsha" ] && [ "$plsha" != "$(jq -r '.sha' <<<"$mr")" ] \
+     && { [ "$plref" = "refs/merge-requests/$PR/merge" ] || [ "$plref" = "refs/merge-requests/$PR/train" ]; }; then
+    parents=$(gl "projects/$plproj/repository/commits/$plsha" | jq -c '.parent_ids // []') \
+      || die "could not read the merge commit $plsha of pipeline $pid"
+  fi
+  viewer=$(gl user 2>/dev/null | jq -r '.username // ""' 2>/dev/null) || viewer=""
+  # Through stdin, not --argjson: discussions and jobs grow with the merge
+  # request and would pass the argument length limit.
+  printf '%s\n' "$mr" "$ap" "$disc" "$ps" "$jobs" "$parents" \
+    | jq -cn --arg host "$FORGE_HOST" --arg project "$FORGE_PROJECT" --arg viewer "$viewer" \
+        '[inputs] as [$mr, $ap, $d, $ps, $j, $mp]
+         | {host: $host, project: $project, viewer: $viewer, mr: $mr,
+            approvals: $ap, discussions: $d, project_settings: $ps, jobs: $j,
+            merge_parents: $mp}' \
+    | jq -c -f "$SCRIPT_DIR/pr-status-gitlab.jq"
+}
+
+render_gitlab() {
+  jq -r '
+    "MR !\(.number)  \(.title)",
+    "  state       : \(.state)\(if .draft then " (DRAFT)" else "" end)  detailed_merge_status=\(.mergeState)  has_conflicts=\(.has_conflicts)",
+    "  head        : \(.headOid[0:8]) on \(.head) -> \(.base)",
+    "  pipeline    : \(if .pipeline == null then "none" else "\(.pipeline.id) \(.pipeline.status)\(if .pipeline.on_head then "" else " (for an older head)" end)" end) — \(.checks.pass) pass, \(.checks.fail) fail, \(.checks.pending) pending, \(.checks.skip) skip (of \(.checks.total) jobs)",
+    (if (.checks.failing|length) > 0 then "  failing     : \(.checks.failing|join(", "))" else empty end),
+    "  approvals   : \(if (.approved_by|length) > 0 then (.approved_by|join(", ")) else "none" end)",
+    "  threads     : \(.unresolved_threads) unresolved",
+    "  merge       : method=\(.merge_methods|join(",")) squash_option=\(.squash_option)",
+    "",
+    "NEXT: \(.next.action) — \(.next.why)",
+    (if .next.method then "  method: \(.next.method)" else empty end),
+    (if .next.note   then "  note  : \(.next.note)"   else empty end),
+    (if .next.cmd    then "  cmd   : \(.next.cmd)"    else empty end)
+  '
+}
+
 snapshot() {
+  if [ "$FORGE" = "gitlab" ]; then snapshot_gitlab; return; fi
   local g r base st
   g=$(collect) || die "GraphQL query failed"
 
@@ -954,7 +1100,9 @@ snapshot() {
 }
 
 emit() {
-  if [ "$JSON" = "1" ]; then jq . <<<"$1"; else render <<<"$1"; fi
+  if [ "$JSON" = "1" ]; then jq . <<<"$1"
+  elif [ "$FORGE" = "gitlab" ]; then render_gitlab <<<"$1"
+  else render <<<"$1"; fi
 }
 
 # ---------------------------------------------------------------- run -------

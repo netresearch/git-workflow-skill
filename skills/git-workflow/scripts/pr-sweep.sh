@@ -132,7 +132,8 @@ while IFS= read -r line || [ -n "$line" ]; do
   [ -z "$r" ] && continue
   [ -n "$num" ] && [ -z "$extra" ] || die "$LIST:$n: expected 'owner/repo number', got '$line'"
   case "$r" in
-    */*/*|/*|*/) die "$LIST:$n: '$r' is not owner/repo" ;;
+    */*/*) die "$LIST:$n: '$r' is not owner/repo; pr-sweep.sh merges GitHub pull requests only, and a GitLab project (host/group/project) is read with pr-status.sh" ;;
+    /*|*/) die "$LIST:$n: '$r' is not owner/repo" ;;
     */*) ;;
     *) die "$LIST:$n: '$r' is not owner/repo" ;;
   esac
