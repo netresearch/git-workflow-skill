@@ -354,6 +354,20 @@ Checking the config matters: a project can use `black`+`isort` where you assumed
 `ruff format`, and a habit built around only one of them still bounces on every
 commit in the other.
 
+### Slow hooks: one `git commit` per call, and check each one landed
+
+With hook managers that run long or leave work behind (CaptainHook, lefthook,
+a `post-commit` hook that starts something in the background), chaining
+several commits in one command — `git add a && git commit … && git add b &&
+git commit …`, or a loop — has been observed to lose commits in the middle of
+the chain: one of them fails on the index lock while the rest succeed, and the
+chain's output scrolls past it. Sequential commands do not race by themselves,
+so the cause is whatever the hook leaves running; it is not established for
+every hook manager. The safe shape does not depend on it: one `git commit` per
+invocation, and after each, compare `HEAD` with what you expected instead of
+reading the commit's own output (see "Prove the commit landed before reporting
+it" in `commit-conventions.md`).
+
 ### `--no-verify` only after confirming CI parity
 
 A local hook the CI pipeline does **not** run is not a real merge gate (see

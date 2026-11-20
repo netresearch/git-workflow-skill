@@ -51,7 +51,11 @@ pipelines, and hard-wrapping prose is right in one and wrong in the other.
 - **`.md` files** (README, CHANGELOG, docs) render as CommonMark: a single
   newline inside a paragraph collapses to a **space**, so hard-wrapping the
   source at ~80 columns reflows invisibly on render. Match the file's existing
-  wrap.
+  wrap, and measure it rather than guess: the longest line of the neighbouring
+  paragraphs (`awk '{print length}' FILE | sort -rn | head -1`, or the same over
+  the section you are adding to). A file wrapped at 80 columns that receives
+  one unwrapped paragraph gets lines of a thousand characters and a diff that
+  rewrites far more than the change.
 - **GitHub comment surfaces** — PR/MR descriptions, review comments, issue/ticket
   bodies, and **release notes** — render with `breaks: true`: every single
   newline becomes a `<br>`. Hard-wrapping there carries the breaks into the

@@ -204,6 +204,32 @@ acknowledged, and the branches were then rebased onto a merged sibling: the
 force-push discarded all three runs and no review ever arrived. The PRs sat
 `CLEAN` with `reviews: NONE on current head` and nothing said why.
 
+#### Before asking a person, measure who reviews and merges here
+
+A rule like "a feature PR needs a landed review" assumes somebody exists who
+reviews. Check that before planning around it, and when you need a human, pick
+the one the history names rather than the one you remember. Two measurements,
+taken per topic rather than per repository:
+
+```bash
+# Who merges: distribution over the last 100 merged PRs
+gh pr list --repo OWNER/REPO --state merged --limit 100 --json mergedBy \
+  --jq '[.[].mergedBy.login] | group_by(.) | map("\(length) \(.[0])") | .[]'
+
+# Who works on what this change touches: authorship per path
+git log --since=1.year --format='%an' origin/main -- <paths> | sort | uniq -c | sort -rn
+```
+
+The two often disagree. One maintainer can have merged most PRs overall while
+the directory a change touches was worked on this year by someone else alone —
+who then also wrote the commits the change collides with. Name that person,
+with the counts. If the history shows a de-facto solo repository (every prior
+PR self-merged without review, nobody else commits), the review rule cannot be
+satisfied by another person. That does not license merging silently: read the
+diff yourself, record it as described in "Putting the self-review on the
+record" below, and state the deviation in the PR. Merge authority is a
+separate question that the measurement does not answer.
+
 #### CodeRabbit answers when it declines, and does not catch up afterwards
 
 These properties decide whether waiting for CodeRabbit is worth anything:
@@ -3797,6 +3823,46 @@ Defend:
 3. **`gh pr diff` vs the file you `Read` disagree?** The branch was force-pushed
    between calls — re-fetch and re-derive from the committed state on origin.
 
+### Contributing into a parallel session's open PR: prove it is idle first
+
+When another session already has an open PR for the same work, adding to its
+branch is usually better than opening a competing PR. It is only safe when
+that session is not working on the branch right now — rule 2 above still
+holds, so measure instead of trusting the worktree. Run these from outside
+that worktree (Linux; the `/proc` scan is what catches a shell or test runner
+sitting in it, which an argv search for the path misses and which also matches
+the shell running the search):
+
+```bash
+WT=/path/to/their/worktree
+git -C "$WT" status --porcelain     # must print nothing
+git -C "$WT" log --oneline @{u}..   # must print nothing; an error counts as "not idle"
+# processes whose cwd is inside the worktree, except this shell
+for p in /proc/[0-9]*; do
+  case "$(readlink "$p/cwd" 2>/dev/null)" in
+    "$WT" | "$WT"/*) [ "${p#/proc/}" != "$$" ] && echo "${p#/proc/}" ;;
+  esac
+done                                # must print nothing
+```
+
+All three empty means the other session has finished or paused there. Git
+will not check out a branch that another worktree holds, so work in a
+detached worktree at the fetched head, and push without force, so a push the
+other session made in the meantime rejects yours instead of being overwritten:
+
+```bash
+git -C <repo> fetch origin <branch>
+git -C <repo> ls-remote origin refs/heads/<branch>   # must equal: git -C "$WT" rev-parse HEAD
+git -C <repo> worktree add --detach /path/to/mine origin/<branch>
+# ... edit, then commit in /path/to/mine ...
+git -C /path/to/mine push origin HEAD:refs/heads/<branch>
+```
+
+Say in a PR comment that you committed into their branch and why.
+The PR stays theirs, and so do its premises: extending a draft does not verify
+what it already assumed. If any check prints something, comment on the PR
+instead of committing.
+
 ## Before Editing Shared Config, List Your Own Open PRs
 
 The section below assumes you know the sibling PR exists. Often you do not — and
@@ -3836,6 +3902,31 @@ The same check belongs in the post-merge sweep. After a sibling merges, rebase
 and re-run the gates rather than trusting the last green run: your branch was
 green against the *old* base, and a redundant hunk of yours may now conflict
 with, or silently duplicate, what landed.
+
+### Before fixing a fresh red check, list everyone's open PRs
+
+The `--author @me` list above finds your own forgotten PRs. A check that went
+red today is visible to everyone working in the repository, so the fix is often
+already open by somebody else — sometimes on the very branch name you were
+about to pick, which you then learn from a rejected non-fast-forward push.
+List all open PRs before designing the fix, not before pushing it:
+
+```bash
+gh api --paginate "repos/OWNER/REPO/pulls?state=open&per_page=100" \
+  --jq '.[] | "#\(.number) \(.head.ref) \(.title)"'
+# GitLab
+glab api --paginate "projects/<url-encoded-path>/merge_requests?state=opened&per_page=100"
+```
+
+If one already fixes the same cause, take it and re-baseline; add yours only if
+it removes a fragility theirs leaves, and say which. Read the open PRs of every
+repository the change touches — the prior art is often split across them.
+
+For a campaign across many repositories, run this per repository. `gh search
+prs` is not a substitute: its index has been observed to lag behind by minutes
+to hours, and one sweep that relied on it found no open PRs where a parallel
+session had already opened one per repository, producing twenty duplicates that
+all had to be closed.
 
 ## A New Gate Retroactively Raises the Bar for Sibling PRs
 

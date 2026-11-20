@@ -207,6 +207,8 @@ git commit -S --signoff -m "feat: add login endpoint"
 git log -1 --format=%B | git interpret-trailers --parse --no-divider | grep -c '^Signed-off-by:'
 ```
 
+**The other direction: `--amend -F` without `-s` drops the sign-off.** `-F` replaces the whole message, so a `Signed-off-by:` the old message carried is gone unless the new file carries it or `-s` is repeated. Nothing reports the loss: the amend succeeds, a local pipeline without a DCO check stays green, and the commit lands without the trailer. Measured with git 2.56.1: a signed-off commit amended with `git commit --amend -F msg.txt`, where `msg.txt` has no trailer, has zero `Signed-off-by:` lines; the same amend with `-s` has one. So the message file decides which form is right — trailers in the file, amend without `-s`; no trailers in the file, amend with `-s` — and the count above must print `1` before every push of an amended commit.
+
 **Sign-off identity must match `git config user.{name,email}`.** Mismatched identities fail the DCO check with an unhelpful "signoff required" error. Validate before the first commit in a new worktree — and specifically check that the values are not swapped (an email address in `user.name` is a silent misconfiguration that produces a malformed `Signed-off-by:` trailer):
 
 ```bash
