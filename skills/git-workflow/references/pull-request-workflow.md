@@ -2242,7 +2242,7 @@ gh pr close 123
 
 ### A stacked PR loses its approvals the moment its base merges
 
-Stacking — PR B opened against PR A's branch so B can build on text or code that exists only there — is the right shape when B has no anchor without A. In such a hand-built stack (GitHub-native stacks behave differently, see [GitHub-native stacked PRs](#github-native-stacked-prs-merge-the-tip-not-each-pr-in-turn)), merging A does not retarget B: GitHub retargets B to `main` only when A's **branch is deleted** — by the repository's `delete_branch_on_merge` setting (`gh api repos/$OWNER/$REPO --jq .delete_branch_on_merge`) or by hand — and even then the child can be closed instead (see [Stacked PRs: retarget before you merge](#stacked-prs-retarget-before-you-merge---delete-branch-only-at-the-end)). With the setting off, B stays on A's stale branch until you rebase it onto `main` and run `gh pr edit B --base main` yourself; say that in B's body rather than promising automation. Whichever way the retarget happens, it also **dismisses every review on B**, because the base changed:
+Stacking — PR B opened against PR A's branch so B can build on text or code that exists only there — is the right shape when B has no anchor without A. In such a hand-built stack (GitHub-native stacks behave differently, see [GitHub-native stacked PRs](#github-native-stacked-prs-merge-the-tip-not-each-pr-in-turn)), merging A does not retarget B: GitHub retargets B to `main` only when A's **branch is deleted** — by the repository's `delete_branch_on_merge` setting (`gh api graphql -f query='{ repository(owner:"OWNER", name:"REPO") { deleteBranchOnMerge } }'`; the REST field is `null` without admin rights) or by hand — and even then the child can be closed instead (see [Stacked PRs: retarget before you merge](#stacked-prs-retarget-before-you-merge---delete-branch-only-at-the-end)). With the setting off, B stays on A's stale branch until you rebase it onto `main` and run `gh pr edit B --base main` yourself; say that in B's body rather than promising automation. Whichever way the retarget happens, it also **dismisses every review on B**, because the base changed:
 
 ```
 reviews : github-actions=DISMISSED   decision=REVIEW_REQUIRED
@@ -2975,12 +2975,23 @@ bottom-up — but two GitHub behaviours break the naive loop:
 
    Withholding the flag is not enough when the repository deletes head
    branches itself. With `delete_branch_on_merge: true` GitHub deletes the
-   merged branch whether or not `--delete-branch` was passed, and
-   `pr-merge.sh` does not read that setting. Read it before the first merge
-   of a stack:
+   merged branch whether or not `--delete-branch` was passed. `pr-merge.sh`
+   reads that setting when open pull requests are based on the head branch:
+   it refuses the merge (exit 2) and prints one `gh pr edit <n> --base <base>`
+   per child, or with `--retarget-stacked` retargets them to the merged pull
+   request's base, reads each base back, and then merges. A merge through a
+   merge queue is checked the same way, because whether the queue deletes the
+   branch is not documented. A head branch whose deletion is restricted (a
+   ruleset `deletion` rule, or classic protection with deletions off, as for a
+   `develop` merged into `main`) is not deleted, so its children are left alone;
+   when the head is protected but that cannot be read without admin rights,
+   nothing is merged or retargeted. For a merge by hand, read the setting before the
+   first merge of a stack:
 
    ```bash
-   gh api "repos/OWNER/REPO" --jq .delete_branch_on_merge
+   # GraphQL: the REST field repos/OWNER/REPO .delete_branch_on_merge is
+   # null for a caller without admin rights, which reads like "off".
+   gh api graphql -f query='{ repository(owner:"OWNER", name:"REPO") { deleteBranchOnMerge } }' --jq .data.repository.deleteBranchOnMerge
    ```
 
    When it is `true`, retarget every open child to the parent's base

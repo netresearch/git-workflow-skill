@@ -20,6 +20,14 @@
 #   pr-merge.sh 123
 #   pr-merge.sh -R owner/repo 123
 #   pr-merge.sh -R owner/repo 123 --dry-run   # print the command, run nothing
+#   pr-merge.sh -R owner/repo 123 --retarget-stacked
+#                                     # the repository deletes merged head
+#                                     # branches itself (delete_branch_on_merge)
+#                                     # and open pull requests are based on
+#                                     # this one's head branch: retarget them
+#                                     # to this pull request's base first, then
+#                                     # merge. Without the flag the merge is
+#                                     # refused (exit 2) with the commands.
 #   pr-merge.sh -R owner/repo 123 --self-reviewed
 #                                     # the review the gate demands is one an
 #                                     # exhausted Copilot quota (or two failed
@@ -36,7 +44,8 @@
 # Exit codes: 0 merged (or queued) AND confirmed by reading the PR back, 1 the
 # gate is shut and nothing was attempted, 2 an error — usage, lookup, the merge
 # call itself failed, or it exited 0 while nothing merged and nothing entered
-# the queue. 1 is retryable later; 2 needs a human.
+# the queue — or a merge that would close stacked pull requests (see
+# --retarget-stacked). 1 is retryable later; 2 needs a human.
 
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: Netresearch DTT GmbH
@@ -74,7 +83,7 @@ skill_version() {
     printf 'path: %s/%s\n' "$here" "$(basename "${BASH_SOURCE[0]}")"
 }
 
-REPO=""; PR=""; DRY=0; SELF_REVIEWED=0
+REPO=""; PR=""; DRY=0; SELF_REVIEWED=0; RETARGET=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 die() { printf 'pr-merge: %s\n' "$1" >&2; exit 2; }
@@ -85,6 +94,7 @@ while [ $# -gt 0 ]; do
     -R|--repo) need "$@"; REPO="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --self-reviewed) SELF_REVIEWED=1; shift ;;
+    --retarget-stacked) RETARGET=1; shift ;;
     --version) skill_version; exit 0 ;;
     -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     -*) die "unknown flag: $1" ;;
@@ -112,10 +122,11 @@ read_status() {
       (.queue_active|tostring),
       (.merge_methods|join(",")),
       (.cross_repository|tostring),
-      (.head // "")
+      (.head // ""),
+      (.base // "")
     ] | @tsv') || die "pr-status.sh returned unexpected JSON"
 
-  IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS CROSS HEADREF <<EOF
+  IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS CROSS HEADREF BASEREF <<EOF
 $FIELDS
 EOF
   [ -n "$ACTION" ] && [ -n "$REPO" ] && [ -n "$PR" ] || die "pr-status.sh returned no action"
@@ -210,9 +221,9 @@ if [ -z "$METHOD" ]; then
   esac
 fi
 
-# A merge queue rejects --delete-branch outright, and deletes the branch itself
-# once the entry merges. On a pull request from a FORK the head branch is not
-# ours to delete: `gh` happily deletes it when the token carries push rights
+# A merge queue rejects --delete-branch outright; whether the branch is deleted
+# after a queued merge depends on delete_branch_on_merge (read below). On a pull
+# request from a FORK the head branch is not ours to delete: `gh` happily deletes it when the token carries push rights
 # through maintainerCanModify, and the contributor loses the branch their work
 # is on — the one case where the flag destroys somebody else's state rather
 # than tidying our own.
@@ -230,13 +241,20 @@ STACKED=""
 STACKED_UNKNOWN=""
 TMPERR=$(mktemp)
 trap 'rm -f "$TMPERR"' EXIT
-if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ]; then
+# The query also runs for a merge queue. The queue never takes --delete-branch,
+# but whether delete_branch_on_merge (below) deletes the branch after a queued
+# merge is not documented, so the queue is treated like a direct merge: a
+# refusal that was not needed costs a retarget, a merge that closes the
+# children cannot be undone.
+if [ "$CROSS" != "true" ]; then
   if [ -z "$HEADREF" ]; then
     # Nothing to ask about: an older pr-status.sh that does not report the head
     # branch leaves the same doubt a failed query does, and is answered the
     # same way.
     STACKED_UNKNOWN="pr-status.sh reported no head branch"
-  elif ! STACKED=$(gh pr list --repo "$REPO" --base "$HEADREF" --state open \
+  # --limit: gh pr list stops at 30 by default, and a child past the limit
+  # would be neither retargeted nor named.
+  elif ! STACKED=$(gh pr list --repo "$REPO" --base "$HEADREF" --state open --limit 1000 \
       --json number --jq '[.[].number | "#" + tostring] | join(" ")' 2>"$TMPERR"); then
     STACKED=""
     STACKED_UNKNOWN=$(tr '\n' ' ' < "$TMPERR")
@@ -244,12 +262,129 @@ if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ]; then
   fi
 fi
 
+# Withholding --delete-branch keeps nothing when the repository deletes merged
+# head branches itself: with delete_branch_on_merge on, GitHub deletes the
+# branch whatever the flag says, and every open pull request based on it is
+# closed (#460). So when anything is, or may be, stacked on this branch, the
+# setting decides. A failed read of the setting is not "off".
+RETARGET_CMDS=()
+if [ -n "$STACKED" ] || [ -n "$STACKED_UNKNOWN" ]; then
+  # GraphQL, not REST: repos/<o>/<r> leaves delete_branch_on_merge out for a
+  # caller without admin rights, while deleteBranchOnMerge answers at read
+  # permission.
+  # shellcheck disable=SC2016  # $owner/$name are GraphQL variables, not shell
+  AUTODEL=$(gh api graphql -f owner="${REPO%%/*}" -f name="${REPO##*/}" -f query='
+    query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ deleteBranchOnMerge } }' \
+    --jq '.data.repository.deleteBranchOnMerge' 2>"$TMPERR") \
+    || die "could not read delete_branch_on_merge of $REPO, so whether merging deletes $HEADREF is unknown: $(tr '\n' ' ' < "$TMPERR")"
+  # Only a literal answer counts: `null` or an empty line is not "off".
+  case "$AUTODEL" in
+    true|false) ;;
+    *) die "delete_branch_on_merge of $REPO read as '${AUTODEL}', neither true nor false, so whether merging deletes $HEADREF is unknown" ;;
+  esac
+  # A deletion rule (rulesets) or classic protection with allow_deletions off
+  # keeps the branch from being deleted automatically: then its children need
+  # nothing (develop -> main in git-flow). "protected" alone is not that: a
+  # ruleset that only requires checks also makes a branch protected.
+  # rules/branches answers at read permission; classic protection only to an
+  # admin, so for a protected head whose classic protection cannot be read the
+  # outcome is unknown, and nothing is merged or retargeted on a guess.
+  HEADKEPT=""
+  if [ "$AUTODEL" = "true" ] && [ -n "$HEADREF" ]; then
+    HEADENC=$(printf '%s' "$HEADREF" | jq -sRr @uri)
+    DELRULE=$(gh api "repos/$REPO/rules/branches/$HEADENC" --paginate \
+        --jq '[.[] | select(.type == "deletion")] | length' 2>"$TMPERR") \
+      || die "could not read the rules of $HEADREF, so whether merging deletes it is unknown: $(tr '\n' ' ' < "$TMPERR")"
+    if [ "$(printf '%s\n' "$DELRULE" | awk '{s += $1} END {print s + 0}')" -gt 0 ]; then
+      HEADKEPT="a deletion rule"
+    else
+      HEADPROT=$(gh api "repos/$REPO/branches/$HEADENC" --jq .protected 2>"$TMPERR") \
+        || die "could not read whether $HEADREF is protected, so whether merging deletes it is unknown: $(tr '\n' ' ' < "$TMPERR")"
+      if [ "$HEADPROT" = "true" ]; then
+        if ALLOWDEL=$(gh api "repos/$REPO/branches/$HEADENC/protection" --jq '.allow_deletions.enabled' 2>"$TMPERR"); then
+          case "$ALLOWDEL" in
+            false) HEADKEPT="classic branch protection" ;;
+            true) ;;
+            *) die "the classic protection of $HEADREF read allow_deletions as '${ALLOWDEL}'" ;;
+          esac
+        elif grep -q 'Branch not protected' "$TMPERR"; then
+          # Protected by a ruleset only, and no deletion rule (read above):
+          # nothing keeps the branch.
+          :
+        else
+          if [ -n "$STACKED_UNKNOWN" ]; then
+            die "not merging: $HEADREF is protected, whether its protection forbids deletion could not be read (classic protection needs admin rights), and the pull requests based on it could not be listed: $STACKED_UNKNOWN"
+          fi
+          die "not merging: $HEADREF is protected, and whether its protection forbids deletion could not be read (classic protection needs admin rights). If it does, merge by hand; if not, retarget $STACKED to $BASEREF first."
+        fi
+      elif [ "$HEADPROT" != "false" ]; then
+        die "the protection of $HEADREF read as '${HEADPROT}', neither true nor false"
+      fi
+    fi
+    [ -n "$HEADKEPT" ] && AUTODEL=kept
+  fi
+  if [ "$AUTODEL" = "true" ]; then
+    if [ -n "$STACKED_UNKNOWN" ]; then
+      die "not merging: $REPO deletes merged head branches (delete_branch_on_merge: true), and whether open pull requests are based on ${HEADREF:-(unknown)} could not be checked: $STACKED_UNKNOWN"
+    fi
+    [ -n "$BASEREF" ] || die "pr-status.sh reported no base branch, so the stacked pull requests ($STACKED) have no retarget target"
+    for child in $STACKED; do
+      RETARGET_CMDS+=("${child#\#}")
+    done
+    if [ "$RETARGET" != "1" ]; then
+      {
+        printf 'pr-merge: not merging %s#%s — %s deletes merged head branches (delete_branch_on_merge: true),\n' "$REPO" "$PR" "$REPO"
+        printf '  which would close the open pull requests based on %s: %s.\n' "$HEADREF" "$STACKED"
+        printf '  Retarget them first:\n'
+        # %q: the base branch name is remote data, and this line is meant to
+        # be pasted into a shell.
+        for child in "${RETARGET_CMDS[@]}"; do
+          printf '    '; printf '%q ' gh pr edit "$child" --repo "$REPO" --base "$BASEREF"; printf '\n'
+        done
+        printf '  or run this script again with --retarget-stacked, which does that before merging.\n'
+      } >&2
+      # 2, not 1: waiting does not open this gate, so a sweep that retries
+      # exit 1 on its next pass would wait out its whole timeout in silence.
+      exit 2
+    fi
+  fi
+fi
+
+if [ "${#RETARGET_CMDS[@]}" -gt 0 ]; then
+  for child in "${RETARGET_CMDS[@]}"; do
+    if [ "$DRY" = "1" ]; then
+      printf '%q ' gh pr edit "$child" --repo "$REPO" --base "$BASEREF"; printf '\n'
+      continue
+    fi
+    gh pr edit "$child" --repo "$REPO" --base "$BASEREF" >/dev/null 2>"$TMPERR" \
+      || die "retargeting #$child to $BASEREF failed, nothing merged: $(tr '\n' ' ' < "$TMPERR")"
+    # Read the base back: a retarget that did not land leaves the child on the
+    # branch the merge is about to delete.
+    NOW=$(gh pr view "$child" --repo "$REPO" --json baseRefName --jq .baseRefName 2>/dev/null) || NOW=""
+    [ "$NOW" = "$BASEREF" ] \
+      || die "#$child still reports base '${NOW:-unreadable}' after the retarget to $BASEREF, nothing merged"
+    printf 'pr-merge: retargeted %s#%s to %s\n' "$REPO" "$child" "$BASEREF" >&2
+  done
+fi
+
 CMD=(gh pr merge "$PR" --repo "$REPO" "$METHOD")
 if [ "$QUEUE" != "true" ] && [ "$CROSS" != "true" ] && [ -z "$STACKED" ] && [ -z "$STACKED_UNKNOWN" ]; then
   CMD+=(--delete-branch)
 fi
 
-if [ -n "$STACKED" ]; then
+if [ "${#RETARGET_CMDS[@]}" -gt 0 ]; then
+  # The children were retargeted above, and the repository deletes the branch.
+  if [ "$DRY" = "1" ]; then
+    printf 'pr-merge: dry-run — %s deletes %s on merge (delete_branch_on_merge); the commands above would retarget its dependent pull requests to %s\n' \
+      "$REPO" "$HEADREF" "$BASEREF" >&2
+  else
+    printf 'pr-merge: %s deletes %s on merge (delete_branch_on_merge); its dependent pull requests now target %s\n' \
+      "$REPO" "$HEADREF" "$BASEREF" >&2
+  fi
+elif [ -n "$STACKED" ] && [ "$AUTODEL" = "kept" ]; then
+  printf 'pr-merge: keeping branch %s — %s keeps it from being deleted, so the pull requests based on it (%s) need nothing\n' \
+    "$HEADREF" "$HEADKEPT" "$STACKED" >&2
+elif [ -n "$STACKED" ]; then
   printf 'pr-merge: keeping branch %s — open pull requests are based on it: %s. Retarget them, then delete it.\n' \
     "$HEADREF" "$STACKED" >&2
 elif [ -n "$STACKED_UNKNOWN" ]; then
