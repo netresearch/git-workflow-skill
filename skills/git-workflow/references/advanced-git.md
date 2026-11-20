@@ -2392,12 +2392,16 @@ def stage(n, path):
 
 
 path = "src/Transformer.php"
+old, new = "): Node|null", "): Node"
 # Rebase: ours = upstream (narrowed the return type), theirs = the replayed commit
-ours, theirs = stage(2, path), stage(3, path)
-assert "Node|null" not in ours, "premise wrong: upstream did not narrow the type"
-assert "Node|null" in theirs, "premise wrong: the branch side lacks the old type"
-resolved = theirs.replace("): Node|null", "): Node")  # theirs whole + upstream's change
-assert "Node|null" not in resolved, "promise broken: the narrowing did not apply"
+base, ours, theirs = stage(1, path), stage(2, path), stage(3, path)
+# Premise: the narrowing is upstream's ONLY change to this file, so taking
+# theirs whole and re-applying it loses nothing upstream did elsewhere.
+assert base.count(old) == 1, "premise wrong: base lacks exactly one old declaration"
+assert ours == base.replace(old, new), "premise wrong: upstream changed more"
+assert theirs.count(old) == 1, "premise wrong: the branch side has 0 or 2+ old types"
+resolved = theirs.replace(old, new)  # theirs whole + upstream's one change
+assert resolved.count(old) == 0, "promise broken: the narrowing did not apply"
 with open(path, "w") as f:
     f.write(resolved)
 ```
@@ -2409,10 +2413,14 @@ underline and a Markdown setext underline, so in a documentation file the
 and the result is a silently doubled file that still parses — one such merge
 produced 560 lines where 312 were expected. Compare `line == "======="`, match
 the labelled markers as whole lines (`re.fullmatch(r"<{7} .*", line)`, and the
-same for `\|{7}` — the pipe escaped — and `>{7}`), and assert their order: `<<<<<<<` before the
-optional `|||||||` before `=======` before `>>>>>>>`. After any scripted
-resolution, check the line count and the section structure against what you
-intended before `git add`.
+same for `\|{7}` — the pipe escaped — and `>{7}`), and assert their order:
+`<<<<<<<` before the optional `|||||||` before `=======` before `>>>>>>>`.
+An exact match still cannot tell the separator from a heading underline of
+exactly seven `=` inside one side, so also assert that each hunk has exactly
+one `=======` line and that the number of hunks is the number you expect, and
+prefer the index stages above wherever they exist. After any
+scripted resolution, check the line count and the section structure against
+what you intended before `git add`.
 
 Then prove the branch's own tests ran, not that the suite is green. A wrong
 resolution can drop test cases, and the suite stays green because it passed

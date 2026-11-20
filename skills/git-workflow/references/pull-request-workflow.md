@@ -3835,7 +3835,7 @@ the shell running the search):
 
 ```bash
 WT=/path/to/their/worktree
-git -C "$WT" status --porcelain     # must print nothing
+git -C "$WT" status --porcelain --untracked-files=all   # must print nothing
 git -C "$WT" log --oneline @{u}..   # must print nothing; an error counts as "not idle"
 # processes whose cwd is inside the worktree, except this shell
 for p in /proc/[0-9]*; do
@@ -3858,7 +3858,11 @@ git -C <repo> worktree add --detach /path/to/mine origin/<branch>
 git -C /path/to/mine push origin HEAD:refs/heads/<branch>
 ```
 
-Say in a PR comment that you committed into their branch and why.
+The checks show a moment, not a reservation: the session can resume right
+after them, the scan misses a process that works on the worktree from another
+directory, and a push without force protects only what that session had
+already pushed. So say in a PR comment that you are committing into their
+branch, and why, before you start, and keep the addition small.
 The PR stays theirs, and so do its premises: extending a draft does not verify
 what it already assumed. If any check prints something, comment on the PR
 instead of committing.
