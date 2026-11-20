@@ -248,6 +248,8 @@ echo '[{"name": "deploy", "status": "manual", "allow_failure": false}, {"name": 
 out=$(run --json)
 check "action" "triage-ci" "$(jq -r .next.action <<<"$out")"
 check "settled" "true" "$(jq -r .checks_settled <<<"$out")"
+echo '[{"name": "deploy", "status": "manual", "allow_failure": false}, {"name": "rollout", "status": "scheduled", "allow_failure": false}]' > "$FX/jobs.json"
+check "a delayed job under a manual pipeline is not settled" "false" "$(run --json | jq -r .checks_settled)"
 
 echo "case 15: a GitHub owner/repo is still GitHub"
 : > "$WORK/gh.log"; : > "$WORK/glab.log"

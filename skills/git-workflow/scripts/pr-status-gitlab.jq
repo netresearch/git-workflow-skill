@@ -79,8 +79,11 @@ def running:  . as $s | ["created","pending","running","waiting_for_resource","p
     # pipeline status still says success: unfinished jobs keep it unsettled.
     # A pipeline waiting on a manual job holds its later jobs in created; that
     # waits for a person, so it counts as settled.
+    # Only those created jobs are exempt: a delayed (scheduled), pending or
+    # running job under a manual pipeline starts or finishes on its own.
     checks_settled: ($pl == null or ($pl_on_head and $pl_done
-                       and ($pl.status == "manual" or ($pending | length) == 0))),
+                       and ([$hj[] | select(.status | running)
+                             | select($pl.status != "manual" or .status != "created")] | length) == 0)),
     threads: ($open_threads | length),
     unresolved_threads: ($open_threads | length),
     # `//` would replace an explicit false too; default only a missing value.
