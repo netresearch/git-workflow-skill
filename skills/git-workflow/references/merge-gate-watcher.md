@@ -812,6 +812,12 @@ green with none of them read. Query both.
 **Every one of these paginates.** Default page size is 30 — `reviews`,
 `check-runs` and the rulesets array all truncate silently, which is the same
 trap this file warns about elsewhere.
+The tell is on screen when it happens: a result whose length equals the page
+size (30 on GitHub REST and in `gh pr list`, 20 on GitLab, or the `per_page`
+or `--limit` you passed) is a truncation until proven otherwise. Re-run with
+`--paginate` (`gh api`) or a higher `--limit` (`gh pr list`, which has no
+`--paginate`) before reading anything into the number; one unpaginated jobs
+list of exactly 30 entries produced three wrong diagnoses in a row.
 
 **The rulesets path takes the branch as a path segment**, so a base like
 `release/2.1` must be URI-encoded first (`pr-status.sh` encodes it for exactly

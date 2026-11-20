@@ -1369,6 +1369,31 @@ Deleting the index is the whole fix. (Observed twice in one 2026-08-27 fleet
 sweep, in freshly created release worktrees; the first repair attempt went
 per-path and hit the second phantom blob immediately.)
 
+Count before you repair, because one variant is not corruption at all: the
+index belongs to **another repository**. Check how many entries have an object:
+
+```bash
+git -C <worktree> ls-files -s | awk '{print $2}' |
+  while read -r o; do
+    git -C <worktree> cat-file -e "$o" 2>/dev/null || echo missing
+  done |
+  wc -l                                        # entries without an object
+git -C <worktree> ls-files | wc -l             # all entries, for comparison
+```
+
+A handful of missing entries is the corruption above. When nearly every entry
+is missing and the paths are ones this repository never had, the index was
+written by a different repository's checkout. Observed once on the first commit
+after a pre-commit hook `rev` bump: the worktree's index held 795 entries of
+the freshly cloned hook repository (its `.pre-commit-hooks.yaml` among them),
+the objects existed only in that clone under pre-commit's cache directory, and
+the clone's timestamp was six seconds older than the index's. That is a
+timeline match, not a proven mechanism — which tool let the hook checkout
+write to the caller's index is not verified. The recovery is the same
+`rm` plus `read-tree HEAD` above, and the retried commit is clean because the
+hook repository is now cached. If it happens a second time, treat it as a tool
+defect and reproduce it with a fresh hook cache instead of recovering again.
+
 ### Use Cases
 
 ```bash
@@ -2341,6 +2366,69 @@ markers, before you edit it**: both sides then live in committed objects, so
 nothing unrecoverable is overwritten. Once you have hand-written a resolution
 into that file, the rule applies again in full — the checkout discards your edit
 with no reflog entry and no way back.
+
+## Resolve a non-trivial conflict with a script that asserts both sides
+
+Editing a conflicted file by hand makes the choice between the sides without
+any record that the choice was right. When the resolution is more than one
+obvious line — "take the branch side, plus the one upstream change in the same
+hunk" is the typical case, and the one where a half silently goes missing —
+write it as a short script that asserts its premise about the inputs and its
+promise about the output, so a wrong assumption throws instead of committing.
+
+Read the sides from the index rather than parsing markers out of the file:
+`git show :1:<path>` is the base, `:2:` is ours, `:3:` is theirs (during a
+rebase "ours" is the branch being rebased onto, "theirs" the commit being
+replayed). Building the result from those cannot mistake content for a marker.
+
+```python
+import subprocess
+
+
+def stage(n, path):
+    return subprocess.run(
+        ["git", "show", f":{n}:{path}"], check=True, capture_output=True, text=True
+    ).stdout
+
+
+path = "src/Transformer.php"
+old, new = "): Node|null", "): Node"
+# Rebase: ours = upstream (narrowed the return type), theirs = the replayed commit
+base, ours, theirs = stage(1, path), stage(2, path), stage(3, path)
+# Premise: the narrowing is upstream's ONLY change to this file, so taking
+# theirs whole and re-applying it loses nothing upstream did elsewhere.
+assert base.count(old) == 1, "premise wrong: base lacks exactly one old declaration"
+assert ours == base.replace(old, new), "premise wrong: upstream changed more"
+assert theirs.count(old) == 1, "premise wrong: the branch side has 0 or 2+ old types"
+resolved = theirs.replace(old, new)  # theirs whole + upstream's one change
+assert resolved.count(old) == 0, "promise broken: the narrowing did not apply"
+with open(path, "w") as f:
+    f.write(resolved)
+```
+
+If you must parse the conflicted file instead, match markers **exactly**, never
+by prefix. `line.startswith("=======")` also matches a reStructuredText heading
+underline and a Markdown setext underline, so in a documentation file the
+"separator" is found dozens of lines early, the slice covers the wrong region,
+and the result is a silently doubled file that still parses — one such merge
+produced 560 lines where 312 were expected. Compare `line == "======="`, match
+the labelled markers as whole lines (`re.fullmatch(r"<{7} .*", line)`, and the
+same for `\|{7}` — the pipe escaped — and `>{7}`), and assert their order:
+`<<<<<<<` before the optional `|||||||` before `=======` before `>>>>>>>`.
+An exact match still cannot tell the separator from a heading underline of
+exactly seven `=` inside one side, so also assert that each hunk has exactly
+one `=======` line and that the number of hunks is the number you expect, and
+prefer the index stages above wherever they exist. After any scripted
+resolution, check the line count and the section structure against what you
+intended before `git add`.
+
+Then prove the branch's own tests ran, not that the suite is green. A wrong
+resolution can drop test cases, and the suite stays green because it passed
+everything that was left. Look for the **names** of the tests the branch adds in
+the runner's per-test output (PHPUnit `--testdox` with `--filter`, `pytest -v
+-k`, `go test -run … -v`): the total proves the suite, the names prove the
+branch. In one rebase the suite reported 260 passing tests; only a second run
+filtered on the seven new fixtures showed they were among them.
 
 ## A merge resolved in favour of the branch silently reverts upstream work
 

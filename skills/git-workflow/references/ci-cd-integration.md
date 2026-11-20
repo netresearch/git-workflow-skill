@@ -48,6 +48,20 @@ below). `gh run watch <id> --exit-status` is a sound gate for **one** run whose
 id you already resolved — but only for that run; see `merge-gate-watcher.md`
 for why a hand-written watcher settles early on an empty or incomplete set.
 
+**Never tally the `--watch` stream.** The watcher reprints the whole table on
+every refresh, so piping it into a counter adds up every frame, not the final
+state: `gh pr checks <pr> --watch | awk -F'\t' '{print $2}' | sort | uniq -c`
+reported 389 passing and 7 pending checks on a PR that had 51. Let the watcher
+block with its output discarded, then count one fresh, non-watching call:
+
+```bash
+gh pr checks <pr> --repo <owner/repo> --watch > /dev/null || true
+gh pr checks <pr> --repo <owner/repo> | awk -F'\t' '{print $2}' | sort | uniq -c
+```
+
+The tally is a summary for reading, not the verdict; the verdict is still
+`pr-status.sh`.
+
 ### `$(gh api … || echo "")` captures the ERROR BODY as data
 
 On an HTTP error (404, 403 rate limit, 5xx) `gh api` prints the JSON error
