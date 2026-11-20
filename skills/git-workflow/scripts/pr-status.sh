@@ -827,18 +827,22 @@ local_head_sync() {
 # approvals, its discussions (paginated), the project's merge settings, and the
 # jobs of the head pipeline. pr-status-gitlab.jq turns them into the same
 # --json contract and NEXT vocabulary the GitHub path emits (#331).
-# A token in the environment (GITLAB_TOKEN and its aliases) is not bound to a
-# host, so a mistyped -R would hand it to that host. It is passed on only for
-# the host GITLAB_HOST names; any other host gets the token glab stored for
-# that host, or none.
-# glab takes its default host from GITLAB_HOST, GITLAB_URI, FORGE_HOST or
-# GITLAB_URL, as a bare host or a URL; compare host names only.
+# glab binds a token in the environment (GITLAB_TOKEN and its aliases) to its
+# default host: the host GITLAB_HOST, GL_HOST, GITLAB_URI or GITLAB_URL names
+# (as a bare host or a URL), or gitlab.com when none is set. A mistyped -R must
+# not hand that token to another host, so it is passed on only for the default
+# host; any other host gets the token glab stored for it, or none.
 env_host() { local h="${1#*://}"; printf '%s' "${h%%/*}"; }
+glab_default_host() {
+  local v h
+  for v in "${GITLAB_HOST:-}" "${GL_HOST:-}" "${GITLAB_URI:-}" "${GITLAB_URL:-}"; do
+    h=$(env_host "$v")
+    [ -n "$h" ] && { printf '%s' "$h"; return; }
+  done
+  printf 'gitlab.com'
+}
 gl() {
-  if [ "$FORGE_HOST" = "$(env_host "${GITLAB_HOST:-}")" ] \
-     || [ "$FORGE_HOST" = "$(env_host "${GITLAB_URI:-}")" ] \
-     || [ "$FORGE_HOST" = "$(env_host "${GL_HOST:-}")" ] \
-     || [ "$FORGE_HOST" = "$(env_host "${GITLAB_URL:-}")" ]; then
+  if [ "$FORGE_HOST" = "$(glab_default_host)" ]; then
     glab api --hostname "$FORGE_HOST" "$@"
   else
     env -u GITLAB_TOKEN -u GITLAB_ACCESS_TOKEN -u OAUTH_TOKEN \
