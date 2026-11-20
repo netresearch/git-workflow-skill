@@ -723,7 +723,9 @@ def _untracked_files(repo_dir: str) -> list[str] | None:
     the untracked cache are switched off on the command line, which overrides
     the repository's own configuration. Every transport is refused
     (protocol.allow=never, GIT_NO_LAZY_FETCH=1), so a partial clone cannot
-    fetch a missing blob through a remote helper or ssh command it names.
+    fetch a missing blob through a remote helper or ssh command it names. An
+    empty GIT_ALLOW_PROTOCOL makes git ignore the repository's own
+    protocol.<name>.allow, which would otherwise outrank protocol.allow.
     """
     try:
         p = subprocess.run(
@@ -749,7 +751,7 @@ def _untracked_files(repo_dir: str) -> list[str] | None:
             text=True,
             timeout=8,
             check=False,
-            env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},
+            env={**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": ""},
         )
     except (OSError, subprocess.SubprocessError):
         return None

@@ -159,6 +159,8 @@ The settings watcher only picks up new hook files if `.claude/` existed at sessi
 
 A resolver that exits non-zero does **not** stop a following `git add -A && git commit` in the same Bash call — the `&&` chain starts fresh after the failed command, so the commit lands with `<<<<<<<` in the tree and nothing reports it until a later gate run. `verify-git-workflow.sh` finds markers on demand; this denies the commit that would create them.
 
+The gate checks the repository the commit writes to: a `git -C <dir> commit`, `--git-dir` or `--work-tree` is read from the command and passed to its own `git` calls, so a commit to another checkout is not judged by the current directory's index.
+
 ```bash
 cp <skill>/scripts/conflict-marker-gate.py ~/.claude/hooks/
 chmod +x ~/.claude/hooks/conflict-marker-gate.py

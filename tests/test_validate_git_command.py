@@ -249,6 +249,49 @@ def repo_config_program_case() -> bool:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def untracked_lookup_env_case() -> bool:
+    """The untracked-files lookup runs git with every transport refused.
+
+    GIT_NO_LAZY_FETCH alone stops a lazy fetch on git 2.45+, so the
+    partial-clone case cannot show that GIT_ALLOW_PROTOCOL is set. A git
+    wrapper on PATH records the environment of the ls-files call.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        repo = os.path.join(tmp, "repo")
+        _git("init", "-q", repo)
+        with open(os.path.join(repo, "stray.txt"), "w") as fh:
+            fh.write("junk\n")
+        wrap = os.path.join(tmp, "bin")
+        os.mkdir(wrap)
+        log = os.path.join(tmp, "calls")
+        real = shutil.which("git")
+        with open(os.path.join(wrap, "git"), "w") as fh:
+            fh.write(
+                "#!/bin/sh\n"
+                f'printf "allow=[%s] set=%s lazy=%s args=%s\\n" "$GIT_ALLOW_PROTOCOL" '
+                f'"${{GIT_ALLOW_PROTOCOL+yes}}" "$GIT_NO_LAZY_FETCH" "$*" >> "{log}"\n'
+                f'exec "{real}" "$@"\n'
+            )
+        os.chmod(os.path.join(wrap, "git"), 0o700)
+        old_path = os.environ["PATH"]
+        os.environ["PATH"] = wrap + os.pathsep + old_path
+        try:
+            run(f"git -C {repo} add -A")
+        finally:
+            os.environ["PATH"] = old_path
+        if not os.path.exists(log):
+            return False
+        with open(log) as fh:
+            calls = [line for line in fh if "ls-files" in line]
+        return bool(calls) and all(
+            "allow=[] set=yes lazy=1" in line and "protocol.allow=never" in line
+            for line in calls
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def partial_clone_fetch_case() -> bool:
     """A partial clone's missing blob is not fetched while the gate looks.
 
@@ -294,6 +337,8 @@ def partial_clone_fetch_case() -> bool:
             "-C", repo, "config", "remote.origin.url", "ssh://git@example.invalid/x.git"
         )
         _git("-C", repo, "config", "core.sshCommand", script)
+        # A per-protocol allow outranks the command line's protocol.allow.
+        _git("-C", repo, "config", "protocol.ssh.allow", "always")
         with open(os.path.join(repo, "stray.txt"), "w") as fh:
             fh.write("junk\n")
         got = run(f"git -C {repo} add -A")
@@ -375,6 +420,7 @@ def main() -> int:
     for name, case in [
         ("repo config programs do not run", repo_config_program_case),
         ("partial clone blobs are not fetched", partial_clone_fetch_case),
+        ("untracked lookup refuses transports", untracked_lookup_env_case),
         (
             "untracked outside the named subdir counts",
             untracked_outside_named_subdir_case,
