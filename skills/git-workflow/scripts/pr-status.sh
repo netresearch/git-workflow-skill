@@ -268,7 +268,9 @@ case "$REPO" in
   */*/*)
     case "${REPO%%/*}" in
       *.*) FORGE=gitlab; FORGE_HOST="${REPO%%/*}"; FORGE_PROJECT="${REPO#*/}" ;;
+      *) ;;
     esac ;;
+  *) ;;
 esac
 if [ "$FORGE" = "gitlab" ]; then
   command -v glab >/dev/null || die "glab not found; it reads the GitLab merge request $REPO"
@@ -284,7 +286,7 @@ done
 
 if [ "$FORGE" = "gitlab" ]; then
   [ -n "$PR" ] || die "pass the merge request number (iid) for $REPO"
-  case "$PR" in *[!0-9]*) die "\"$PR\" is not a merge request number" ;; esac
+  case "$PR" in *[!0-9]*) die "\"$PR\" is not a merge request number" ;; *) ;; esac
 fi
 if [ -z "$REPO" ]; then
   REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) \
@@ -304,10 +306,12 @@ if [ "$FORGE" = "github" ]; then
   case "$REPO" in
     */*/*)
       die "\"$REPO\" is neither owner/repo (GitHub) nor host/group/project (GitLab: the first segment must be a host name)" ;;
+    *) ;;
   esac
   case "${OWNER}" in
     *.*)
       die "\"$OWNER\" looks like a host, not a GitHub owner. A GitLab merge request is named host/group/project, e.g. gitlab.example.com/group/project" ;;
+    *) ;;
   esac
 fi
 
@@ -871,6 +875,7 @@ snapshot_gitlab() {
         sleep 2
         mr=$(gl "$mrp") || die "could not read merge request $FORGE_PROJECT!$PR on $FORGE_HOST"
       fi ;;
+    *) ;;
   esac
   ap=$(gl "$mrp/approvals") || die "could not read the approvals of $FORGE_PROJECT!$PR"
   disc=$(gl_list "$mrp/discussions?per_page=100") || die "could not read the discussions of $FORGE_PROJECT!$PR"

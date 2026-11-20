@@ -109,7 +109,9 @@ case "$REPO" in
   */*/*)
     case "${REPO%%/*}" in
       *.*) die "$REPO is a GitLab project; pr-merge.sh merges GitHub pull requests only. Read the gate with pr-status.sh -R $REPO ${PR:-<iid>} and run the cmd it prints on NEXT: merge" ;;
+      *) ;;
     esac ;;
+  *) ;;
 esac
 
 command -v gh >/dev/null || die "gh not found"
