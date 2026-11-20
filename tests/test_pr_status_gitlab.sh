@@ -242,6 +242,13 @@ out=$(run --json)
 check "action" "await-checks" "$(jq -r .next.action <<<"$out")"
 check "not settled" "false" "$(jq -r .checks_settled <<<"$out")"
 
+echo "case 17b: a pipeline waiting on a manual job is settled, later jobs created"
+fixture mergeable manual
+echo '[{"name": "deploy", "status": "manual", "allow_failure": false}, {"name": "after", "status": "created", "allow_failure": false}]' > "$FX/jobs.json"
+out=$(run --json)
+check "action" "triage-ci" "$(jq -r .next.action <<<"$out")"
+check "settled" "true" "$(jq -r .checks_settled <<<"$out")"
+
 echo "case 15: a GitHub owner/repo is still GitHub"
 : > "$WORK/gh.log"; : > "$WORK/glab.log"
 PATH="$STUB:$PATH" "$SCRIPTS/pr-status.sh" -R owner/repo 1 --json >/dev/null 2>&1

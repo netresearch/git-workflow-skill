@@ -77,7 +77,10 @@ def running:  . as $s | ["created","pending","running","waiting_for_resource","p
     },
     # A job retried after the pipeline was read is pending although the
     # pipeline status still says success: unfinished jobs keep it unsettled.
-    checks_settled: ($pl == null or ($pl_on_head and $pl_done and ($pending | length) == 0)),
+    # A pipeline waiting on a manual job holds its later jobs in created; that
+    # waits for a person, so it counts as settled.
+    checks_settled: ($pl == null or ($pl_on_head and $pl_done
+                       and ($pl.status == "manual" or ($pending | length) == 0))),
     threads: ($open_threads | length),
     unresolved_threads: ($open_threads | length),
     # `//` would replace an explicit false too; default only a missing value.
