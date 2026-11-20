@@ -2418,9 +2418,9 @@ same for `\|{7}` — the pipe escaped — and `>{7}`), and assert their order:
 An exact match still cannot tell the separator from a heading underline of
 exactly seven `=` inside one side, so also assert that each hunk has exactly
 one `=======` line and that the number of hunks is the number you expect, and
-prefer the index stages above wherever they exist. After any
-scripted resolution, check the line count and the section structure against
-what you intended before `git add`.
+prefer the index stages above wherever they exist. After any scripted
+resolution, check the line count and the section structure against what you
+intended before `git add`.
 
 Then prove the branch's own tests ran, not that the suite is green. A wrong
 resolution can drop test cases, and the suite stays green because it passed

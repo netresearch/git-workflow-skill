@@ -54,9 +54,9 @@ pipelines, and hard-wrapping prose is right in one and wrong in the other.
   wrap, and measure it rather than guess: the longest prose line of the
   neighbouring paragraphs, skipping code fences, tables, HTML and lines that
   carry a URL (`awk '/^\140\140\140/ {f = !f; next} !f && !/^ *[|<]/ && !/:\/\// {print length}' FILE | sort -rn | head -1`,
-  or the same over the section you are adding to). A file wrapped at 80 columns that receives
-  one unwrapped paragraph gets lines of a thousand characters and a diff that
-  rewrites far more than the change.
+  or the same over the section you are adding to). A file wrapped at 80
+  columns that receives one unwrapped paragraph gets lines of a thousand
+  characters and a diff that rewrites far more than the change.
 - **GitHub comment surfaces** — PR/MR descriptions, review comments, issue/ticket
   bodies, and **release notes** — render with `breaks: true`: every single
   newline becomes a `<br>`. Hard-wrapping there carries the breaks into the
