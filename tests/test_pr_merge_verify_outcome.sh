@@ -90,6 +90,8 @@ fi
 if [ "\$1 \$2" = "pr list" ]; then
   exit 0
 fi
+# A slow API, for the wall-clock case: each GraphQL read takes 2 s.
+if [ -f "$STUB_DIR/slow" ]; then /bin/sleep 2; fi
 n=\$(grep -c '^api graphql\$' "$STUB_DIR/calls.log")
 if [ -f "$STUB_DIR/graphql.\$n.json" ]; then
   cat "$STUB_DIR/graphql.\$n.json"; exit 0
@@ -341,6 +343,45 @@ chmod +x "$STUB_DIR/sleep"; rm -f "$STUB_DIR/sleep.log"
 out=$(runw --interval 20 --max-wait 30); rc=$?
 check "exit code" "1" "$rc"
 check "sleeps 20 then 10" "20 10" "$(tr '\n' ' ' < "$STUB_DIR/sleep.log" | sed 's/ $//')"
+
+echo "case 21: --wait, out, in, out, in, merged — a single read outside never adds up"
+make_status true; make_gh; reset
+make_pr graphql.1.json OPEN true -
+make_pr graphql.2.json OPEN false -
+make_pr graphql.3.json OPEN true -
+make_pr graphql.4.json OPEN false -
+make_pr graphql.5.json OPEN true -
+make_pr graphql.6.json MERGED false -
+out=$(runw); rc=$?
+check "exit code" "0" "$rc"
+check "no gate read" "0" "$(status_calls)"
+
+echo "case 22: --wait, one failed read early, then queued to the end — exit 1, not 2"
+make_status true; make_gh; reset
+make_pr graphql.1.json OPEN true -
+make_pr graphql.3.json OPEN true -
+make_pr graphql.4.json OPEN true -
+out=$(runw --interval 20 --max-wait 40); rc=$?
+err=$(cat "$STUB_DIR/err")
+check "exit code" "1" "$rc"
+says "names the timeout" "still in the merge queue after 40s" "$err"
+
+# The wall clock bounds the wait too, including the time the reads take. Here
+# every read takes 2 s and the sleeps are real: counting only the sleeps would
+# run for about 8 s; the deadline stops it after about 4 s (the enqueue read,
+# then one wait read past the 2 s limit).
+echo "case 23: --wait is bounded by the wall clock, not only by the sum of sleeps"
+make_status true; make_gh; reset
+make_pr graphql.json OPEN true -
+printf '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n' > "$STUB_DIR/sleep"
+chmod +x "$STUB_DIR/sleep"
+: > "$STUB_DIR/slow"
+t0=$SECONDS
+out=$(runw --interval 1 --max-wait 2); rc=$?
+took=$((SECONDS - t0))
+rm -f "$STUB_DIR/slow"
+check "exit code" "1" "$rc"
+if [ "$took" -le 5 ]; then echo "  ok   stopped after $took seconds"; else echo "  FAIL ran $took seconds, expected about 4"; fail=1; fi
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"

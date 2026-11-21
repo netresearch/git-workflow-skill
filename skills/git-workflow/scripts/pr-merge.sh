@@ -536,9 +536,8 @@ EOF
         # One failed read is not an outcome; the next poll may succeed.
         last_ok=0
       fi
-      if [ "$waited" -ge "$WAIT_MAX" ] || [ "$SECONDS" -ge "$deadline" ]; then
-        break
-      fi
+      # The step is what is left of --max-wait and of the wall-clock deadline;
+      # once either is used up it is 0 or less, which ends the wait.
       step=$WAIT_INTERVAL
       [ $((WAIT_MAX - waited)) -lt "$step" ] && step=$((WAIT_MAX - waited))
       [ $((deadline - SECONDS)) -lt "$step" ] && step=$((deadline - SECONDS))
