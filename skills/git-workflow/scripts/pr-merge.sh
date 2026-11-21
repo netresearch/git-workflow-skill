@@ -47,12 +47,14 @@
 #                                     # most --max-wait, instead of returning
 #                                     # at "queued".
 #
-# Exit codes: 0 merged (or queued) AND confirmed by reading the PR back, 1 the
-# gate is shut and nothing was attempted, or with --wait the entry left the
-# queue unmerged or was still queued when --max-wait ran out, 2 an error — usage, lookup, the merge
-# call itself failed, or it exited 0 while nothing merged and nothing entered
-# the queue — or a merge that would close stacked pull requests (see
-# --retarget-stacked). 1 is retryable later; 2 needs a human.
+# Exit codes: 0 merged (or queued) AND confirmed by reading the PR back.
+# 1 the gate is shut and nothing was attempted; with --wait also: the entry
+# left the queue unmerged, or was still queued when --max-wait ran out.
+# 2 an error — usage, lookup, the merge call itself failed, or it exited 0
+# while nothing merged and nothing entered the queue; a merge that would close
+# stacked pull requests (see --retarget-stacked); with --wait also: the last
+# read of the PR failed when --max-wait ran out. 1 is retryable later; 2 needs
+# a human.
 
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: Netresearch DTT GmbH
@@ -117,7 +119,8 @@ if [ "$WAIT_TUNED" = "1" ] && [ "$WAIT" = "0" ]; then
   die "--interval and --max-wait only apply with --wait"
 fi
 for v in "$WAIT_INTERVAL" "$WAIT_MAX"; do
-  [[ "$v" =~ ^[0-9]+$ ]] || die "--interval and --max-wait take whole seconds, got: $v"
+  # No leading zero: bash arithmetic reads 08 as an invalid octal number.
+  [[ "$v" =~ ^(0|[1-9][0-9]*)$ ]] || die "--interval and --max-wait take whole seconds without a leading zero, got: $v"
 done
 [ "$WAIT_INTERVAL" -ge 1 ] || die "--interval must be at least 1"
 
@@ -499,7 +502,10 @@ if [ "$INQ" = "true" ]; then
     # and may still merge (a reviewer's "LGTM" after enqueueing is enough).
     # Once the entry has left the queue, or the wait runs out, pr-status.sh
     # names the next step.
-    waited=0; last_ok=1
+    waited=0; last_ok=1; out_seen=0
+    # Two bounds: the sum of the sleeps, which a test can drive, and the wall
+    # clock, which also counts the time each GraphQL read takes.
+    deadline=$((SECONDS + WAIT_MAX))
     while :; do
       if Q=$(outcome) && F=$(printf '%s' "$Q" | jq -er '.data.repository.pullRequest
             | [ .state, (.isInMergeQueue | tostring) ] | @tsv'); then
@@ -512,27 +518,45 @@ EOF
           exit 0
         fi
         if [ "$INQ" != "true" ]; then
-          printf 'pr-merge: %s#%s left the merge queue without merging (state=%s); next step:\n' \
-            "$REPO" "$PR" "$STATE" >&2
-          "$SCRIPT_DIR/pr-status.sh" -R "$REPO" "$PR" >&2
-          exit 1
+          # GitHub can put a dropped entry back by itself while auto-merge is
+          # still armed (references/merge-gate-watcher.md), and re-queueing by
+          # hand would cancel that run. So a read outside the queue counts
+          # only once the next read confirms it.
+          out_seen=$((out_seen + 1))
+          if [ "$out_seen" -ge 2 ]; then
+            printf 'pr-merge: %s#%s left the merge queue without merging (state=%s); next step:\n' \
+              "$REPO" "$PR" "$STATE" >&2
+            "$SCRIPT_DIR/pr-status.sh" -R "$REPO" "$PR" >&2
+            exit 1
+          fi
+        else
+          out_seen=0
         fi
       else
         # One failed read is not an outcome; the next poll may succeed.
         last_ok=0
       fi
-      if [ "$waited" -ge "$WAIT_MAX" ]; then
+      if [ "$waited" -ge "$WAIT_MAX" ] || [ "$SECONDS" -ge "$deadline" ]; then
         break
       fi
-      sleep "$WAIT_INTERVAL"
-      waited=$((waited + WAIT_INTERVAL))
+      step=$WAIT_INTERVAL
+      [ $((WAIT_MAX - waited)) -lt "$step" ] && step=$((WAIT_MAX - waited))
+      [ $((deadline - SECONDS)) -lt "$step" ] && step=$((deadline - SECONDS))
+      [ "$step" -ge 1 ] || break
+      sleep "$step"
+      waited=$((waited + step))
     done
     if [ "$last_ok" = "0" ]; then
       printf 'pr-merge: %s#%s: the wait ran out and the last read of the pull request failed; check it before reporting anything:\n    gh pr view %s --repo %s --json state,mergedAt\n' \
         "$REPO" "$PR" "$PR" "$REPO" >&2
       exit 2
     fi
-    printf 'pr-merge: %s#%s is still in the merge queue after %ss; gate:\n' "$REPO" "$PR" "$WAIT_MAX" >&2
+    if [ "$out_seen" -ge 1 ]; then
+      printf 'pr-merge: %s#%s was outside the merge queue at the last read (state=%s) when the wait ran out; gate:\n' \
+        "$REPO" "$PR" "$STATE" >&2
+    else
+      printf 'pr-merge: %s#%s is still in the merge queue after %ss; gate:\n' "$REPO" "$PR" "$WAIT_MAX" >&2
+    fi
     "$SCRIPT_DIR/pr-status.sh" -R "$REPO" "$PR" >&2
     exit 1
   fi

@@ -254,10 +254,11 @@ says_not "no waiter line" "wait with:" "$out"
 echo "case 12: --wait, entry dropped out of the queue — exit 1, names the next step"
 make_status true; make_gh; reset
 make_pr graphql.1.json OPEN true -
-make_pr graphql.2.json OPEN false -
+make_pr graphql.json OPEN false -
 out=$(runw); rc=$?
 err=$(cat "$STUB_DIR/err")
 check "exit code" "1" "$rc"
+check "drop confirmed on a second read" "3" "$(graphql_calls)"
 check "gate read once" "1" "$(status_calls)"
 says     "names the drop" "left the merge queue without merging (state=OPEN)" "$err"
 says     "passes the gate on" "NEXT: stub" "$err"
@@ -307,6 +308,39 @@ PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 --max-wait 10 >/dev/null 2>"$ST
 check "exit code" "2" "$rc"
 check "no gh calls" "0" "$(wc -l < "$STUB_DIR/calls.log" | tr -d ' ')"
 says  "names the rule" "only apply with --wait" "$(cat "$STUB_DIR/err")"
+
+# GitHub can put a dropped entry back by itself while auto-merge is armed;
+# re-queueing by hand would cancel that run. One read outside the queue is
+# therefore not yet a drop.
+echo "case 18: --wait, out of the queue once, back in, then merged — exit 0"
+make_status true; make_gh; reset
+make_pr graphql.1.json OPEN true -
+make_pr graphql.2.json OPEN false -
+make_pr graphql.3.json OPEN true -
+make_pr graphql.4.json MERGED false -
+out=$(runw); rc=$?
+check "exit code" "0" "$rc"
+check "no gate read" "0" "$(status_calls)"
+says  "reports merged" "559 merged (--merge, through the merge queue)" "$out"
+
+echo "case 19: a leading zero is refused (bash reads 08 as bad octal)"
+make_status true; make_gh; reset
+PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 --wait --interval 08 >/dev/null 2>"$STUB_DIR/err"; rc=$?
+check "exit code" "2" "$rc"
+check "no gh calls" "0" "$(wc -l < "$STUB_DIR/calls.log" | tr -d ' ')"
+says  "names the rule" "without a leading zero" "$(cat "$STUB_DIR/err")"
+
+echo "case 20: --max-wait not a multiple of --interval — the last sleep is shortened"
+make_status true; make_gh; reset
+make_pr graphql.json OPEN true -
+cat > "$STUB_DIR/sleep" <<SLEEP
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$STUB_DIR/sleep.log"
+SLEEP
+chmod +x "$STUB_DIR/sleep"; rm -f "$STUB_DIR/sleep.log"
+out=$(runw --interval 20 --max-wait 30); rc=$?
+check "exit code" "1" "$rc"
+check "sleeps 20 then 10" "20 10" "$(tr '\n' ' ' < "$STUB_DIR/sleep.log" | sed 's/ $//')"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
