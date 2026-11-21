@@ -44,8 +44,8 @@
 #                                     # on a merge queue: stay until the entry
 #                                     # has merged or left the queue, reading
 #                                     # the PR every --interval seconds for at
-#                                     # most --max-wait, instead of returning
-#                                     # at "queued".
+#                                     # most --max-wait (plus one read of up to
+#                                     # 15 s), instead of returning at "queued".
 #
 # Exit codes: 0 merged (or queued) AND confirmed by reading the PR back.
 # 1 the gate is shut and nothing was attempted; with --wait also: the entry
@@ -94,6 +94,9 @@ skill_version() {
 
 REPO=""; PR=""; DRY=0; SELF_REVIEWED=0; RETARGET=0; WAIT=0
 WAIT_INTERVAL=20; WAIT_MAX=3600; WAIT_TUNED=0
+# One read during --wait may take at most this long (the bound pr-status.sh
+# puts on its own rate-limit lookup).
+WAIT_READ_MAX=15
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 die() { printf 'pr-merge: %s\n' "$1" >&2; exit 2; }
@@ -450,8 +453,15 @@ fi
 OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
 
 outcome() {
+  # --wait passes a bound in seconds: a read that hangs then ends as a failed
+  # read instead of holding the wait past --max-wait. Without timeout(1) (e.g.
+  # stock macOS) the read stays unbounded.
+  local bound=()
+  if [ -n "${1:-}" ] && command -v timeout >/dev/null 2>&1; then
+    bound=(timeout "$1")
+  fi
   # shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
-  gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
+  ${bound[@]+"${bound[@]}"} gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
   query($owner:String!,$name:String!,$pr:Int!){
     repository(owner:$owner,name:$name){
       pullRequest(number:$pr){
@@ -507,7 +517,7 @@ if [ "$INQ" = "true" ]; then
     # clock, which also counts the time each GraphQL read takes.
     deadline=$((SECONDS + WAIT_MAX))
     while :; do
-      if Q=$(outcome) && F=$(printf '%s' "$Q" | jq -er '.data.repository.pullRequest
+      if Q=$(outcome "$WAIT_READ_MAX") && F=$(printf '%s' "$Q" | jq -er '.data.repository.pullRequest
             | [ .state, (.isInMergeQueue | tostring) ] | @tsv'); then
         last_ok=1
         IFS=$'\t' read -r STATE INQ <<EOF

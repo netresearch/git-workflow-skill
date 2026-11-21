@@ -90,8 +90,13 @@ fi
 if [ "\$1 \$2" = "pr list" ]; then
   exit 0
 fi
-# A slow API, for the wall-clock case: each GraphQL read takes 2 s.
-if [ -f "$STUB_DIR/slow" ]; then /bin/sleep 2; fi
+# A slow API: "<from> <secs>" in $STUB_DIR/slow makes every GraphQL read from
+# call <from> on take <secs> seconds.
+if [ -f "$STUB_DIR/slow" ]; then
+  read -r from secs < "$STUB_DIR/slow"
+  k=\$(grep -c '^api graphql\$' "$STUB_DIR/calls.log")
+  if [ "\$k" -ge "\$from" ]; then /bin/sleep "\$secs" >/dev/null; fi
+fi
 n=\$(grep -c '^api graphql\$' "$STUB_DIR/calls.log")
 if [ -f "$STUB_DIR/graphql.\$n.json" ]; then
   cat "$STUB_DIR/graphql.\$n.json"; exit 0
@@ -375,13 +380,28 @@ make_status true; make_gh; reset
 make_pr graphql.json OPEN true -
 printf '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n' > "$STUB_DIR/sleep"
 chmod +x "$STUB_DIR/sleep"
-: > "$STUB_DIR/slow"
+echo "1 2" > "$STUB_DIR/slow"
 t0=$SECONDS
 out=$(runw --interval 1 --max-wait 2); rc=$?
 took=$((SECONDS - t0))
 rm -f "$STUB_DIR/slow"
 check "exit code" "1" "$rc"
 if [ "$took" -le 5 ]; then echo "  ok   stopped after $took seconds"; else echo "  FAIL ran $took seconds, expected about 4"; fail=1; fi
+
+# A read that hangs must not hold the wait past --max-wait: it is cut at 15 s
+# and counts as a failed read. Reads from the second on take 30 s here.
+echo "case 24: --wait, a hanging read is cut off and counts as failed — exit 2"
+make_status true; make_gh; reset
+make_pr graphql.json OPEN true -
+printf '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n' > "$STUB_DIR/sleep"
+chmod +x "$STUB_DIR/sleep"
+echo "2 30" > "$STUB_DIR/slow"
+t0=$SECONDS
+out=$(runw --max-wait 0); rc=$?
+took=$((SECONDS - t0))
+rm -f "$STUB_DIR/slow"
+check "exit code" "2" "$rc"
+if [ "$took" -le 20 ]; then echo "  ok   stopped after $took seconds"; else echo "  FAIL ran $took seconds, expected about 15"; fail=1; fi
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
