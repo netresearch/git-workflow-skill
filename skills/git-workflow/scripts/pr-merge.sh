@@ -40,9 +40,15 @@
 #                                     # review path still exists, and whenever
 #                                     # the authenticated gh user is not the
 #                                     # PR author (#203).
+#   pr-merge.sh -R owner/repo 123 --wait
+#                                     # on a merge queue: stay until the entry
+#                                     # has merged or left the queue, through
+#                                     # pr-status.sh --watch, instead of
+#                                     # returning at "queued".
 #
 # Exit codes: 0 merged (or queued) AND confirmed by reading the PR back, 1 the
-# gate is shut and nothing was attempted, 2 an error — usage, lookup, the merge
+# gate is shut and nothing was attempted, or with --wait the entry left the
+# queue unmerged or the watch timed out, 2 an error — usage, lookup, the merge
 # call itself failed, or it exited 0 while nothing merged and nothing entered
 # the queue — or a merge that would close stacked pull requests (see
 # --retarget-stacked). 1 is retryable later; 2 needs a human.
@@ -83,7 +89,7 @@ skill_version() {
     printf 'path: %s/%s\n' "$here" "$(basename "${BASH_SOURCE[0]}")"
 }
 
-REPO=""; PR=""; DRY=0; SELF_REVIEWED=0; RETARGET=0
+REPO=""; PR=""; DRY=0; SELF_REVIEWED=0; RETARGET=0; WAIT=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 die() { printf 'pr-merge: %s\n' "$1" >&2; exit 2; }
@@ -95,6 +101,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY=1; shift ;;
     --self-reviewed) SELF_REVIEWED=1; shift ;;
     --retarget-stacked) RETARGET=1; shift ;;
+    --wait) WAIT=1; shift ;;
     --version) skill_version; exit 0 ;;
     -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     -*) die "unknown flag: $1" ;;
@@ -468,6 +475,37 @@ if [ "$STATE" = "MERGED" ]; then
 fi
 if [ "$INQ" = "true" ]; then
   printf 'pr-merge: %s#%s queued (%s, strategy set by the queue)\n' "$REPO" "$PR" "$METHOD"
+  if [ "$WAIT" = "1" ]; then
+    # --wait: queueing and waiting in one call. Returning at "queued" left the
+    # wait to the caller, who wrote a poll of their own instead of running the
+    # waiter named below, and that poll read a field gh pr view does not have.
+    # pr-status.sh --watch holds on the queued entry and returns once the PR is
+    # merged or has dropped out; its output names the next step. The outcome is
+    # then read back here, because the watch's exit status alone does not say
+    # whether the PR merged.
+    "$SCRIPT_DIR/pr-status.sh" -R "$REPO" "$PR" --watch; WRC=$?
+    if Q=$(outcome) && F=$(printf '%s' "$Q" | jq -er '.data.repository.pullRequest
+          | [ .state, (.isInMergeQueue | tostring) ] | @tsv'); then
+      IFS=$'\t' read -r STATE INQ <<EOF
+$F
+EOF
+      if [ "$STATE" = "MERGED" ]; then
+        printf 'pr-merge: %s#%s merged (%s, through the merge queue)\n' "$REPO" "$PR" "$METHOD"
+        exit 0
+      fi
+      if [ "$INQ" = "true" ]; then
+        printf 'pr-merge: %s#%s is still in the merge queue; pr-status.sh --watch ended with exit %s before it merged\n' \
+          "$REPO" "$PR" "$WRC" >&2
+      else
+        printf 'pr-merge: %s#%s left the merge queue without merging (state=%s); the watch output above names the next step\n' \
+          "$REPO" "$PR" "$STATE" >&2
+      fi
+      exit 1
+    fi
+    printf 'pr-merge: %s#%s: the wait ended but the outcome could not be read back; check it before reporting anything:\n    gh pr view %s --repo %s --json state,mergedAt\n' \
+      "$REPO" "$PR" "$PR" "$REPO" >&2
+    exit 2
+  fi
   # Name the waiter at the moment it is needed. Without it the next step was a
   # hand-written poll on `gh pr view --json isInMergeQueue` -- a field that
   # exists only in GraphQL, so every poll failed with `Unknown JSON field`.

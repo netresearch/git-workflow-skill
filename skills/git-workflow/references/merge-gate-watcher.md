@@ -754,6 +754,7 @@ What the PR-scoped tools do once the PR is queued:
 
 - `pr-status.sh --watch` keeps polling. `wait` is not an actionable NEXT, so every interval (default 20 s) it prints `waiting: already in the merge queue at position …` — a heartbeat, not a hang. It returns when the entry leaves the queue: `ACTIONABLE: none` with `PR is MERGED` after the merge, the next actionable step (for example `merge`) after a silent drop, `ACTIONABLE: stuck-queue-entry` for an entry that sits in `AWAITING_CHECKS` after its queue runs finished green ([above](#an-entry-stuck-in-awaiting_checks-after-its-queue-runs-finished-green)), or `TIMEOUT` after `--max-wait` (default 3600 s). Each poll is a GraphQL read, so a long queue wait spends GraphQL budget (see [Watcher cost](#watcher-cost-graphql-and-rest-rate-limits-are-separate-budgets)).
 - `gh pr view --json isInMergeQueue` fails with `Unknown JSON field`. The field exists only in GraphQL, as `repository.pullRequest.isInMergeQueue`.
+- `pr-merge.sh --wait` queues and runs that same watch in one call. It returns exit 0 only after reading the PR back as merged, and exit 1 when the entry left the queue unmerged or the watch timed out. Without `--wait` it returns at "queued" and prints the watch command.
 
 The git ancestry check in ["Has it merged yet?" costs nothing — ask git, not the API](#has-it-merged-yet-costs-nothing--ask-git-not-the-api) answers "has it merged" without any API budget.
 
