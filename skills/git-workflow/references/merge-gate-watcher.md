@@ -466,13 +466,31 @@ Two consequences for the loop:
 
 - Read the watcher's output, not only its exit code. A run that ends on the
   "no checks reported" line watched nothing and has to be re-armed.
-- Give the runs a moment to appear, or arm the watcher on a read that has
-  already seen at least one check. A plain `gh pr checks <n>` right after the
-  push shows whether anything is `pending` yet; arm `--watch` once it does.
+- Give the runs a moment to appear, and arm the watcher only on a read that
+  shows at least one check `pending`. A plain `gh pr checks <n>` right after the
+  push shows whether anything is `pending` yet; arm `--watch` once it does. A
+  check that has already finished does not count: a `pull_request_target`
+  workflow that skips itself, such as a Dependabot reviewer, reports seconds
+  after the push, and `--watch` exits 0 on it while the main workflow has not
+  registered yet.
+- A read that shows no `pending` check is complete only when the workflows of
+  the current head are all there. Check that with
+  `gh run list --commit <head-sha>` against the workflows the previous head ran,
+  then read `pr-status.sh`. Keep waiting while only self-skipping checks are
+  listed.
+- Compare the number of checks with the previous head's run. Far fewer checks
+  than last time is a warning that the rest have not registered yet. It is not
+  proof: a change to a workflow or its matrix can change the count, so settle it
+  with the run list above.
 
 Seen 2026-09-18 on a rebase-and-force-push: the watcher returned immediately,
 `gh pr checks` a moment later listed seven checks all `pending`, and the
 re-armed watcher then reported them green.
+
+Seen 2026-11-21 on phpDocumentor/guides#1448 after a force-push: the first
+read listed one check, a skipped `review-dependabot-pr`, and `--watch` exited 0
+at once. The `Integrate` workflow registered 75 seconds after the push; the
+previous head had 28 checks.
 
 ## Auto-merge armed + CLEAN but never enqueued: disable/re-enable to nudge
 

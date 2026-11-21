@@ -1434,5 +1434,30 @@
         "The Depends-on sentence and optional green check safely enforce the dependency."
       ]
     }
+  },
+  {
+    "name": "watch-exit-zero-on-finished-check-only",
+    "prompt": "Right after a force-push I ran `gh pr checks 12 --watch`. It exited 0 at once and printed one line: `review-dependabot-pr skipping`. The previous head had 28 checks. Is the PR green?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(watched nothing|not (yet )?registered)"
+      },
+      {
+        "type": "content",
+        "pattern": "(28|fewer|count)"
+      },
+      {
+        "type": "content",
+        "pattern": "(re-?arm|wait)"
+      }
+    ],
+    "samples": {
+      "passing": "No. The watch exited on a check that had already finished, so it watched nothing. Only 1 of the previous 28 checks is listed, so the main workflow has not registered yet. Wait until a read shows a pending check, then re-arm the watch.",
+      "failing": [
+        "Yes, the watch exited 0 with no failures, so the PR is green.",
+        "Yes, the PR is green. There are no pending checks; the count is 1 of 28. Do not re-arm the watch."
+      ]
+    }
   }
 ]
