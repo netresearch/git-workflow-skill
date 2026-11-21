@@ -1441,7 +1441,7 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "pending"
+        "pattern": "(watched nothing|not (yet )?registered)"
       },
       {
         "type": "content",
@@ -1449,13 +1449,14 @@
       },
       {
         "type": "content",
-        "pattern": "(re-?arm|not (yet )?registered|watched nothing)"
+        "pattern": "(re-?arm|wait)"
       }
     ],
     "samples": {
       "passing": "No. The watch exited on a check that had already finished, so it watched nothing. Only 1 of the previous 28 checks is listed, so the main workflow has not registered yet. Wait until a read shows a pending check, then re-arm the watch.",
       "failing": [
-        "Yes, the watch exited 0 with no failures, so the PR is green."
+        "Yes, the watch exited 0 with no failures, so the PR is green.",
+        "Yes, the PR is green. There are no pending checks; the count is 1 of 28. Do not re-arm the watch."
       ]
     }
   }
