@@ -1159,6 +1159,23 @@ fi
 
 This reaches only shells that read `~/.bashrc`. Orca's bash wrapper sources `~/.profile`, and Ubuntu's default `~/.profile` sources `~/.bashrc`, so it also covers agents Orca launches in a terminal. Measure it with a control: open a terminal on the project row with and without the block and compare `$PWD`.
 
+**Orca creates new workspaces outside the layout unless the project says otherwise.** By default a new Orca workspace is a linked worktree of `<repo>/.bare` at `~/orca/workspaces/<repo>/<name>`: the global Workspace Directory plus the repository folder name. Nothing in the create dialog shows that path (stablyai/orca#23896). Give each project the Worktree Location `..`, which Orca resolves against the project path; with Nest Workspaces on, new workspaces then land at `<repo>/<name>`, next to `.bare`. Measured on Orca 1.4.261 with a throwaway workspace. A request for one global setting relative to each project is open (stablyai/orca#27015, stablyai/orca#18684).
+
+```bash
+orca repo list --json                                   # the project's id
+orca project setup-update --setup <repo-id> --worktree-base-path .. --json
+```
+
+Workspaces created before the change stay where they are. Move each one only while no terminal or agent runs in it, and pick a new name where `<repo>/<name>` already exists. Give both paths absolute: `-C` makes git run inside `.bare`, so a relative destination is resolved there and the move fails.
+
+```bash
+git -C ~/projects/<repo>/.bare worktree move ~/orca/workspaces/<repo>/<name> ~/projects/<repo>/<name>
+```
+
+`git worktree move` refuses a worktree that contains submodules. For such a workspace, push or commit its work, add a new worktree for the same branch at `~/projects/<repo>/<name>` (after `git worktree remove` of the old one, since a branch can be checked out in only one worktree), and run the submodule update there.
+
+To find the git store of any workspace, ask git instead of reading the path: `git -C <workspace> rev-parse --path-format=absolute --git-common-dir`.
+
 **Batch cleanup after a session of PRs:**
 
 ```bash
