@@ -1166,11 +1166,13 @@ orca repo list --json                                   # the project's id
 orca project setup-update --setup <repo-id> --worktree-base-path .. --json
 ```
 
-Workspaces created before the change stay where they are. Move each one only while no terminal or agent runs in it, and pick a new name where `<repo>/<name>` already exists:
+Workspaces created before the change stay where they are. Move each one only while no terminal or agent runs in it, and pick a new name where `<repo>/<name>` already exists. Give both paths absolute: `-C` makes git run inside `.bare`, so a relative destination is resolved there and the move fails.
 
 ```bash
-git -C <repo>/.bare worktree move ~/orca/workspaces/<repo>/<name> <repo>/<name>
+git -C ~/projects/<repo>/.bare worktree move ~/orca/workspaces/<repo>/<name> ~/projects/<repo>/<name>
 ```
+
+`git worktree move` refuses a worktree that contains submodules. For such a workspace, push or commit its work, add a new worktree for the same branch at `~/projects/<repo>/<name>` (after `git worktree remove` of the old one, since a branch can be checked out in only one worktree), and run the submodule update there.
 
 To find the git store of any workspace, ask git instead of reading the path: `git -C <workspace> rev-parse --path-format=absolute --git-common-dir`.
 
