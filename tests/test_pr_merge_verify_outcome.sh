@@ -61,12 +61,13 @@ make_status() {
   "next": {"action": "merge", "why": "clean", "method": "--merge"}
 }
 JSON
-    # --watch is the waiter --wait runs: it is logged, prints a NEXT line and
-    # exits with $WATCH_RC (default 0), like the real watch returning.
+    # Every call without --json is logged to status.log: --wait runs the
+    # one-shot gate read after the entry left the queue or the wait ran out.
     cat > "$STUB_DIR/pr-status.sh" <<STATUS
 #!/usr/bin/env bash
 case " \$* " in
-  *" --watch "*) printf '%s\n' "\$*" >> "$STUB_DIR/watch.log"; echo "NEXT: none"; exit "\${WATCH_RC:-0}" ;;
+  *" --json "*) ;;
+  *) printf '%s\n' "\$*" >> "$STUB_DIR/status.log"; echo "NEXT: stub"; exit 0 ;;
 esac
 cat "$STUB_DIR/status.json"
 STATUS
@@ -116,7 +117,7 @@ make_pr() {
 JSON
 }
 
-reset() { rm -f "$STUB_DIR"/graphql*.json "$STUB_DIR/watch.log"; }
+reset() { rm -f "$STUB_DIR"/graphql*.json "$STUB_DIR/status.log"; }
 
 run() { PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 2>"$STUB_DIR/err"; }
 graphql_calls() { grep -c '^api graphql$' "$STUB_DIR/calls.log"; }
@@ -234,54 +235,78 @@ check "only the dependent query was read" "pr list" "$(tr -d '\n' < "$STUB_DIR/c
 says  "prints the merge command" "gh pr merge 559 --repo o/r --merge" "$out"
 
 # --wait: queueing and waiting in one call, so the caller writes no poll of its
-# own. The outcome is read back after the watch, never taken from its exit code.
-runw() { PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 --wait 2>"$STUB_DIR/err"; }
+# own. It reads state and isInMergeQueue until the PR merged or left the queue.
+runw() { PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 --wait "$@" 2>"$STUB_DIR/err"; }
+status_calls() { if [ -f "$STUB_DIR/status.log" ]; then wc -l < "$STUB_DIR/status.log" | tr -d ' '; else echo 0; fi; }
 
-echo "case 11: --wait, queued, then merged — runs the watch, reports merged, exit 0"
+echo "case 11: --wait, queued, then merged — reports merged, exit 0"
 make_status true; make_gh; reset
 make_pr graphql.1.json OPEN true -
-make_pr graphql.2.json MERGED false -
+make_pr graphql.2.json OPEN true -
+make_pr graphql.3.json MERGED false -
 out=$(runw); rc=$?
 check "exit code" "0" "$rc"
-check "watch ran once" "-R o/r 559 --watch" "$(cat "$STUB_DIR/watch.log" 2>/dev/null)"
+check "read until merged" "3" "$(graphql_calls)"
+check "no gate read needed" "0" "$(status_calls)"
 says     "reports merged through the queue" "559 merged (--merge, through the merge queue)" "$out"
 says_not "no waiter line" "wait with:" "$out"
 
-echo "case 12: --wait, entry dropped out of the queue — exit 1, says so"
+echo "case 12: --wait, entry dropped out of the queue — exit 1, names the next step"
 make_status true; make_gh; reset
 make_pr graphql.1.json OPEN true -
 make_pr graphql.2.json OPEN false -
 out=$(runw); rc=$?
 err=$(cat "$STUB_DIR/err")
 check "exit code" "1" "$rc"
+check "gate read once" "1" "$(status_calls)"
 says     "names the drop" "left the merge queue without merging (state=OPEN)" "$err"
+says     "passes the gate on" "NEXT: stub" "$err"
 says_not "does not claim merged" "merged (" "$out"
 
-echo "case 13: --wait, watch timed out while still queued — exit 1, says so"
+# The defect the first version had: pr-status.sh --watch returns on
+# address-comments, rebase or fix-ci while the entry is still queued. A wait
+# keyed on the PR itself holds on until --max-wait.
+echo "case 13: --wait, still queued for the whole --max-wait — exit 1, bounded"
 make_status true; make_gh; reset
-make_pr graphql.1.json OPEN true -
-make_pr graphql.2.json OPEN true -
-out=$(WATCH_RC=1 runw); rc=$?
+make_pr graphql.json OPEN true -
+out=$(runw --interval 20 --max-wait 40); rc=$?
 err=$(cat "$STUB_DIR/err")
 check "exit code" "1" "$rc"
-says "names the timeout" "still in the merge queue; pr-status.sh --watch ended with exit 1" "$err"
+check "1 enqueue read + 3 wait reads" "4" "$(graphql_calls)"
+says  "names the timeout" "still in the merge queue after 40s" "$err"
+check "gate read once" "1" "$(status_calls)"
 
-echo "case 14: --wait, outcome unreadable after the watch — exit 2, unknown"
+echo "case 14: --wait, a failed read in between is not an outcome"
 make_status true; make_gh; reset
 make_pr graphql.1.json OPEN true -
+make_pr graphql.3.json MERGED false -
 out=$(runw); rc=$?
+check "exit code" "0" "$rc"
+says "reports merged" "559 merged (--merge, through the merge queue)" "$out"
+
+echo "case 15: --wait, the last read failed when the wait ran out — exit 2, unknown"
+make_status true; make_gh; reset
+make_pr graphql.1.json OPEN true -
+out=$(runw --max-wait 0); rc=$?
 err=$(cat "$STUB_DIR/err")
 check "exit code" "2" "$rc"
-says     "says the outcome is unknown" "could not be read back" "$err"
+says     "says the outcome is unknown" "the last read of the pull request failed" "$err"
 says_not "does not claim merged" "merged (" "$out"
 
-echo "case 15: --wait without a queue — merged directly, no watch"
+echo "case 16: --wait without a queue — merged directly, no wait reads"
 make_status false; make_gh; reset
 make_pr graphql.json MERGED false -
 out=$(runw); rc=$?
 check "exit code" "0" "$rc"
-check "no watch" "0" "$( [ -f "$STUB_DIR/watch.log" ] && wc -l < "$STUB_DIR/watch.log" || echo 0)"
+check "one read" "1" "$(graphql_calls)"
 says "reports merged" "559 merged (--merge)" "$out"
+
+echo "case 17: --max-wait without --wait is refused before anything runs"
+make_status true; make_gh; reset
+PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 --max-wait 10 >/dev/null 2>"$STUB_DIR/err"; rc=$?
+check "exit code" "2" "$rc"
+check "no gh calls" "0" "$(wc -l < "$STUB_DIR/calls.log" | tr -d ' ')"
+says  "names the rule" "only apply with --wait" "$(cat "$STUB_DIR/err")"
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
