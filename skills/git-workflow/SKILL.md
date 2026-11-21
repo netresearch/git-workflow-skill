@@ -87,7 +87,7 @@ Before merging: threads resolved, CI green (incl. annotations), rebased, signed,
 # Gate state, next action:
 ./scripts/pr-status.sh [-R owner/repo | -R host/group/project] [PR] [--json] [--watch] [--stuck-after MIN]
 # Merge; refuses when the gate is shut:
-./scripts/pr-merge.sh [-R owner/repo] [PR] [--dry-run|--self-reviewed|--retarget-stacked]
+./scripts/pr-merge.sh [-R owner/repo] [PR] [--dry-run|--self-reviewed|--retarget-stacked] [--wait [--interval SEC] [--max-wait SEC]]
 # Many PRs (`owner/repo N` per line) to merge; stops on any NEXT it does not handle:
 ./scripts/pr-sweep.sh [--interval SEC] [--timeout SEC] [--attention FILE] LISTFILE
 # What a repository expects, before the first artifact:

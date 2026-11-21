@@ -61,8 +61,14 @@ make_status() {
   "next": {"action": "merge", "why": "clean", "method": "--merge"}
 }
 JSON
+    # Every call without --json is logged to status.log: --wait runs the
+    # one-shot gate read after the entry left the queue or the wait ran out.
     cat > "$STUB_DIR/pr-status.sh" <<STATUS
 #!/usr/bin/env bash
+case " \$* " in
+  *" --json "*) ;;
+  *) printf '%s\n' "\$*" >> "$STUB_DIR/status.log"; echo "NEXT: stub"; exit 0 ;;
+esac
 cat "$STUB_DIR/status.json"
 STATUS
     chmod +x "$STUB_DIR/pr-status.sh"
@@ -83,6 +89,13 @@ fi
 # The dependent-PR query pr-merge.sh makes before merging: nothing is stacked.
 if [ "\$1 \$2" = "pr list" ]; then
   exit 0
+fi
+# A slow API: "<from> <secs>" in $STUB_DIR/slow makes every GraphQL read from
+# call <from> on take <secs> seconds.
+if [ -f "$STUB_DIR/slow" ]; then
+  read -r from secs < "$STUB_DIR/slow"
+  k=\$(grep -c '^api graphql\$' "$STUB_DIR/calls.log")
+  if [ "\$k" -ge "\$from" ]; then /bin/sleep "\$secs" >/dev/null; fi
 fi
 n=\$(grep -c '^api graphql\$' "$STUB_DIR/calls.log")
 if [ -f "$STUB_DIR/graphql.\$n.json" ]; then
@@ -111,7 +124,7 @@ make_pr() {
 JSON
 }
 
-reset() { rm -f "$STUB_DIR"/graphql*.json; }
+reset() { rm -f "$STUB_DIR"/graphql*.json "$STUB_DIR/status.log"; }
 
 run() { PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 2>"$STUB_DIR/err"; }
 graphql_calls() { grep -c '^api graphql$' "$STUB_DIR/calls.log"; }
@@ -227,6 +240,168 @@ check "exit code"   "0" "$rc"
 check "no gh write calls" "0" "$(grep -cE '^pr (merge|edit|comment)' "$STUB_DIR/calls.log")"
 check "only the dependent query was read" "pr list" "$(tr -d '\n' < "$STUB_DIR/calls.log")"
 says  "prints the merge command" "gh pr merge 559 --repo o/r --merge" "$out"
+
+# --wait: queueing and waiting in one call, so the caller writes no poll of its
+# own. It reads state and isInMergeQueue until the PR merged or left the queue.
+runw() { PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 --wait "$@" 2>"$STUB_DIR/err"; }
+status_calls() { if [ -f "$STUB_DIR/status.log" ]; then wc -l < "$STUB_DIR/status.log" | tr -d ' '; else echo 0; fi; }
+
+echo "case 11: --wait, queued, then merged — reports merged, exit 0"
+make_status true; make_gh; reset
+make_pr graphql.1.json OPEN true -
+make_pr graphql.2.json OPEN true -
+make_pr graphql.3.json MERGED false -
+out=$(runw); rc=$?
+check "exit code" "0" "$rc"
+check "read until merged" "3" "$(graphql_calls)"
+check "no gate read needed" "0" "$(status_calls)"
+says     "reports merged through the queue" "559 merged (--merge, through the merge queue)" "$out"
+says_not "no waiter line" "wait with:" "$out"
+
+echo "case 12: --wait, entry dropped out of the queue — exit 1, names the next step"
+make_status true; make_gh; reset
+make_pr graphql.1.json OPEN true -
+make_pr graphql.json OPEN false -
+out=$(runw); rc=$?
+err=$(cat "$STUB_DIR/err")
+check "exit code" "1" "$rc"
+check "drop confirmed on a second read" "3" "$(graphql_calls)"
+check "gate read once" "1" "$(status_calls)"
+says     "names the drop" "left the merge queue without merging (state=OPEN)" "$err"
+says     "passes the gate on" "NEXT: stub" "$err"
+says_not "does not claim merged" "merged (" "$out"
+
+# The defect the first version had: pr-status.sh --watch returns on
+# address-comments, rebase or fix-ci while the entry is still queued. A wait
+# keyed on the PR itself holds on until --max-wait.
+echo "case 13: --wait, still queued for the whole --max-wait — exit 1, bounded"
+make_status true; make_gh; reset
+make_pr graphql.json OPEN true -
+out=$(runw --interval 20 --max-wait 40); rc=$?
+err=$(cat "$STUB_DIR/err")
+check "exit code" "1" "$rc"
+check "1 enqueue read + 3 wait reads" "4" "$(graphql_calls)"
+says  "names the timeout" "still in the merge queue after 40s" "$err"
+check "gate read once" "1" "$(status_calls)"
+
+echo "case 14: --wait, a failed read in between is not an outcome"
+make_status true; make_gh; reset
+make_pr graphql.1.json OPEN true -
+make_pr graphql.3.json MERGED false -
+out=$(runw); rc=$?
+check "exit code" "0" "$rc"
+says "reports merged" "559 merged (--merge, through the merge queue)" "$out"
+
+echo "case 15: --wait, the last read failed when the wait ran out — exit 2, unknown"
+make_status true; make_gh; reset
+make_pr graphql.1.json OPEN true -
+out=$(runw --max-wait 0); rc=$?
+err=$(cat "$STUB_DIR/err")
+check "exit code" "2" "$rc"
+says     "says the outcome is unknown" "the last read of the pull request failed" "$err"
+says_not "does not claim merged" "merged (" "$out"
+
+echo "case 16: --wait without a queue — merged directly, no wait reads"
+make_status false; make_gh; reset
+make_pr graphql.json MERGED false -
+out=$(runw); rc=$?
+check "exit code" "0" "$rc"
+check "one read" "1" "$(graphql_calls)"
+says "reports merged" "559 merged (--merge)" "$out"
+
+echo "case 17: --max-wait without --wait is refused before anything runs"
+make_status true; make_gh; reset
+PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 --max-wait 10 >/dev/null 2>"$STUB_DIR/err"; rc=$?
+check "exit code" "2" "$rc"
+check "no gh calls" "0" "$(wc -l < "$STUB_DIR/calls.log" | tr -d ' ')"
+says  "names the rule" "only apply with --wait" "$(cat "$STUB_DIR/err")"
+
+# GitHub can put a dropped entry back by itself while auto-merge is armed;
+# re-queueing by hand would cancel that run. One read outside the queue is
+# therefore not yet a drop.
+echo "case 18: --wait, out of the queue once, back in, then merged — exit 0"
+make_status true; make_gh; reset
+make_pr graphql.1.json OPEN true -
+make_pr graphql.2.json OPEN false -
+make_pr graphql.3.json OPEN true -
+make_pr graphql.4.json MERGED false -
+out=$(runw); rc=$?
+check "exit code" "0" "$rc"
+check "no gate read" "0" "$(status_calls)"
+says  "reports merged" "559 merged (--merge, through the merge queue)" "$out"
+
+echo "case 19: a leading zero is refused (bash reads 08 as bad octal)"
+make_status true; make_gh; reset
+PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R o/r 559 --wait --interval 08 >/dev/null 2>"$STUB_DIR/err"; rc=$?
+check "exit code" "2" "$rc"
+check "no gh calls" "0" "$(wc -l < "$STUB_DIR/calls.log" | tr -d ' ')"
+says  "names the rule" "without a leading zero" "$(cat "$STUB_DIR/err")"
+
+echo "case 20: --max-wait not a multiple of --interval — the last sleep is shortened"
+make_status true; make_gh; reset
+make_pr graphql.json OPEN true -
+cat > "$STUB_DIR/sleep" <<SLEEP
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$STUB_DIR/sleep.log"
+SLEEP
+chmod +x "$STUB_DIR/sleep"; rm -f "$STUB_DIR/sleep.log"
+out=$(runw --interval 20 --max-wait 30); rc=$?
+check "exit code" "1" "$rc"
+check "sleeps 20 then 10" "20 10" "$(tr '\n' ' ' < "$STUB_DIR/sleep.log" | sed 's/ $//')"
+
+echo "case 21: --wait, out, in, out, in, merged — a single read outside never adds up"
+make_status true; make_gh; reset
+make_pr graphql.1.json OPEN true -
+make_pr graphql.2.json OPEN false -
+make_pr graphql.3.json OPEN true -
+make_pr graphql.4.json OPEN false -
+make_pr graphql.5.json OPEN true -
+make_pr graphql.6.json MERGED false -
+out=$(runw); rc=$?
+check "exit code" "0" "$rc"
+check "no gate read" "0" "$(status_calls)"
+
+echo "case 22: --wait, one failed read early, then queued to the end — exit 1, not 2"
+make_status true; make_gh; reset
+make_pr graphql.1.json OPEN true -
+make_pr graphql.3.json OPEN true -
+make_pr graphql.4.json OPEN true -
+out=$(runw --interval 20 --max-wait 40); rc=$?
+err=$(cat "$STUB_DIR/err")
+check "exit code" "1" "$rc"
+says "names the timeout" "still in the merge queue after 40s" "$err"
+
+# The wall clock bounds the wait too, including the time the reads take. Here
+# every read takes 2 s and the sleeps are real: counting only the sleeps would
+# run for about 8 s; the deadline stops it after about 4 s (the enqueue read,
+# then one wait read past the 2 s limit).
+echo "case 23: --wait is bounded by the wall clock, not only by the sum of sleeps"
+make_status true; make_gh; reset
+make_pr graphql.json OPEN true -
+printf '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n' > "$STUB_DIR/sleep"
+chmod +x "$STUB_DIR/sleep"
+echo "1 2" > "$STUB_DIR/slow"
+t0=$SECONDS
+out=$(runw --interval 1 --max-wait 2); rc=$?
+took=$((SECONDS - t0))
+rm -f "$STUB_DIR/slow"
+check "exit code" "1" "$rc"
+if [ "$took" -le 5 ]; then echo "  ok   stopped after $took seconds"; else echo "  FAIL ran $took seconds, expected about 4"; fail=1; fi
+
+# A read that hangs must not hold the wait past --max-wait: it is cut at 15 s
+# and counts as a failed read. Reads from the second on take 30 s here.
+echo "case 24: --wait, a hanging read is cut off and counts as failed — exit 2"
+make_status true; make_gh; reset
+make_pr graphql.json OPEN true -
+printf '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n' > "$STUB_DIR/sleep"
+chmod +x "$STUB_DIR/sleep"
+echo "2 30" > "$STUB_DIR/slow"
+t0=$SECONDS
+out=$(runw --max-wait 0); rc=$?
+took=$((SECONDS - t0))
+rm -f "$STUB_DIR/slow"
+check "exit code" "2" "$rc"
+if [ "$took" -le 20 ]; then echo "  ok   stopped after $took seconds"; else echo "  FAIL ran $took seconds, expected about 15"; fail=1; fi
 
 if [ "$fail" -eq 0 ]; then
     echo "all pass"
