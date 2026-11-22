@@ -48,7 +48,8 @@ for an outdated thread), the author, the severity label when the first lines
 of the comment carry one in bold or italics (CodeRabbit's `Critical`, `Major`,
 `Minor`, `Nitpick`, `Trivial`), and the comment text without HTML comments,
 `<details>` blocks (the agent prompt, committable suggestions), `<picture>`
-and `<img>` tags, and runs of blank lines. It pages through all threads with
+and `<img>` tags, and runs of blank lines; control characters other than tab
+and newline are dropped from everything it prints. It pages through all threads with
 its own query, prints `0 unresolved threads` when there are none, and exits 2
 without printing a count when the read fails. It does not combine with
 `--watch` or `--json`.

@@ -237,5 +237,18 @@ check "--threads --json exits 2" "2" "$rc"
 rc=0; PATH="$STUB_DIR:$PATH" bash "$SCRIPT" -R gitlab.example.com/g/p 7 --threads >/dev/null 2>&1 || rc=$?
 check "--threads on a GitLab project exits 2" "2" "$rc"
 
+echo "case 8: control characters in a comment, an author login and a path are removed"
+reset_pages
+ESC_BODY=$'**Title**\n\e[2J\e]0;pwned\aVisible text\u009b31m stays.\tTabbed.'
+page 1 false "" 1 "[$(thread T_ESC false false $'src/\e[31mx.sh' 4 4 $'ev\e[31mil' "$ESC_BODY")]"
+rc=0; out=$(run 2>&1) || rc=$?
+check    "exits 0" "0" "$rc"
+lacks    "no ESC byte" $'\e' "$out"
+lacks    "no BEL byte" $'\a' "$out"
+lacks    "no C1 CSI (U+009B)" $'\u009b' "$out"
+contains "the login is kept without the escape" "author  : ev[31mil" "$out"
+contains "the path is kept without the escape" "at      : src/[31mx.sh:4" "$out"
+contains "the prose is kept" "Visible text31m stays."$'\t'"Tabbed." "$out"
+
 [ "$fail" = "0" ] && echo "All cases passed." || echo "FAILURES"
 exit "$fail"

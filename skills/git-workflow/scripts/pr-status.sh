@@ -56,7 +56,9 @@
 # comment carries one in bold or italics in its first lines (CodeRabbit writes
 # "Major", "Minor", "Critical", "Nitpick", "Trivial"), and the comment text
 # with HTML comments, every <details> block, <picture>/<img> tags and runs of
-# blank lines removed. It reads the threads with their own paginated query,
+# blank lines removed. Control characters other than tab and newline are
+# dropped from the text, path, id and login, so an escape sequence in a
+# comment cannot reach the terminal. It reads the threads with their own paginated query,
 # so a pull request with more than 100 threads is listed whole. Zero threads
 # prints "0 unresolved threads" and exits 0; a failed read exits 2 and prints
 # no count. It does not combine with --watch or --json.
@@ -659,6 +661,9 @@ list_threads() {
 render_threads() {
   jq -r --arg repo "$REPO" --arg pr "$PR" '
     def fixpoint(f): (f) as $n | if $n == . then . else $n | fixpoint(f) end;
+    # C0 and C1 control characters except tab and newline: a comment, path or
+    # login carrying an escape sequence must not reach the terminal.
+    def clean: gsub("[\\x{00}-\\x{08}\\x{0b}-\\x{1f}\\x{7f}-\\x{9f}]"; "");
     def strip:
       gsub("\r"; "")
       | gsub("<!--[\\s\\S]*?-->"; "")
@@ -676,14 +681,14 @@ render_threads() {
     | if ($u | length) == 0 then "0 unresolved threads on \($repo)#\($pr)"
       else "\($u | length) unresolved thread(s) on \($repo)#\($pr)",
         ($u[] | (.comments.nodes[0] // {}) as $c
-          | (($c.body // "") | strip) as $text
+          | (($c.body // "") | clean | strip) as $text
           | ($text | severity) as $sev
-          | (.path // "") as $path
+          | (.path // "" | clean) as $path
           | (.line // .originalLine) as $line
           | "",
-            "thread \(.id)\(if .isOutdated then " (outdated)" else "" end)",
+            "thread \(.id | clean)\(if .isOutdated then " (outdated)" else "" end)",
             "  at      : \(if $path == "" then "(no path)" elif $line == null then $path else "\($path):\($line)" end)",
-            "  author  : \($c.author.login // "(deleted user)")",
+            "  author  : \(($c.author.login // "(deleted user)") | clean)",
             (if $sev then "  severity: \($sev)" else empty end),
             ($text | split("\n")[] | if . == "" then "" else "    \(.)" end))
       end'
