@@ -183,6 +183,25 @@ it, still returns on every other actionable event, and answers
 `SETTLED: NEXT is still the ignored action` (exit 0) once the checks settle
 with the ignored action still on top.
 
+### A red check belongs to the PR only if the base branch is green
+
+"Fix the CI failures of PR N" means the failures this PR causes. Before
+changing anything for a red check, read the same check on the base branch's
+latest run:
+
+```bash
+gh run list -R owner/repo --branch main --workflow <file>.yml --limit 1
+```
+
+A check that is red on the base too fails for a reason outside the PR: a
+dependency, the runner image, the workflow itself. Its fix goes into a
+separate PR against the base, and the first PR names that PR as its
+prerequisite (see `references/merge-dependencies.md`). Putting the CI change
+into the first PR widens its diff with work its reviewers did not ask for.
+Seen on phpbu: the dependency install failed on `main` as well, so its fix
+went to sebastianfeldmann/phpbu#405 and the feature PR
+sebastianfeldmann/phpbu#404 kept its own scope.
+
 ### Never merge an unreviewed PR
 
 If `pr-status.sh` reports `reviews: NONE on current head`, do not merge.
