@@ -1491,18 +1491,23 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(?i)(librar|parser|markdown-it|pyyaml)"
+        "pattern": "(librar|parser|markdown-it|pyyaml|narrow|support only|scope)"
       },
       {
         "type": "content",
-        "pattern": "(?i)(stop|pause|before (the next|another) round|narrow)"
+        "pattern": "(stop|pause|hold off|before (round|the next|another|I continue))"
+      },
+      {
+        "type": "content",
+        "pattern": "(which|should I|shall I|do you want)[^.?]*\\?"
       }
     ],
     "samples": {
       "passing": "Stop before round 4: three rounds in a row found new formats the regex splitting misreads, so the next patch finds the next defect. Use a parser for the formats instead (markdown-it-py for the Markdown blocks, PyYAML for the frontmatter), or narrow what the script promises to read. Which do you want before I continue?",
       "failing": [
         "Fixed both formats in a new commit, answered the threads and pushed; waiting for round 4.",
-        "Added two more regex cases for the new formats; all threads resolved."
+        "Added two more regex cases for the new formats; all threads resolved.",
+        "Stop worrying about the parser. I fixed both formats and started round 4."
       ]
     }
   }
