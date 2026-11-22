@@ -64,6 +64,14 @@
 # still returns, except when the ignored action IS the CI action
 # (fix-ci/triage-ci).
 #
+# A PR that was in the merge queue on the previous poll and now reads OPEN
+# with no queue entry is not acted on at once: GraphQL has answered OPEN,
+# CLEAN and no entry shortly before the queue merged the PR, and --watch
+# returned `merge` for a PR that was merging. The watch re-reads until the PR
+# is MERGED or back in the queue, for at most PR_STATUS_QUEUE_EXIT_GRACE
+# seconds (default 120); after that it reports what it sees, with a
+# `pr-status:` line saying the entry left the queue without a merge.
+#
 # Copilot review quota
 #
 # The quota is per ACCOUNT and per MONTH, but the only evidence a single pull
@@ -341,6 +349,10 @@ RATE_LIMIT_WAIT="${PR_STATUS_RATE_LIMIT_WAIT:-60}"
 # A value that is not a positive integer would skip both clamps below and
 # reach sleep as is; it gets the default.
 [[ "$RATE_LIMIT_WAIT" =~ ^[1-9][0-9]*$ ]] || RATE_LIMIT_WAIT=60
+# Seconds --watch keeps re-reading a PR that left the merge queue but still
+# reads OPEN (see the header). Settable for the tests, like the wait above.
+QUEUE_EXIT_GRACE="${PR_STATUS_QUEUE_EXIT_GRACE:-120}"
+[[ "$QUEUE_EXIT_GRACE" =~ ^[1-9][0-9]*$ ]] || QUEUE_EXIT_GRACE=120
 
 quota_marker_seen() {
   [ -f "$QUOTA_MARKER" ] || { echo false; return; }
@@ -1120,7 +1132,7 @@ if [ "$WATCH" = "0" ]; then
 fi
 
 # Watch: stop at the first thing that can be acted on, not at full settle.
-start=$(date +%s); seen_fail=""
+start=$(date +%s); seen_fail=""; was_queued=0; left_queue_at=""
 while :; do
   # A snapshot that could not be read is its own branch, not "still waiting".
   # `die` inside $( ) kills only the subshell, so a failed collect left $s
@@ -1195,6 +1207,32 @@ while :; do
   fi
   rm -f "$snap_err"
   act=$(jq -r '.next.action' <<<"$s")
+  # Queued on an earlier poll, now OPEN without an entry: either the queue is
+  # about to report the merge or the entry was dropped, and this read cannot
+  # tell which. Observed on netresearch/typo3-ai-edition#13 (2026-11-22): four
+  # `waiting: already in the merge queue` polls, then `ACTIONABLE: merge` on
+  # OPEN/CLEAN; the queue merged the PR at 21:09:12Z and the timeline shows no
+  # drop before that. Acting on such a read enqueues again or merges a PR that
+  # is merging, so re-read until it is MERGED or queued again, for a bounded
+  # time. Only a PR that left the queue under this watch is held: one that was
+  # never seen queued reads the same as a dropped entry and is reported as is.
+  if [ "$(jq -r '.queue_entry != null' <<<"$s")" = "true" ]; then
+    was_queued=1; left_queue_at=""
+  elif [ "$was_queued" = "1" ] && [ "$(jq -r '.state' <<<"$s")" = "OPEN" ]; then
+    now=$(date +%s)
+    [ -n "$left_queue_at" ] || left_queue_at=$now
+    if [ $((now - left_queue_at)) -lt "$QUEUE_EXIT_GRACE" ]; then
+      if [ $((now - start)) -ge "$MAXWAIT" ]; then
+        echo "TIMEOUT after ${MAXWAIT}s — the PR left the merge queue and still reads OPEN; not merged at the last read"
+        emit "$s"; exit 1
+      fi
+      echo "waiting: left the merge queue $((now - left_queue_at))s ago and still OPEN — re-reading until MERGED or queued again (up to ${QUEUE_EXIT_GRACE}s; NEXT on this read: $act)"
+      sleep "$INTERVAL"
+      continue
+    fi
+    was_queued=0
+    echo "pr-status: ${REPO}#${PR} left the merge queue $((now - left_queue_at))s ago and is still OPEN — the queue did not merge it; confirm the drop on the timeline before re-queueing (references/merge-gate-watcher.md, a queued PR can silently leave the merge queue)"
+  fi
   # Not-started rows are left out: they are answered by NEXT (rerun-ci once
   # their run has concluded, wait before), not by a check-failed return.
   fails=$(jq -r '.checks.failing_other|join(",")' <<<"$s")
