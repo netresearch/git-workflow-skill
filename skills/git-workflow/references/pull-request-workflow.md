@@ -3643,7 +3643,8 @@ If `unknown_key`: go to *github.com → Settings → SSH and GPG keys*, find you
 git config --show-origin --get-all commit.gpgsign    # a local "false" wins over the global "true"
 git rebase -S origin/main                             # decide at the start
 for c in $(git rev-list origin/main..HEAD); do        # the header, not %G? (see above)
-  git cat-file commit "$c" | grep -q '^gpgsig' || echo "unsigned: $(git log -1 --format='%h %s' "$c")"
+  git cat-file commit "$c" | awk '/^$/ {exit} /^gpgsig/ {s=1} END {exit !s}' \
+    || echo "unsigned: $(git log -1 --format='%h %s' "$c")"
 done
 ```
 
