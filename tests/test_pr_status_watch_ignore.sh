@@ -135,6 +135,15 @@ check_contains "reports TIMEOUT"        "TIMEOUT" "$out"
 check_absent  "no ACTIONABLE return"    "ACTIONABLE" "$out"
 check_absent  "no premature SETTLED"    "SETTLED" "$out"
 
+echo "case: an unchanged reason is printed once, later polls get a short line"
+PENDING_CHECK=1 make_stub
+rc=0; out=$(watch --ignore-action request-review --interval 1 --max-wait 3) || rc=$?
+check         "exits 1 (timeout)"       "1" "$rc"
+full=$(printf '%s\n' "$out" | grep '^waiting:' | grep -vc '^waiting: unchanged since ' || true)
+short=$(printf '%s\n' "$out" | grep -c '^waiting: unchanged since .*(NEXT: request-review, ' || true)
+check         "one full waiting line"   "1" "$full"
+check         "short lines follow"      "true" "$([ "$short" -ge 1 ] && echo true || echo false)"
+
 echo "case: CodeRabbit review triggered, checks settled, ignored -> holds, no SETTLED"
 # The watch armed right after @coderabbitai review: settling here returns
 # while the review runs (netresearch/retro-skill#169).
