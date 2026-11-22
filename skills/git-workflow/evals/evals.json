@@ -1507,7 +1507,8 @@
       "failing": [
         "Fixed both formats in a new commit, answered the threads and pushed; waiting for round 4.",
         "Added two more regex cases for the new formats; all threads resolved.",
-        "Stop worrying about the parser. I fixed both formats and started round 4."
+        "Stop worrying about the parser. I fixed both formats and started round 4.",
+        "Pausing here: a parser such as markdown-it-py fits this better. I will switch the script to it next."
       ]
     }
   }
