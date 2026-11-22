@@ -72,6 +72,12 @@ git status --porcelain                    # only the branch's own files may appe
 
 Rebase onto the new `origin/main` afterwards, as a separate step.
 
+Already reset to `origin/main`? Then `HEAD` is `origin/main`, and the
+merge-base above returns `origin/main` again. Restore the branch tip first:
+`git reset --soft ORIG_HEAD` (the reset recorded the old tip there; if another
+command has since overwritten it, take the tip from `git reflog`), then run the
+three lines above.
+
 After the rebuild, before pushing:
 
 ```bash

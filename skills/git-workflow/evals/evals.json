@@ -1471,10 +1471,14 @@
       {
         "type": "content",
         "pattern": "merge-base"
+      },
+      {
+        "type": "content",
+        "pattern": "(ORIG_HEAD|reflog)"
       }
     ],
     "samples": {
-      "passing": "No. The fetch moved origin/main, so the index now holds the reverse of the commits that landed upstream; committing would revert them. Reset to the commit the branch forked from instead: base=$(git merge-base HEAD origin/main); git reset --soft \"$base\", check that git status lists only your files, commit, then rebase onto origin/main.",
+      "passing": "No. The fetch moved origin/main, so the index now holds the reverse of the commits that landed upstream; committing would revert them. HEAD is now origin/main, so restore the branch tip first: git reset --soft ORIG_HEAD. Then reset to the commit the branch forked from: base=$(git merge-base HEAD origin/main); git reset --soft \"$base\", check that git status lists only your files, commit, then rebase onto origin/main.",
       "failing": [
         "Yes, commit; the extra files are just the latest main.",
         "Yes. git reset --soft keeps your work, so the commit is safe."
