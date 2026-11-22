@@ -905,6 +905,15 @@ With the bare-clone convention (`project/.bare` + one directory per branch),
 relative `worktree add` paths resolve from *inside* `.bare` — see the detailed
 path-resolution rules and recovery steps in the bare-repo section below.
 
+**Push a branch deletion from a worktree, not from `.bare`.**
+`git -C .bare push origin --delete <branch>` runs the repository's pre-push
+hook with `.bare` as its directory. A hook framework that asks git for the
+work tree stops there: lefthook runs `git rev-parse --show-toplevel`, gets
+`fatal: this operation must be run in a work tree`, and the push fails with
+`error: failed to push some refs`. Run the same push from any worktree of
+the repository, for example `git -C project/main push origin --delete <branch>`
+(measured in netresearch/ofelia, 2026-11-22).
+
 Before nesting a `.bare` into an existing directory, check whether it already
 holds a **plain clone** — mixing the two layouts leaves a repo checkout *and* a
 worktree side by side in one directory. If it already does, see "Consolidating a
