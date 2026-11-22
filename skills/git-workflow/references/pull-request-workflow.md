@@ -3648,7 +3648,7 @@ git config --show-origin --get-all commit.gpgsign    # a local "false" wins over
 git rebase -S origin/main                             # decide at the start; add --force-rebase
                                                       # when the branch already sits on the base
 for c in $(git rev-list origin/main..HEAD); do        # the header, not %G? (see above)
-  git cat-file commit "$c" | awk '/^$/ {exit} /^gpgsig/ {s=1} END {exit !s}' \
+  git cat-file commit "$c" | awk '/^$/ {exit} /^gpgsig(-sha256)? / {s=1} END {exit !s}' \
     || echo "unsigned: $(git log -1 --format='%h %s' "$c")"
 done
 ```
