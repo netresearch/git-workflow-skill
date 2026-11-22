@@ -1133,6 +1133,11 @@ fi
 
 # Watch: stop at the first thing that can be acted on, not at full settle.
 start=$(date +%s); seen_fail=""; was_queued=0; left_queue_at=""
+# The reason behind a "waiting:" line can run to 1.5 KB and stays the same for
+# many polls: one watch in a merge queue printed 84 such lines, 64 of them
+# identical to the one before. The full reason is printed when it changes;
+# an unchanged poll gets one short line.
+last_why=""; last_why_at=""
 while :; do
   # A snapshot that could not be read is its own branch, not "still waiting".
   # `die` inside $( ) kills only the subshell, so a failed collect left $s
@@ -1321,6 +1326,12 @@ while :; do
     echo "TIMEOUT after ${MAXWAIT}s — still: $(jq -r '.next.why' <<<"$s")"
     emit "$s"; exit 1
   fi
-  echo "waiting: $(jq -r '.next.why' <<<"$s")"
+  why=$(jq -r '.next.why' <<<"$s")
+  if [ "$why" = "$last_why" ]; then
+    echo "waiting: unchanged since $last_why_at (NEXT: $act, $((now - start))s elapsed)"
+  else
+    echo "waiting: $why"
+    last_why="$why"; last_why_at=$(date -u +%H:%M:%SZ)
+  fi
   sleep "$INTERVAL"
 done
