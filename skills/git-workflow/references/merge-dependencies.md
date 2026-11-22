@@ -59,15 +59,11 @@ validate the required target/state, and refresh after prerequisite changes.
 Do not run untrusted PR code with write credentials. Installing the workflow or
 changing required checks needs authorization; checking or proposing does not.
 
-**A stack across a fork.** An upstream PR cannot use a branch of a fork as its
-base, so a dependent change from a fork targets the upstream default branch
-and carries the prerequisite's commits. Say so in the first paragraph of the
-description ("contains the two commits of #A; merge #A first"); that sentence
-is documentation, so the guard above still applies. The push to the fork runs
-CI on the combined commits, which is the test of the combination. After the
-prerequisite merges, rebase onto the default branch: the diff shrinks to the
-dependent PR's own commits. Seen on sebastianfeldmann/phpbu#406, which carried
-the commits of sebastianfeldmann/phpbu#405.
+**A stack across a fork** has no base-branch chain, because an upstream PR
+cannot use a fork's branch as its base. The options and the procedure for each
+are in `references/pull-request-workflow.md`, section "A stack needs push
+access to the repository the PRs target". A description sentence naming the
+prerequisite is documentation there too, so the guard above still applies.
 
 After fulfillment, recheck the target, head SHA and all existing gates before
 clearing only the authorized dependency guard. A passing `pr-status.sh` gate

@@ -186,19 +186,28 @@ with the ignored action still on top.
 ### A red check belongs to the PR only if the base branch is green
 
 "Fix the CI failures of PR N" means the failures this PR causes. Before
-changing anything for a red check, read the same check on the base branch's
-latest run:
+changing anything for a red check, find out whether the base branch fails the
+same way:
 
-```bash
-gh run list -R owner/repo --branch main --workflow <file>.yml --limit 1
-```
+1. If the base has moved since the PR run, rebase the PR and let CI run again,
+   so that the PR run and the base run test the same base commit.
+2. Read the failing job and step of the PR run, and the same job on the base:
 
-A check that is red on the base too fails for a reason outside the PR: a
-dependency, the runner image, the workflow itself. Its fix goes into a
-separate PR against the base, and the first PR names that PR as its
-prerequisite (see `references/merge-dependencies.md`). Putting the CI change
-into the first PR widens its diff with work its reviewers did not ask for.
-Seen on phpbu: the dependency install failed on `main` as well, so its fix
+   ```bash
+   gh run view <pr-run-id> -R owner/repo --log-failed
+   gh run list -R owner/repo --branch main --workflow <file>.yml --limit 1
+   gh run view <base-run-id> -R owner/repo --log-failed
+   ```
+
+3. The failure is inherited only when the same job fails at the same step with
+   the same error. Then it fails for a reason outside the PR (a dependency, the
+   runner image, the workflow itself): its fix goes into a separate PR against
+   the base, and the first PR names that PR as its prerequisite (see
+   `references/merge-dependencies.md`). A different error in the same job stays
+   the PR's to fix; rerun the PR once the base fix has landed.
+
+Putting an inherited fix into the first PR widens its diff with work its
+reviewers did not ask for. Seen on phpbu: the dependency install failed on `main` as well, so its fix
 went to sebastianfeldmann/phpbu#405 and the feature PR
 sebastianfeldmann/phpbu#404 kept its own scope.
 
@@ -2954,8 +2963,24 @@ Check before you plan around a stack, not after you have built it:
 gh api "repos/$UPSTREAM" --jq '.permissions.push'   # false → no stack there
 ```
 
-With `push: false` the options are a single PR, or a second PR that waits for
-the first to merge and then targets the default branch. Opening the follow-up in
+With `push: false` there are three options:
+
+- a single PR;
+- a second PR that waits for the first to merge and then targets the branch
+  the first one merged into;
+- a second PR opened now against that same branch, carrying the first PR's
+  commits. Its first paragraph names the prerequisite, and it stays
+  unmergeable until the prerequisite lands (Draft or a required check, see
+  `references/merge-dependencies.md`). Confirm that a CI run on its head, the
+  combined commits, succeeded: a fork push runs nothing when Actions are off
+  on the fork. Once the first PR has merged, rebase onto the target. After a
+  merge commit the duplicated commits drop out; after a squash, replay only
+  the own commits with
+  `git rebase --onto origin/<target> <last commit of the first PR>`. Seen on
+  sebastianfeldmann/phpbu#406, which carried the commits of
+  sebastianfeldmann/phpbu#405.
+
+Opening the follow-up in
 your own fork keeps it reviewable and off the upstream's list, but it is not a
 stack: the maintainers cannot see it in the queue.
 
