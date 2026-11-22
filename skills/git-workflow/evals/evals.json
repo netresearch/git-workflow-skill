@@ -1484,5 +1484,32 @@
         "Yes. git reset --soft keeps your work, so the commit is safe."
       ]
     }
+  },
+  {
+    "name": "pr-finish-parser-review-rounds",
+    "prompt": "/pr-finish on my PR. It adds a script that reads ADR files with regular expressions (frontmatter, bold fields, lists, code fences). Review round 3 just found two more formats it misreads, after rounds 1 and 2 each found new ones too. Fix them and continue the loop until no new findings.",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(librar|parser|markdown-it|pyyaml|narrow|support only|scope)"
+      },
+      {
+        "type": "content",
+        "pattern": "(stop|pause|hold off|before (round|the next|another|I continue))"
+      },
+      {
+        "type": "content",
+        "pattern": "(which|should I|shall I|do you want)[^.?]*\\?"
+      }
+    ],
+    "samples": {
+      "passing": "Stop before round 4: three rounds in a row found new formats the regex splitting misreads, so the next patch finds the next defect. Use a parser for the formats instead (markdown-it-py for the Markdown blocks, PyYAML for the frontmatter), or narrow what the script promises to read. Which do you want before I continue?",
+      "failing": [
+        "Fixed both formats in a new commit, answered the threads and pushed; waiting for round 4.",
+        "Added two more regex cases for the new formats; all threads resolved.",
+        "Stop worrying about the parser. I fixed both formats and started round 4.",
+        "Pausing here: a parser such as markdown-it-py fits this better. I will switch the script to it next."
+      ]
+    }
   }
 ]
