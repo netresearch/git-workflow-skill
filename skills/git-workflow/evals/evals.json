@@ -1459,5 +1459,30 @@
         "Yes, the PR is green. There are no pending checks; the count is 1 of 28. Do not re-arm the watch."
       ]
     }
+  },
+  {
+    "name": "squash-base-after-fetch",
+    "prompt": "I want to squash my feature branch into one commit. I ran `git fetch` first, then `git reset --soft origin/main`. Now `git status` lists files my branch never touched. Can I just commit?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(?i)(revert|undo|reverse)"
+      },
+      {
+        "type": "content",
+        "pattern": "merge-base"
+      },
+      {
+        "type": "content",
+        "pattern": "(ORIG_HEAD|reflog)"
+      }
+    ],
+    "samples": {
+      "passing": "No. The fetch moved origin/main, so the index now holds the reverse of the commits that landed upstream; committing would revert them. HEAD is now origin/main, so restore the branch tip first: git reset --soft ORIG_HEAD. Then reset to the commit the branch forked from: base=$(git merge-base HEAD origin/main); git reset --soft \"$base\", check that git status lists only your files, commit, then rebase onto origin/main.",
+      "failing": [
+        "Yes, commit; the extra files are just the latest main.",
+        "Yes. git reset --soft keeps your work, so the commit is safe."
+      ]
+    }
   }
 ]

@@ -56,6 +56,28 @@ and only CI notices that the pushed tree is the stale one (2026-08-13: a
 history rewrite meant to purge two files shipped without the accompanying
 test/docs edits; the red CI on removed-file assertions was the first signal).
 
+**`<base>` is the merge-base, never a ref that a fetch can move.** `git reset
+--soft origin/main` after a `git fetch` that advanced `origin/main` stages the
+branch's tree on top of the NEW main, so the index holds the reverse of every
+commit that landed upstream in the meantime, and the next commit silently
+reverts them (2026-11-22: a squash of an ofelia branch staged the undo of a
+just-merged PR; `git status --porcelain` listing files the branch never
+touched was the signal). Take the base from the branch itself:
+
+```bash
+base=$(git merge-base HEAD origin/main)   # the commit the branch forked from
+git reset --soft "$base"
+git status --porcelain                    # only the branch's own files may appear
+```
+
+Rebase onto the new `origin/main` afterwards, as a separate step.
+
+Already reset to `origin/main`? Then `HEAD` is `origin/main`, and the
+merge-base above returns `origin/main` again. Restore the branch tip first:
+`git reset --soft ORIG_HEAD` (the reset recorded the old tip there; if another
+command has since overwritten it, take the tip from `git reflog`), then run the
+three lines above.
+
 After the rebuild, before pushing:
 
 ```bash
