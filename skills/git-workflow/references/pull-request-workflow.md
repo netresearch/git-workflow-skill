@@ -775,8 +775,10 @@ git -C ../pr-<n> push <their-login> HEAD:<head-branch> --force-with-lease
 ```
 
 Their commits keep their author and their `Signed-off-by`; yours carry yours.
-The rebase re-signs every commit with your key, which is expected — the author
-field is what attribution rests on, not the signature.
+The rebase re-signs every commit with your key when signing is on as it starts
+([A rebase signs only when signing is on as it starts](#a-rebase-signs-only-when-signing-is-on-as-it-starts)),
+which is expected — the author field is what attribution rests on, not the
+signature.
 
 Three things about the merge differ from an ordinary pull request:
 
@@ -2370,6 +2372,7 @@ Observed 2026-08-13 on netresearch/t3x-nr-llm#759, stacked on #758 for a documen
 **The same cost without a stack: sibling PRs that all edit `CHANGELOG.md`.** Splitting one plan into N independent PRs against `main` avoids retargeting, but if each PR adds its own entry under `[Unreleased]` and the base branch requires branches to be up to date before merging (`strict_required_status_checks_policy: true`, visible in `gh api repos/OWNER/REPO/rules/branches/main`), the merges serialize: every merge moves `main`, every remaining PR is now `DIRTY` on the changelog, and each needs a rebase, a conflict resolution and a **full CI run** before it can merge. N PRs cost N−1 extra pipelines, one after another — five PRs in one repository took four such rounds at roughly an hour each while runners were scarce. Decide this when you split the work, not when the second merge lands:
 
 - **Keep the changelog out of the siblings.** Add all entries in one final PR (or in the release PR, where the repository allows it), so the feature PRs touch disjoint files and stay mergeable in any order.
+- **The same holds for any file every sibling appends to,** such as a shared `benchmark_test.go`: two PRs that each add a function at the end of one file conflict like two changelog entries. Put each PR's new tests and benchmarks in a file of their own (`bench_<topic>_test.go`, `<topic>_test.go`), so the queue can merge them in any order. Observed 2026-11-22 on netresearch/go-cron#497–#499: all three appended benchmarks to `benchmark_test.go`, and the second and third each needed a rebase, a re-signing and a full CI run.
 - **Or accept the serial cost deliberately** and fix the merge order up front, so each rebase happens once, against the PR merged just before it — rebasing all of them after every merge only multiplies the pipelines.
 - **Resolve by keeping every entry,** in Keep a Changelog order (Added, Changed, Deprecated, Removed, Fixed, Security), and check the result by listing the section's headings and entry titles: each entry exactly once.
 - **Re-run the local checks after each rebase.** The branch now contains every earlier merge; a conflict elsewhere (a shared `Services.yaml` exclude list, for example) is a semantic merge, not a formality.
@@ -3631,6 +3634,18 @@ gh api /repos/{owner}/{repo}/commits/HEAD --jq '.commit.verification | {verified
 ```
 
 If `unknown_key`: go to *github.com → Settings → SSH and GPG keys*, find your key, and add it again under *New signing key* (same public key, different "Key type"). After adding, re-verify with the API call above.
+
+#### A rebase signs only when signing is on as it starts
+
+`git rebase` decides once, when it starts, whether the commits it replays get a signature, and keeps that decision until it ends. The decision comes from `-S` or `--no-gpg-sign` on the starting command, otherwise from `commit.gpgsign` in the effective config, where a repository-local `false` beats the global `true`. A `git -c commit.gpgsign=true rebase --continue` after a conflict changes nothing: every replayed commit, the conflicted one included, comes out unsigned, and the push succeeds. The required-signatures rule blocks the merge only later, after a full CI run.
+
+```bash
+git config --show-origin --get-all commit.gpgsign    # a local "false" wins over the global "true"
+git rebase -S origin/main                             # decide at the start
+git log --format='%h %G? %s' origin/main..HEAD        # N = no signature
+```
+
+Commits that came out unsigned get the `--exec` re-sign from Step 2 above before the push. Observed 2026-11-22 on netresearch/go-cron#497 and #498, where the repository set `commit.gpgsign false` and the conflicted rebase was continued with `-c commit.gpgsign=true`; a scratch repository with the same setting reproduced it: `-c` on `--continue` left both commits unsigned, `-c` or `-S` on the starting `git rebase` signed both.
 
 #### Re-signing a contributor's unsigned commits
 
