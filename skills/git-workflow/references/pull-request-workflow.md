@@ -191,11 +191,14 @@ same way:
 
 1. If the base has moved since the PR run, rebase the PR and let CI run again,
    so that the PR run and the base run test the same base commit.
-2. Read the failing job and step of the PR run, and the same job on the base:
+2. Read the failing job and step of the PR run, and the same job in the run
+   for that base commit (`gh pr view <n> --json baseRefOid` names it once the
+   PR is rebased). No run for that commit means the comparison is
+   inconclusive, not that the base is green:
 
    ```bash
    gh run view <pr-run-id> -R owner/repo --log-failed
-   gh run list -R owner/repo --branch main --workflow <file>.yml --limit 1
+   gh run list -R owner/repo --branch main --workflow <file>.yml --commit <base-sha>
    gh run view <base-run-id> -R owner/repo --log-failed
    ```
 
@@ -2973,10 +2976,13 @@ With `push: false` there are three options:
   unmergeable until the prerequisite lands (Draft or a required check, see
   `references/merge-dependencies.md`). Confirm that a CI run on its head, the
   combined commits, succeeded: a fork push runs nothing when Actions are off
-  on the fork. Once the first PR has merged, rebase onto the target. After a
-  merge commit the duplicated commits drop out; after a squash, replay only
-  the own commits with
-  `git rebase --onto origin/<target> <last commit of the first PR>`. Seen on
+  on the fork. Once the first PR has merged, fetch the target from the
+  upstream remote (`origin` is the fork and can lag behind), check that it
+  contains the merge (`gh pr view <first> --json mergeCommit`, then
+  `git merge-base --is-ancestor <sha> upstream/<target>`), and rebase onto
+  it. After a merge commit the duplicated commits drop out; after a squash,
+  replay only the own commits with
+  `git rebase --onto upstream/<target> <last commit of the first PR>`. Seen on
   sebastianfeldmann/phpbu#406, which carried the commits of
   sebastianfeldmann/phpbu#405.
 
