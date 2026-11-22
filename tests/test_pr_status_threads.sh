@@ -250,5 +250,24 @@ contains "the login is kept without the escape" "author  : ev[31mil" "$out"
 contains "the path is kept without the escape" "at      : src/[31mx.sh:4" "$out"
 contains "the prose is kept" "Visible text31m stays."$'\t'"Tabbed." "$out"
 
+echo "case 9: details, picture and img tags are removed whatever their case"
+reset_pages
+UC_BODY=$'**Title**\n\n<DETAILS><SUMMARY>Prompt</SUMMARY>HIDDEN-UPPER</DETAILS>\n<Picture><IMG src="x.svg"></Picture>Kept prose.'
+page 1 false "" 1 "[$(thread T_UC false false a.sh 1 1 coderabbitai "$UC_BODY")]"
+rc=0; out=$(run 2>&1) || rc=$?
+check    "exits 0" "0" "$rc"
+lacks    "no upper-case details text" "HIDDEN-UPPER" "$out"
+lacks    "no DETAILS tag" "<DETAILS" "$out"
+lacks    "no IMG tag" "<IMG" "$out"
+contains "the prose is kept" "Kept prose." "$out"
+
+echo "case 10: a single-asterisk severity label is recognised"
+reset_pages
+page 1 false "" 2 "[$(thread T_STAR false false a.sh 1 1 coderabbitai $'*Major* · Functional Correctness\n\n**Title**'),$(thread T_PROSE false false b.sh 2 2 alice 'Is this *major* at all?')]"
+rc=0; out=$(run 2>&1) || rc=$?
+check    "exits 0" "0" "$rc"
+contains "the label is printed" "severity: Major" "$out"
+check    "lower-case prose gets no label" "1" "$(grep -c '^  severity:' <<<"$out")"
+
 [ "$fail" = "0" ] && echo "All cases passed." || echo "FAILURES"
 exit "$fail"

@@ -667,15 +667,15 @@ render_threads() {
     def strip:
       gsub("\r"; "")
       | gsub("<!--[\\s\\S]*?-->"; "")
-      | fixpoint(gsub("<details[^>]*>(?:(?!<details[\\s>])[\\s\\S])*?</details>"; ""))
-      | gsub("<picture[^>]*>[\\s\\S]*?</picture>[ \t]*"; "")
-      | gsub("</?(?:picture|source|img)\\b[^>]*>[ \t]*"; "")
+      | fixpoint(gsub("<details[^>]*>(?:(?!<details[\\s>])[\\s\\S])*?</details>"; ""; "i"))
+      | gsub("<picture[^>]*>[\\s\\S]*?</picture>[ \t]*"; ""; "i")
+      | gsub("</?(?:picture|source|img)\\b[^>]*>[ \t]*"; ""; "i")
       | gsub("[ \t]+\n"; "\n")
       | gsub("\n{3,}"; "\n\n")
       | sub("^\n+"; "") | sub("[\\s]+$"; "");
     def severity:
       (split("\n") | map(select(test("\\S"))) | .[0:4] | join("\n"))
-      | [match("(?:\\*\\*|_)[^*_\n]*?\\b(Critical|Major|Minor|Nitpick|Trivial)(?:\\*\\*|_)"; "g")
+      | [match("(?:\\*\\*|\\*|_)[^*_\n]*?\\b(Critical|Major|Minor|Nitpick|Trivial)(?:\\*\\*|\\*|_)"; "g")
          | .captures[0].string] | .[0];
     [.[] | select(.isResolved == false)] as $u
     | if ($u | length) == 0 then "0 unresolved threads on \($repo)#\($pr)"
