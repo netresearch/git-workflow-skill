@@ -1657,9 +1657,13 @@ living in **classic branch protection**, which neither the rulesets endpoint
 nor a non-admin protection query can see — the PR then sits at
 `mergeStateStatus: BLOCKED` with every visible gate green (observed on a PR
 that reported request-review for an hour while the real blocker was the
-signature). Rebase locally instead: signing is wired into git, so a plain
-`git rebase origin/main` (or `git commit --amend --no-edit` when only the
-signature is missing) re-signs, then push with `--force-with-lease`. Two
+signature). Rebase locally instead, with signing switched on in the command:
+`git rebase -S --force-rebase origin/main` replays and signs every commit,
+also when the branch already sits on `origin/main` (`-S` alone replays
+nothing there), and `git commit --amend --no-edit -S` signs HEAD alone. A
+plain rebase signs only when `commit.gpgsign` is on as it starts
+([A rebase signs only when signing is on as it starts](#a-rebase-signs-only-when-signing-is-on-as-it-starts)).
+Then push with `--force-with-lease`. Two
 traps in that push: a checkout created from `FETCH_HEAD` has no lease
 baseline and fails with `stale info` — pass the lease explicitly as
 `--force-with-lease=<branch>:<remote-sha>`; and that remote SHA must be
@@ -3641,7 +3645,8 @@ If `unknown_key`: go to *github.com → Settings → SSH and GPG keys*, find you
 
 ```bash
 git config --show-origin --get-all commit.gpgsign    # a local "false" wins over the global "true"
-git rebase -S origin/main                             # decide at the start
+git rebase -S origin/main                             # decide at the start; add --force-rebase
+                                                      # when the branch already sits on the base
 for c in $(git rev-list origin/main..HEAD); do        # the header, not %G? (see above)
   git cat-file commit "$c" | awk '/^$/ {exit} /^gpgsig/ {s=1} END {exit !s}' \
     || echo "unsigned: $(git log -1 --format='%h %s' "$c")"
