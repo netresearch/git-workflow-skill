@@ -3642,7 +3642,9 @@ If `unknown_key`: go to *github.com → Settings → SSH and GPG keys*, find you
 ```bash
 git config --show-origin --get-all commit.gpgsign    # a local "false" wins over the global "true"
 git rebase -S origin/main                             # decide at the start
-git log --format='%h %G? %s' origin/main..HEAD        # N = no signature
+for c in $(git rev-list origin/main..HEAD); do        # the header, not %G? (see above)
+  git cat-file commit "$c" | grep -q '^gpgsig' || echo "unsigned: $(git log -1 --format='%h %s' "$c")"
+done
 ```
 
 Commits that came out unsigned get the `--exec` re-sign from Step 2 above before the push. Observed 2026-11-22 on netresearch/go-cron#497 and #498, where the repository set `commit.gpgsign false` and the conflicted rebase was continued with `-c commit.gpgsign=true`; a scratch repository with the same setting reproduced it: `-c` on `--continue` left both commits unsigned, `-c` or `-S` on the starting `git rebase` signed both.

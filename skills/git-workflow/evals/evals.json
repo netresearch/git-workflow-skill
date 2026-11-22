@@ -1491,7 +1491,7 @@
     "assertions": [
       {
         "type": "content",
-        "pattern": "(?i)(unsigned|not signed|no signature|%G\\?)"
+        "pattern": "(?i)(unsigned|not signed|no signature|gpgsig)"
       },
       {
         "type": "content",
@@ -1503,7 +1503,7 @@
       }
     ],
     "samples": {
-      "passing": "Not yet. git rebase decides about signing when it starts and keeps that decision, so the local commit.gpgsign false applied to the whole rebase and the -c on --continue changed nothing: check with git log --format='%h %G? %s' origin/main..HEAD (N = no signature). Re-sign with git rebase origin/main --exec 'git commit --amend --no-edit --signoff -S', then push; next time start the rebase with git rebase -S.",
+      "passing": "Not yet. git rebase decides about signing when it starts and keeps that decision, so the local commit.gpgsign false applied to the whole rebase and the -c on --continue changed nothing. Check each commit for a gpgsig header: for c in $(git rev-list origin/main..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done. Re-sign with git rebase origin/main --exec 'git commit --amend --no-edit --signoff -S', then push; next time start the rebase with git rebase -S.",
       "failing": [
         "Yes. The -c commit.gpgsign=true applied to the commits the rebase created, so they are signed.",
         "Yes, push; GitHub signs rebased commits for you."
