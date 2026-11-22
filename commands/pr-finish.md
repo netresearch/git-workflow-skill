@@ -81,6 +81,14 @@ description, merge only when the gate is open, clean up); only the commands chan
    matrix settling** (bot reviews are actionable 2–5 min after a push; a thread may
    target a pre-push range a later commit already fixed — answer with the fixing SHA
    and resolve).
+   **Count the rounds.** When two review rounds in a row find new defects in the
+   same mechanism — most often a hand-written parser of a format somebody else
+   defines (Markdown, YAML, shell, a URL scheme), or the fallback the previous
+   round added — stop fixing. Name the library that parses that format and why it
+   is or is not used, or offer to narrow what the code promises to read, and ask
+   before the next round. A further patch round there finds the next defect, not
+   the last one (netresearch/retro-skill#262: five rounds, each finding new
+   misread formats, before the parser was replaced in netresearch/retro-skill#263).
 4. **Update the PR title and description** to match the final state.
 5. **Merge only when fully green AND all threads resolved** — `--merge` or `--rebase`,
    never `--squash` (preserve atomic history). **Never merge while a review is announced
