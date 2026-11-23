@@ -29,6 +29,7 @@ GW=$(ls -d ~/.claude/skills/git-workflow \
 bash "$GW/scripts/pr-status.sh" -R owner/repo 123        # human summary + NEXT action
 bash "$GW/scripts/pr-status.sh" -R owner/repo 123 --json # for scripts and merge drivers
 bash "$GW/scripts/pr-status.sh" -R owner/repo 123 --watch
+bash "$GW/scripts/pr-status.sh" -R owner/repo 123 --threads # every unresolved thread, readable
 ```
 
 Two API calls (a third, admin-only, when the PR is review-blocked — it reads
@@ -40,6 +41,18 @@ triage-ci, rerun-ci (every red job never got a runner), resolve-threads, address
 this repo actually allows and a warning when a merge queue is active). The
 JSON form carries each unresolved thread's `threadId` *and* `commentId`, which
 is everything needed to reply and resolve without another query.
+
+To read what those threads say, use `--threads` (GitHub only). It prints one
+block per unresolved thread: the thread id, `path:line` (the original line
+for an outdated thread), the author, the severity label when the first lines
+of the comment carry one in bold or italics (CodeRabbit's `Critical`, `Major`,
+`Minor`, `Nitpick`, `Trivial`), and the comment text without HTML comments,
+`<details>` blocks (the agent prompt, committable suggestions), `<picture>`
+and `<img>` tags, and runs of blank lines; control characters other than tab
+and newline are dropped from everything it prints. It pages through all threads with
+its own query, prints `0 unresolved threads` when there are none, and exits 2
+without printing a count when the read fails. It does not combine with
+`--watch` or `--json`.
 
 `address-comments` covers the channel the other two miss. A reviewer who writes
 under the pull request instead of on a line of the diff produces an *issue

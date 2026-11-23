@@ -46,6 +46,22 @@
 #                                     # completed green before NEXT names
 #                                     # stuck-queue-entry (default 15, or
 #                                     # PR_STATUS_STUCK_AFTER_MINUTES)
+#   pr-status.sh --threads            # list every UNRESOLVED review thread
+#                                     # (GitHub only): thread id, path:line,
+#                                     # author, severity label, finding text
+#
+# --threads prints one block per unresolved thread and nothing else: the id
+# that resolveReviewThread takes, path:line (the original line for an outdated
+# thread), the author of the first comment, the severity label when that
+# comment carries one in bold or italics in its first lines (CodeRabbit writes
+# "Major", "Minor", "Critical", "Nitpick", "Trivial"), and the comment text
+# with HTML comments, every <details> block, <picture>/<img> tags and runs of
+# blank lines removed. Control characters other than tab and newline are
+# dropped from the text, path, id and login, so an escape sequence in a
+# comment cannot reach the terminal. It reads the threads with their own paginated query,
+# so a pull request with more than 100 threads is listed whole. Zero threads
+# prints "0 unresolved threads" and exits 0; a failed read exits 2 and prints
+# no count. It does not combine with --watch or --json.
 #
 # --watch deliberately does not wait for every check to finish. It returns as
 # soon as something can be worked on: a failing check, a new annotation, or all
@@ -209,7 +225,7 @@ while [ -L "$script_path" ]; do
 done
 SCRIPT_DIR="$(CDPATH='' cd -P "$(dirname "$script_path")" && pwd)"
 
-REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""
+REPO=""; PR=""; JSON=0; WATCH=0; INTERVAL=20; MAXWAIT=3600; IGNORE=""; THREADS=0
 # Minutes a merge-queue entry may stay in AWAITING_CHECKS after every
 # merge_group run of its queue commit has completed green, before NEXT names
 # stuck-queue-entry instead of wait (t3x-nr-image-optimize#238 sat 75 min in
@@ -240,6 +256,7 @@ while [ $# -gt 0 ]; do
     -R|--repo)  need "$@"; REPO="$2"; shift 2 ;;
     --json)     JSON=1; shift ;;
     --watch)    WATCH=1; shift ;;
+    --threads)  THREADS=1; shift ;;
     --interval) need "$@"; INTERVAL="$2"; shift 2 ;;
     --max-wait) need "$@"; MAXWAIT="$2"; shift 2 ;;
     --stuck-after) need "$@"
@@ -268,6 +285,10 @@ done
 if [ -n "$IGNORE" ] && [ "$WATCH" = "0" ]; then
   die "--ignore-action is only meaningful with --watch"
 fi
+if [ "$THREADS" = "1" ]; then
+  [ "$WATCH" = "0" ] || die "--threads lists the threads once; it does not combine with --watch"
+  [ "$JSON" = "0" ] || die "--threads prints text only; it does not combine with --json"
+fi
 
 # A GitLab merge request is named host/group[/subgroup…]/project: three or
 # more segments, the first one a host name (#331). Everything else is GitHub.
@@ -280,6 +301,9 @@ case "$REPO" in
     esac ;;
   *) ;;
 esac
+if [ "$FORGE" = "gitlab" ] && [ "$THREADS" = "1" ]; then
+  die "--threads reads GitHub review threads only; $REPO is a GitLab project"
+fi
 if [ "$FORGE" = "gitlab" ]; then
   command -v glab >/dev/null || die "glab not found; it reads the GitLab merge request $REPO"
 else
@@ -580,6 +604,106 @@ complete_reviews() {
   jq -e --argjson total "$total" 'length >= $total' <<<"$all" >/dev/null || return 1
   printf '%s\n' "$g" "$all" | jq -n 'input as $g | input as $r | $g
     | .data.repository.pullRequest.allReviews = $r'
+}
+
+# ------------------------------------------------------------ --threads -----
+# A query of its own rather than the status read above: that one carries no
+# comment body and no line, stops at the first 100 threads, and runs on every
+# --watch poll, which should not pay for thread bodies it never prints.
+collect_threads_page() {
+  local cursor="${1:-}" args=()
+  [[ -z "$cursor" ]] || args=(-f cursor="$cursor")
+  # shellcheck disable=SC2016  # These are GraphQL variables.
+  gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" ${args[@]+"${args[@]}"} -f query='
+  query ReviewThreadsPage($owner:String!,$name:String!,$pr:Int!,$cursor:String){
+    repository(owner:$owner,name:$name){ pullRequest(number:$pr){
+      reviewThreads(first:100,after:$cursor){ totalCount pageInfo{ hasNextPage endCursor }
+        nodes{ id isResolved isOutdated path line originalLine
+          comments(first:1){ nodes{ author{ login } body } } } }
+    } }
+  }'
+}
+
+# Every page is read and checked before anything is printed, so a failure on
+# page two cannot leave a count on stdout. A failed call, an errors array, a
+# missing pull request, a repeated cursor and a totalCount that moves between
+# pages are all failures; the caller turns them into exit 2.
+list_threads() {
+  local page conn all='[]' cursor="" seen=() old total="" err rc
+  local shape='select(((.errors // []) | length) == 0)
+    | .data.repository.pullRequest.reviewThreads
+    | select(type == "object" and (.nodes | type == "array")
+             and (.totalCount | type == "number")
+             and (.pageInfo.hasNextPage | type == "boolean"))'
+  err=$(mktemp) || return 1
+  while :; do
+    page=$(collect_threads_page "$cursor" 2>"$err"); rc=$?
+    if [ "$rc" -ne 0 ]; then cat "$err" >&2; rm -f "$err"; return 1; fi
+    if ! conn=$(jq -ce "$shape" <<<"$page" 2>/dev/null); then
+      jq -r '.errors[]?.message // empty' <<<"$page" >&2 2>/dev/null || :
+      printf 'pr-status: unexpected review-thread response for %s#%s\n' "$REPO" "$PR" >&2
+      rm -f "$err"; return 1
+    fi
+    if [ -z "$total" ]; then total=$(jq '.totalCount' <<<"$conn")
+    elif [ "$(jq '.totalCount' <<<"$conn")" != "$total" ]; then
+      printf 'pr-status: the review threads of %s#%s changed while reading\n' "$REPO" "$PR" >&2
+      rm -f "$err"; return 1
+    fi
+    all=$(printf '%s\n' "$all" "$conn" | jq -cn 'input as $a | input as $c | $a + $c.nodes') \
+      || { rm -f "$err"; return 1; }
+    jq -e '.pageInfo.hasNextPage' <<<"$conn" >/dev/null || break
+    cursor=$(jq -er '.pageInfo.endCursor | select(type == "string" and length > 0)' <<<"$conn") \
+      || { rm -f "$err"; return 1; }
+    for old in ${seen[@]+"${seen[@]}"}; do
+      [[ "$cursor" != "$old" ]] || { rm -f "$err"; return 1; }
+    done
+    seen+=("$cursor")
+  done
+  rm -f "$err"
+  jq -e --argjson total "$total" 'length == $total' <<<"$all" >/dev/null || {
+    printf 'pr-status: read fewer review threads than %s#%s reports\n' "$REPO" "$PR" >&2
+    return 1
+  }
+  printf '%s\n' "$all" | render_threads
+}
+
+# Nested <details> blocks are removed innermost first until nothing changes;
+# a single non-greedy pass would stop at the first </details> and leave the
+# tail of the outer block behind.
+render_threads() {
+  jq -r --arg repo "$REPO" --arg pr "$PR" '
+    def fixpoint(f): (f) as $n | if $n == . then . else $n | fixpoint(f) end;
+    # C0 and C1 control characters except tab and newline: a comment, path or
+    # login carrying an escape sequence must not reach the terminal.
+    def clean: gsub("[\\x{00}-\\x{08}\\x{0b}-\\x{1f}\\x{7f}-\\x{9f}]"; "");
+    def strip:
+      gsub("\r"; "")
+      | gsub("<!--[\\s\\S]*?-->"; "")
+      | fixpoint(gsub("<details[^>]*>(?:(?!<details[\\s>])[\\s\\S])*?</details\\s*>"; ""; "i"))
+      | gsub("<picture[^>]*>[\\s\\S]*?</picture\\s*>[ \t]*"; ""; "i")
+      | gsub("</?(?:picture|source|img)\\b[^>]*>[ \t]*"; ""; "i")
+      | gsub("[ \t]+\n"; "\n")
+      | gsub("\n{3,}"; "\n\n")
+      | sub("^\n+"; "") | sub("[\\s]+$"; "");
+    def severity:
+      (split("\n") | map(select(test("\\S"))) | .[0:4] | join("\n"))
+      | [match("(?:\\*\\*|\\*|_)[^*_\n]*?\\b(Critical|Major|Minor|Nitpick|Trivial)(?:\\*\\*|\\*|_)"; "g")
+         | .captures[0].string] | .[0];
+    [.[] | select(.isResolved == false)] as $u
+    | if ($u | length) == 0 then "0 unresolved threads on \($repo)#\($pr)"
+      else "\($u | length) unresolved thread(s) on \($repo)#\($pr)",
+        ($u[] | (.comments.nodes[0] // {}) as $c
+          | (($c.body // "") | clean | strip) as $text
+          | ($text | severity) as $sev
+          | (.path // "" | clean) as $path
+          | (.line // .originalLine) as $line
+          | "",
+            "thread \(.id | clean)\(if .isOutdated then " (outdated)" else "" end)",
+            "  at      : \(if $path == "" then "(no path)" elif $line == null then $path else "\($path):\($line)" end)",
+            "  author  : \(($c.author.login // "(deleted user)") | clean)",
+            (if $sev then "  severity: \($sev)" else empty end),
+            ($text | split("\n")[] | if . == "" then "" else "    \(.)" end))
+      end'
 }
 
 # A branch legitimately has no rules and answers `[]`, so an empty result is NOT
@@ -1118,6 +1242,16 @@ emit() {
 }
 
 # ---------------------------------------------------------------- run -------
+# --threads is a listing, not a gate read: it never reaches the ladder. Checked
+# here in the main shell, because `die` inside $( ) only ends the subshell.
+if [ "$THREADS" = "1" ]; then
+  if ! t=$(list_threads) || [ -z "$t" ]; then
+    die "could not read the review threads of ${REPO}#${PR}; cause on stderr above"
+  fi
+  printf '%s\n' "$t"
+  exit 0
+fi
+
 if [ "$WATCH" = "0" ]; then
   # Same reason as the --watch branch below: `die` inside snapshot() runs in
   # this command substitution's subshell, so a failed GraphQL read left $s
