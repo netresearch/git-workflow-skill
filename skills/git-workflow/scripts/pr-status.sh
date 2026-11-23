@@ -667,8 +667,8 @@ render_threads() {
     def strip:
       gsub("\r"; "")
       | gsub("<!--[\\s\\S]*?-->"; "")
-      | fixpoint(gsub("<details[^>]*>(?:(?!<details[\\s>])[\\s\\S])*?</details>"; ""; "i"))
-      | gsub("<picture[^>]*>[\\s\\S]*?</picture>[ \t]*"; ""; "i")
+      | fixpoint(gsub("<details[^>]*>(?:(?!<details[\\s>])[\\s\\S])*?</details\\s*>"; ""; "i"))
+      | gsub("<picture[^>]*>[\\s\\S]*?</picture\\s*>[ \t]*"; ""; "i")
       | gsub("</?(?:picture|source|img)\\b[^>]*>[ \t]*"; ""; "i")
       | gsub("[ \t]+\n"; "\n")
       | gsub("\n{3,}"; "\n\n")

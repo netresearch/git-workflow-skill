@@ -252,11 +252,12 @@ contains "the prose is kept" "Visible text31m stays."$'\t'"Tabbed." "$out"
 
 echo "case 9: details, picture and img tags are removed whatever their case"
 reset_pages
-UC_BODY=$'**Title**\n\n<DETAILS><SUMMARY>Prompt</SUMMARY>HIDDEN-UPPER</DETAILS>\n<Picture><IMG src="x.svg"></Picture>Kept prose.'
+UC_BODY=$'**Title**\n\n<DETAILS><SUMMARY>Prompt</SUMMARY>HIDDEN-UPPER</DETAILS>\n<details>HIDDEN-SPACE</details >\n<Picture><IMG src="x.svg"></Picture >Kept prose.'
 page 1 false "" 1 "[$(thread T_UC false false a.sh 1 1 coderabbitai "$UC_BODY")]"
 rc=0; out=$(run 2>&1) || rc=$?
 check    "exits 0" "0" "$rc"
 lacks    "no upper-case details text" "HIDDEN-UPPER" "$out"
+lacks    "a closing tag with a space still closes" "HIDDEN-SPACE" "$out"
 lacks    "no DETAILS tag" "<DETAILS" "$out"
 lacks    "no IMG tag" "<IMG" "$out"
 contains "the prose is kept" "Kept prose." "$out"
