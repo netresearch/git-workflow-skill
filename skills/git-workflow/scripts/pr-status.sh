@@ -383,9 +383,9 @@ QUEUE_EXIT_GRACE="${PR_STATUS_QUEUE_EXIT_GRACE:-120}"
 # watchers at the 20 s default drain it for every other call. Below
 # BUDGET_LOW_WATER points left (default 1000, a fifth of the hourly budget),
 # the wait between successful reads is BUDGET_LOW_WAIT seconds (default 180)
-# instead of --interval. PR_STATUS_BUDGET_LOW_WATER and
-# PR_STATUS_BUDGET_LOW_WAIT set both (0 turns the throttle off); the wait is
-# settable for the tests, like the two above.
+# instead of --interval. PR_STATUS_BUDGET_LOW_WATER sets the mark (0 turns
+# the throttle off); PR_STATUS_BUDGET_LOW_WAIT sets the wait, for the tests,
+# like the two above.
 BUDGET_LOW_WATER="${PR_STATUS_BUDGET_LOW_WATER:-1000}"
 [[ "$BUDGET_LOW_WATER" =~ ^[0-9]+$ ]] || BUDGET_LOW_WATER=1000
 BUDGET_LOW_WAIT="${PR_STATUS_BUDGET_LOW_WAIT:-180}"
