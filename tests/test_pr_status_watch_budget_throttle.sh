@@ -17,6 +17,9 @@ SCRIPT="$ROOT/skills/git-workflow/scripts/pr-status.sh"
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "$STUB_DIR"' EXIT
 export XDG_CACHE_HOME="$STUB_DIR/cache"
+# The cases set the budget variables themselves; an exported value from the
+# caller's shell would change what they measure.
+unset PR_STATUS_BUDGET_LOW_WATER PR_STATUS_BUDGET_LOW_WAIT LOOKUP_DELAY
 export CALLS="$STUB_DIR/calls.log"
 
 fail=0
@@ -46,7 +49,7 @@ cat > "$STUB_DIR/gh" <<'STUB'
 echo "$(date +%s) $*" >> "$CALLS"
 for a in "$@"; do
   case "$a" in
-    rate_limit) echo "$REMAINING $LIMIT $RESET"; exit 0 ;;
+    rate_limit) sleep "${LOOKUP_DELAY:-0}"; echo "$REMAINING $LIMIT $RESET"; exit 0 ;;
     repos/*/rules/branches/*) echo '[]'; exit 0 ;;
   esac
 done
@@ -126,6 +129,13 @@ check_contains "names the default 180s wait"     "waiting 180s between reads" "$
 check_contains "times out"                       "TIMEOUT after 4s" "$out"
 check "stays within --max-wait (took ${took}s)" "true" "$([ "$took" -le 7 ] && echo true || echo false)"
 check "one or two gate reads"                    "true" "$([ "$(reads)" -le 2 ] && echo true || echo false)"
+
+echo "case: budget low, the lookup uses up --max-wait — TIMEOUT, no extra read"
+: > "$CALLS"
+rc=0; out=$(LOOKUP_DELAY=3 PR_STATUS_BUDGET_LOW_WAIT=3 watch --max-wait 2) || rc=$?
+check          "times out (exit 1)"              "1" "$rc"
+check_contains "says TIMEOUT"                    "TIMEOUT after 2s" "$out"
+check          "one gate read"                   "1" "$(reads)"
 
 echo "case: budget high — keeps the interval"
 : > "$CALLS"

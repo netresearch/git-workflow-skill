@@ -1289,8 +1289,9 @@ last_why=""; last_why_at=""
 # BUDGET_LOW_WAIT while the GraphQL budget is below BUDGET_LOW_WATER. The
 # lookup costs no budget. A failed or unparsable lookup keeps --interval and
 # prints nothing; GitLab has no such budget and is not asked. The throttled
-# wait never runs past --max-wait, and its pr-status: line is printed once per
-# low period, not on every poll.
+# wait never runs past --max-wait: when the lookup has used up what was left,
+# it returns 1 and the caller reports TIMEOUT instead of reading once more.
+# Its pr-status: line is printed once per low period, not on every poll.
 budget_low=0
 next_poll_wait() {
   local lookup remaining="" limit="" reset="" left resets=""
@@ -1305,10 +1306,10 @@ next_poll_wait() {
     budget_low=0
     return 0
   fi
-  poll_wait=$BUDGET_LOW_WAIT
   left=$((MAXWAIT - ($(date +%s) - start)))
-  [ "$left" -ge 1 ] || left=1
-  [ "$poll_wait" -le "$left" ] || poll_wait=$left
+  [[ "$left" -ge 1 ]] || return 1
+  poll_wait=$BUDGET_LOW_WAIT
+  [[ "$poll_wait" -le "$left" ]] || poll_wait=$left
   if [ "$budget_low" = "0" ]; then
     budget_low=1
     [[ "$reset" =~ ^[0-9]+$ ]] && resets=", resets at $(jq -rn --argjson t "$reset" '$t | todate')"
@@ -1409,7 +1410,10 @@ while :; do
         emit "$s"; exit 1
       fi
       echo "waiting: left the merge queue $((now - left_queue_at))s ago and still OPEN — re-reading until MERGED or queued again (up to ${QUEUE_EXIT_GRACE}s; NEXT on this read: $act)"
-      next_poll_wait
+      next_poll_wait || {
+        echo "TIMEOUT after ${MAXWAIT}s — the PR left the merge queue and still reads OPEN; not merged at the last read"
+        emit "$s"; exit 1
+      }
       sleep "$poll_wait"
       continue
     fi
@@ -1511,6 +1515,9 @@ while :; do
     echo "waiting: $why"
     last_why="$why"; last_why_at=$(date -u +%H:%M:%SZ)
   fi
-  next_poll_wait
+  next_poll_wait || {
+    echo "TIMEOUT after ${MAXWAIT}s — still: $(jq -r '.next.why' <<<"$s")"
+    emit "$s"; exit 1
+  }
   sleep "$poll_wait"
 done
