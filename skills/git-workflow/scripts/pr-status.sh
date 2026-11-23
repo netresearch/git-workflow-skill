@@ -377,6 +377,19 @@ RATE_LIMIT_WAIT="${PR_STATUS_RATE_LIMIT_WAIT:-60}"
 # reads OPEN (see the header). Settable for the tests, like the wait above.
 QUEUE_EXIT_GRACE="${PR_STATUS_QUEUE_EXIT_GRACE:-120}"
 [[ "$QUEUE_EXIT_GRACE" =~ ^[1-9][0-9]*$ ]] || QUEUE_EXIT_GRACE=120
+# --watch slows down while the GraphQL budget runs low, before it is spent.
+# One gate read costs about 4 points (measured 2026-11-23), and every session
+# of the same user draws on one budget of 5000 points per hour: several
+# watchers at the 20 s default drain it for every other call. Below
+# BUDGET_LOW_WATER points left (default 1000, a fifth of the hourly budget),
+# the wait between successful reads is BUDGET_LOW_WAIT seconds (default 180)
+# instead of --interval. PR_STATUS_BUDGET_LOW_WATER and
+# PR_STATUS_BUDGET_LOW_WAIT set both (0 turns the throttle off); the wait is
+# settable for the tests, like the two above.
+BUDGET_LOW_WATER="${PR_STATUS_BUDGET_LOW_WATER:-1000}"
+[[ "$BUDGET_LOW_WATER" =~ ^[0-9]+$ ]] || BUDGET_LOW_WATER=1000
+BUDGET_LOW_WAIT="${PR_STATUS_BUDGET_LOW_WAIT:-180}"
+[[ "$BUDGET_LOW_WAIT" =~ ^[1-9][0-9]*$ ]] || BUDGET_LOW_WAIT=180
 
 quota_marker_seen() {
   [ -f "$QUOTA_MARKER" ] || { echo false; return; }
@@ -1272,6 +1285,36 @@ start=$(date +%s); seen_fail=""; was_queued=0; left_queue_at=""
 # identical to the one before. The full reason is printed when it changes;
 # an unchanged poll gets one short line.
 last_why=""; last_why_at=""
+# Sets poll_wait, the sleep after a successful read: --interval, or
+# BUDGET_LOW_WAIT while the GraphQL budget is below BUDGET_LOW_WATER. The
+# lookup costs no budget. A failed or unparsable lookup keeps --interval and
+# prints nothing; GitLab has no such budget and is not asked. The throttled
+# wait never runs past --max-wait, and its pr-status: line is printed once per
+# low period, not on every poll.
+budget_low=0
+next_poll_wait() {
+  local lookup remaining="" limit="" reset="" left resets=""
+  poll_wait=$INTERVAL
+  [ "$FORGE" = "github" ] || return 0
+  [ "$BUDGET_LOW_WAIT" -gt "$INTERVAL" ] || return 0
+  lookup=(gh api rate_limit --jq '.resources.graphql | "\(.remaining) \(.limit) \(.reset)"')
+  command -v timeout >/dev/null 2>&1 && lookup=(timeout 15 "${lookup[@]}")
+  read -r remaining limit reset < <("${lookup[@]}" 2>/dev/null || true) || true
+  if ! [[ "$remaining" =~ ^[0-9]+$ && "$limit" =~ ^[0-9]+$ ]] \
+     || [ "$remaining" -ge "$BUDGET_LOW_WATER" ]; then
+    budget_low=0
+    return 0
+  fi
+  poll_wait=$BUDGET_LOW_WAIT
+  left=$((MAXWAIT - ($(date +%s) - start)))
+  [ "$left" -ge 1 ] || left=1
+  [ "$poll_wait" -le "$left" ] || poll_wait=$left
+  if [ "$budget_low" = "0" ]; then
+    budget_low=1
+    [[ "$reset" =~ ^[0-9]+$ ]] && resets=", resets at $(jq -rn --argjson t "$reset" '$t | todate')"
+    echo "pr-status: GraphQL budget low — ${remaining} of ${limit} points left (below ${BUDGET_LOW_WATER}${resets}); waiting ${BUDGET_LOW_WAIT}s between reads instead of ${INTERVAL}s until it recovers, never past --max-wait."
+  fi
+}
 while :; do
   # A snapshot that could not be read is its own branch, not "still waiting".
   # `die` inside $( ) kills only the subshell, so a failed collect left $s
@@ -1366,7 +1409,8 @@ while :; do
         emit "$s"; exit 1
       fi
       echo "waiting: left the merge queue $((now - left_queue_at))s ago and still OPEN — re-reading until MERGED or queued again (up to ${QUEUE_EXIT_GRACE}s; NEXT on this read: $act)"
-      sleep "$INTERVAL"
+      next_poll_wait
+      sleep "$poll_wait"
       continue
     fi
     was_queued=0
@@ -1467,5 +1511,6 @@ while :; do
     echo "waiting: $why"
     last_why="$why"; last_why_at=$(date -u +%H:%M:%SZ)
   fi
-  sleep "$INTERVAL"
+  next_poll_wait
+  sleep "$poll_wait"
 done
