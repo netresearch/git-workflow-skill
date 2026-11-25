@@ -178,6 +178,37 @@ class UnresolvableSha(unittest.TestCase):
 
     BODY = 'gh pr comment 1 --repo o/r --body "fixed in 8e1c9b0"'
 
+    def test_a_comment_listing_is_no_published_body(self) -> None:
+        # As denied on 2026-11-25: a session id filters a listing; nothing is posted.
+        cmd = (
+            "grep -rl GIT_DIR . | grep -v 83e8e253; gh api --paginate "
+            "\"repos/o/r/pulls/comments?per_page=100\" --jq '.[].body'"
+        )
+        self.assertIsNone(hook.unresolvable_sha(cmd, resolve=lambda repo, token: False))
+
+    def test_every_api_write_is_still_checked(self) -> None:
+        for flag in (
+            '-f body="fixed in 8e1c9b0"',
+            "-F body=@b.md # 8e1c9b0",
+            "--field body=8e1c9b0",
+            "--raw-field body=8e1c9b0",
+            "--input b.json # 8e1c9b0",
+            "-X POST # 8e1c9b0",
+            "--method PATCH # 8e1c9b0",
+            "\\\n  -f body=8e1c9b0",
+        ):
+            with self.subTest(flag=flag):
+                cmd = f"gh api repos/o/r/issues/1/comments {flag}"
+                self.assertIsNotNone(
+                    hook.unresolvable_sha(cmd, resolve=lambda repo, token: False)
+                )
+
+    def test_a_listing_does_not_cover_a_comment_beside_it(self) -> None:
+        cmd = "gh api repos/o/r/issues/1/comments; " + self.BODY
+        self.assertIsNotNone(
+            hook.unresolvable_sha(cmd, resolve=lambda repo, token: False)
+        )
+
     def test_unknown_hash_is_reported(self) -> None:
         reason = hook.unresolvable_sha(self.BODY, resolve=lambda repo, token: False)
         self.assertIsNotNone(reason)

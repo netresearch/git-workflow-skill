@@ -464,9 +464,13 @@ def merge_readiness_without_pr_status(cmd: str) -> str | None:
 SHA_TOKEN = re.compile(
     r"(?<![0-9a-zA-Z/_.-])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9a-zA-Z/_.-])"
 )
+# `gh api` without a field, an input or a method reads: a comment listing with a
+# session id in its filter was denied as a published body (2026-11-25). One of
+# these anywhere after the call keeps the gate on.
+API_WRITES = r"(?=[\s\S]*\s(?:-[fFX]|--(?:field|raw-field|input|method)\b))"
 POSTS_TEXT = re.compile(
     r"\bgh\s+(?:pr|issue)\s+(?:comment|create|edit)\b"
-    r"|\bgh\s+api\b[^\n]*?/(?:comments|replies|issues)\b"
+    r"|\bgh\s+api\b" + API_WRITES + r"[^\n]*?/(?:comments|replies|issues)\b"
     r"|\bglab\s+(?:mr|issue)\s+(?:note|create|update)\b"
 )
 TARGET_REPO = re.compile(r"--repo[= ]([\w.-]+/[\w.-]+)|\brepos/([\w.-]+/[\w.-]+)/")
