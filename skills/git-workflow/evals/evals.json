@@ -1584,6 +1584,10 @@
       {
         "type": "must_not",
         "pattern": "(not|n't|never) (part of|covered|included)|(will not|won't|do not|don't) merge it until you|(needs|requires) a separate (merge )?(instruction|command|go)"
+      },
+      {
+        "type": "must_not",
+        "pattern": "(will not|won't|do not|don't|must not|cannot) merge (it|the third PR)([.;]|$)"
       }
     ],
     "samples": {
@@ -1592,7 +1596,8 @@
         "The first two are merged. The third PR is a new draft; run /pr-finish again to finish it.",
         "The third PR was not open when you ran the command, so it waits for your go before I merge it.",
         "It is not part of the set your command named, so I do not merge it until you say so.",
-        "The third PR isn't covered by your command. It needs a separate merge instruction."
+        "The third PR isn't covered by your command. It needs a separate merge instruction.",
+        "The third PR is part of the set. I will not merge it."
       ]
     }
   }
