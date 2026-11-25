@@ -373,6 +373,9 @@ RATE_LIMIT_WAIT="${PR_STATUS_RATE_LIMIT_WAIT:-60}"
 # A value that is not a positive integer would skip both clamps below and
 # reach sleep as is; it gets the default.
 [[ "$RATE_LIMIT_WAIT" =~ ^[1-9][0-9]*$ ]] || RATE_LIMIT_WAIT=60
+# Seconds between the attempts of a GraphQL read GitHub answered with a 5xx.
+RETRY_5XX_WAIT="${PR_STATUS_5XX_WAIT:-2}"
+[[ "$RETRY_5XX_WAIT" =~ ^[0-9]+$ ]] || RETRY_5XX_WAIT=2
 # Seconds --watch keeps re-reading a PR that left the merge queue but still
 # reads OPEN (see the header). Settable for the tests, like the wait above.
 QUEUE_EXIT_GRACE="${PR_STATUS_QUEUE_EXIT_GRACE:-120}"
@@ -416,6 +419,28 @@ remember_quota_hit() {
 }
 
 # ---------------------------------------------------------------- data ------
+# One GraphQL call with gh's stdout, stderr and exit status, repeated on a 5xx.
+gh_graphql() {
+  local out err rc try=0
+  err=$(mktemp)
+  while :; do
+    out=$(gh api graphql "$@" 2>"$err"); rc=$?
+    # A 5xx is GitHub failing to answer: nine single-shot reads of one session
+    # died on a 502 that the next call did not see. Everything else -- a rate
+    # limit, a login error, a bad query -- gets the same answer again at once.
+    if [[ "$rc" -eq 0 || "$try" -ge 2 ]] || ! grep -qE 'HTTP 5[0-9][0-9]' "$err"; then
+      break
+    fi
+    try=$((try + 1))
+    sleep "$RETRY_5XX_WAIT"
+  done
+  # gh's own stderr, as if the call had been made directly.
+  cat "$err" >&2
+  rm -f "$err"
+  printf '%s\n' "$out"
+  return "$rc"
+}
+
 # Swallows gh's chatter on success -- a deprecation notice is not this tool's
 # news -- but re-emits it verbatim when the call FAILS, because that body is the
 # only thing separating an expired token from a rate limit from a network drop.
@@ -433,7 +458,7 @@ collect() {
 
 collect_raw() {
   # shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
-  gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
+  gh_graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
   query($owner:String!,$name:String!,$pr:Int!){
     # Who is running this. Needed only for a bot-authored pull request, where
     # the answering party is the reviewer rather than the author (#319). Costs
@@ -513,7 +538,7 @@ collect_context_page() {
   local head="$1" cursor="${2:-}" args=()
   [[ -z "$cursor" ]] || args=(-f cursor="$cursor")
   # shellcheck disable=SC2016  # These are GraphQL variables.
-  gh api graphql -f owner="$OWNER" -f name="$NAME" -f head="$head" ${args[@]+"${args[@]}"} -f query='
+  gh_graphql -f owner="$OWNER" -f name="$NAME" -f head="$head" ${args[@]+"${args[@]}"} -f query='
   query StatusContextsPage($owner:String!,$name:String!,$head:GitObjectID!,$cursor:String){
     repository(owner:$owner,name:$name){object(oid:$head){... on Commit{oid
       statusCheckRollup{contexts(first:100,after:$cursor){totalCount pageInfo{hasNextPage endCursor} nodes{
@@ -627,7 +652,7 @@ collect_threads_page() {
   local cursor="${1:-}" args=()
   [[ -z "$cursor" ]] || args=(-f cursor="$cursor")
   # shellcheck disable=SC2016  # These are GraphQL variables.
-  gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" ${args[@]+"${args[@]}"} -f query='
+  gh_graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" ${args[@]+"${args[@]}"} -f query='
   query ReviewThreadsPage($owner:String!,$name:String!,$pr:Int!,$cursor:String){
     repository(owner:$owner,name:$name){ pullRequest(number:$pr){
       reviewThreads(first:100,after:$cursor){ totalCount pageInfo{ hasNextPage endCursor }
@@ -957,7 +982,7 @@ local_head_sync() {
       cmd=""
     fi
     jq -c --arg why "$why" --arg cmd "$cmd" \
-      '.next = ({action: "wait", why: $why} + (if $cmd == "" then {} else {cmd: $cmd} end))' <<<"$out"
+      '.next = ({action: "wait", why: $why, stale_head: true} + (if $cmd == "" then {} else {cmd: $cmd} end))' <<<"$out"
     return
   fi
   if [[ -z "$remote_oid" || "$remote_oid" != "$head_oid" ]]; then
@@ -1433,6 +1458,11 @@ while :; do
   if [ -z "$fails_required" ] && [ "$pending_required" -gt 0 ]; then
     fails=""
   fi
+
+  # A pushed commit the PR does not show yet: NEXT is `wait` and every check
+  # here belongs to the replaced commit, so its failure is no event
+  # (netresearch/typo3-ci-workflows#340, a fixed check reported after the push).
+  [[ "$(jq -r '.next.stale_head // false' <<<"$s")" == "true" ]] && fails=""
 
   # The ignore test sits on this exit too, but ONLY when the standing action
   # the caller declined IS the CI action (fix-ci/triage-ci) — then its failing
