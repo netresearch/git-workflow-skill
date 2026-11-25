@@ -1552,7 +1552,7 @@
       },
       {
         "type": "content",
-        "pattern": "(?i)(without (any )?.?GIT_|(^|[.;:,] *|then |and )(unset|remove|strip|filter) [^.]{0,60}(GIT_|local-env-vars)|filtered (env|getenv))"
+        "pattern": "(?i)(without (any )?.?GIT_|(^|[.;:,] *|then |and )(unset|remove|strip|filter) [^.]{0,60}(GIT_|local-env-vars)|filtered [^.]{0,30}(env|getenv)|exclud(e|es|ing) [^.]{0,30}GIT_)"
       }
     ],
     "samples": {
