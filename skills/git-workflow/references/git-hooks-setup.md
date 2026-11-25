@@ -299,41 +299,39 @@ fresh worktree, `Read` a file before `Write`/`Edit` — there is no cached state
 for a path the tooling has not seen yet.
 
 **Lasting fix for CaptainHook.** The bypass above covers a command you type; it
-does not reach a tool that runs `git worktree add` itself. Plain
-`captainhook install` writes all eight hook types, including the ones
-`captainhook.json` disables. Every worktree shares them, and they usually call a
-relative path such as `bin/captainhook`. In a fresh worktree `post-checkout` then
-exits 127; `git worktree add` returns that code although the worktree is complete,
-so a tool that checks the code reports a failed creation. Measured with
-CaptainHook 5.29.2 (shell mode):
+does not reach a tool that runs `git worktree add` itself. Shell hooks written by
+CaptainHook 5.29.2 or earlier exit 127 in a fresh worktree, because the relative
+path to `captainhook` does not exist there yet. A failing `post-checkout` makes
+`git worktree add` return that code although the worktree is complete. Plain
+`captainhook install` writes all eight hook types, also the disabled ones, so the
+failure hits projects that never enabled `post-checkout`.
 
-- **Find the live directory first:**
-  `git rev-parse --path-format=absolute --git-path hooks`. It honours
-  `core.hooksPath`. If that setting points outside this repository, other
-  repositories can share the directory: stop, change nothing there.
-- **Hook disabled on every branch in use:** delete it there by name, after
-  `grep -l 'installed by CaptainHook' <file>` lists it. `post-checkout`,
-  `post-merge` and `post-rewrite` count as enabled while the virtual hook
-  `post-change` is enabled. A hook enabled later has to be installed again.
-- **Do not run `captainhook install` or `uninstall` in a worktree for this.**
-  Without `core.hooksPath`, both report success but work on a path git does not
-  read. With it, they change the live directory.
-- **In a plain clone,** `captainhook install --only-enabled` writes only the enabled
-  hooks. `captainhook uninstall --only-disabled` removes stale ones, but deletes a
-  disabled hook of any origin: check the marker first.
-- **`composer install` in a plain clone brings deleted hooks back.** With
-  `captainhook/hook-installer`, set `extra.captainhook.only-enabled` to `true`.
-  `captainhook/plugin-composer` 5.3.3 has no such option and, in a bare-repository
-  worktree, can abort with `git directory not found`: replace it with
-  `captainhook/hook-installer` 1.0.5 or later.
-- **`post-checkout` enabled:** removing it would lose its action. In a `#!/bin/sh`
-  hook whose last line starts with a relative path to CaptainHook, test exactly
-  that path after the `#!` line, e.g. `[ -x vendor/bin/captainhook ] || exit 0`.
-  A wrong path disables the hook everywhere, so leave any other form (`docker exec`,
-  a leading `php`, a PHP hook) alone. A forced install (`-f`, `force-install`,
-  `CAPTAINHOOK_FORCE_INSTALL`) overwrites the guard.
-- **Never guard `pre-commit`, `commit-msg` or `pre-push` this way:** they would
-  pass without running a check. Install the dependencies instead.
+Shell hooks written by 5.29.3 or later print `CaptainHook executable not found` and
+exit 0 instead (measured: `git worktree add` returns 0). Upgrading the package does
+not rewrite installed hooks:
+
+- **Plain clone:** upgrade, then run `captainhook install -f --only-enabled` once,
+  with the project's `-c` and `-b` options. `-f` overwrites an enabled hook of any
+  origin, and disabled hooks stay as they are. Remove those by name, each only after
+  `grep -l 'installed by CaptainHook' <file>` lists it.
+- **Worktree of a bare repository:** `install` and `uninstall` report success but
+  miss the hooks git reads, unless `core.hooksPath` is set. Edit the files in
+  `git rev-parse --path-format=absolute --git-path hooks` by hand, after a backup:
+  delete disabled hooks with the same marker check, and insert into an enabled
+  `post-checkout`, directly before its last line, the check that 5.29.3 writes:
+  `[ -x vendor/bin/captainhook ] || exit 0`, with the path from that last line. Do
+  this only for a `#!/bin/sh` hook whose last line starts with a relative path.
+  Before deleting a disabled `post-checkout`, `post-merge` or `post-rewrite`, check
+  that the virtual hook `post-change` is disabled too: they run its actions.
+- **Composer plugin:** `captainhook/hook-installer` with
+  `extra.captainhook.only-enabled: true` installs only enabled hooks.
+  `captainhook/plugin-composer` 5.3.3 installs all of them on every
+  `composer install` and can abort in a bare-repository worktree with
+  `git directory not found`; replace it.
+
+The 5.29.3 check also covers `pre-commit` and `commit-msg`: without dependencies
+they pass **without running**. Install the dependencies before the first commit in a
+worktree, and do not add the check to those hooks by hand.
 
 ### pre-commit first run: slow env build, lost stash on interrupt
 
