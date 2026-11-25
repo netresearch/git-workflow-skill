@@ -55,6 +55,9 @@ check() {
 check "two 502 answers, then a reading"      2 'gh: HTTP 502' ok 3
 check "a persistent 502 fails after three"   9 'gh: HTTP 502' failed 3
 grep -q 'HTTP 502' "$WORK/err" || { echo "  FAIL the cause is not on stderr"; fail=1; }
+SERVER='gh: Something went wrong while executing your query on 2026-11-25T15:03:02Z.'
+check "two execution errors, then a reading" 2 "$SERVER" ok 3
+check "a persistent execution error fails after three" 9 "$SERVER" failed 3
 check "a rate limit is not repeated"         9 'gh: API rate limit already exceeded for user ID 1' failed 1
 check "a login error is not repeated"        9 'gh: Bad credentials (HTTP 401)' failed 1
 

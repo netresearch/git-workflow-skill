@@ -419,7 +419,8 @@ remember_quota_hit() {
 }
 
 # ---------------------------------------------------------------- data ------
-# One GraphQL call with gh's stdout, stderr and exit status, repeated on a 5xx.
+# One GraphQL call with gh's stdout, stderr and exit status, repeated on a 5xx
+# or on GitHub's own execution error.
 gh_graphql() {
   local out err rc try=0
   err=$(mktemp)
@@ -428,7 +429,10 @@ gh_graphql() {
     # A 5xx is GitHub failing to answer: nine single-shot reads of one session
     # died on a 502 that the next call did not see. Everything else -- a rate
     # limit, a login error, a bad query -- gets the same answer again at once.
-    if [[ "$rc" -eq 0 || "$try" -ge 2 ]] || ! grep -qE 'HTTP 5[0-9][0-9]' "$err"; then
+    # "Something went wrong while executing your query" is a 5xx GitHub sends
+    # as a GraphQL error, without a status code in the message.
+    if [[ "$rc" -eq 0 || "$try" -ge 2 ]] ||
+       ! grep -qE 'HTTP 5[0-9][0-9]|Something went wrong while executing your query' "$err"; then
       break
     fi
     try=$((try + 1))
