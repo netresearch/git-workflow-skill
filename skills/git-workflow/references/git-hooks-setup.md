@@ -274,6 +274,38 @@ after `docker compose up -d` can fail one or two DB-dependent tests while the
 database is still accepting connections. Re-run once against the warm stack
 before believing the failure.
 
+### Tests started by a hook inherit the hook's repository
+
+Git exports its repository to a hook, and these variables override `git -C`. A
+commit hook of a linked worktree gets `GIT_DIR` and `GIT_INDEX_FILE`; in an
+ordinary checkout it gets `GIT_INDEX_FILE` alone, which `git commit -a` sets to
+the absolute path of the index lock. A pre-push hook of a worktree gets
+`GIT_DIR`. A test that builds a throwaway repository with
+`git -C <tmp> init`, `commit` and `tag` then works on the repository being
+committed to, or breaks its index. In a copy of netresearch/t3x-nr-passkeys-be, a pre-commit hook
+that ran PHPUnit added commits and the tag `v1.2.0` to the real repository and
+changed its configuration (found by review on netresearch/t3x-nr-passkeys-be#209;
+the same test had been copied from two other repositories).
+
+- **Fix in the test:** start every child process, git and the script under test
+  alike, with an environment without `GIT_*` variables. In PHP, pass a filtered
+  `getenv()` as the fifth argument of `proc_open()`; in shell,
+  `unset $(git rev-parse --local-env-vars)` first. `git -C`, `cd` and a
+  temporary directory do not help.
+- **Proof:** run the suite once with both variables pointing at a scratch
+  repository. It has to pass, and the scratch repository must be unchanged.
+  `sh -c` carries the variables into every part of a compound command:
+
+  ```bash
+  probe=$(mktemp -d) && git -C "$probe" init -q
+  before=$(find "$probe" -type f -exec sha256sum {} + | sort)
+  env GIT_DIR="$probe/.git" GIT_INDEX_FILE="$probe/.git/index" sh -c '<test command>' \
+    && [ "$before" = "$(find "$probe" -type f -exec sha256sum {} + | sort)" ] && echo unchanged
+  ```
+
+  Keep a case in the suite that sets `GIT_DIR` itself, so the filter cannot be
+  removed unnoticed.
+
 ### Fresh worktree: missing deps and stale `hooksPath`
 
 A freshly-created worktree often breaks pre-commit/pre-push hooks — and can even

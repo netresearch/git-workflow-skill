@@ -1537,5 +1537,30 @@
         "Pausing here: a parser such as markdown-it-py fits this better. I will switch the script to it next."
       ]
     }
+  },
+  {
+    "name": "hook-env-reaches-test-repository",
+    "prompt": "Our PHPUnit test creates a throwaway repository with git -C $tmp init, commits and tags. Run by hand it is fine. From the pre-commit hook in a linked worktree it added commits and a tag to our real repository. Why, and how do we fix the test?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "GIT_DIR"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)overrid|precedence|takes priority"
+      },
+      {
+        "type": "content",
+        "pattern": "(?i)(without|unset|remove|filter|strip)[^.]{0,60}(GIT_|local-env-vars)"
+      }
+    ],
+    "samples": {
+      "passing": "The hook of a linked worktree exports GIT_DIR and GIT_INDEX_FILE, and both override git -C. Start every child process of the test with an environment without GIT_* variables, then run the suite with GIT_DIR pointing at a scratch repository and check that it is unchanged.",
+      "failing": [
+        "Use cd into the temporary directory instead of git -C.",
+        "GIT_DIR is set by the hook. Skip the test when it runs in a hook."
+      ]
+    }
   }
 ]

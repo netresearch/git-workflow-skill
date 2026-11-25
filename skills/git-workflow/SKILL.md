@@ -41,7 +41,7 @@ Releases: `github-release`. BLOCKED-PR diagnosis: `github-project`.
 | `references/ci-cd-integration.md` | CI watching, git mirrors |
 | `references/advanced-git.md` | Rebase (incl. non-interactive `rebase -i`), cherry-pick, bisect, stash, worktrees, reflog, hanging push/fetch (SSH mux), parsing git output in a script (flags that pin diff/log/status output against user config), fetching one branch in a single-branch clone (refspec) |
 | `references/github-releases.md` | → `github-release` skill |
-| `references/git-hooks-setup.md` | Hook frameworks, hooks per stage |
+| `references/git-hooks-setup.md` | Hook frameworks, hooks per stage, tests that a hook starts touching the real repository |
 | `references/claude-code-hooks.md` | `settings.json` merge gate, cache-path rejection, auto-lint |
 | `references/code-quality-tools.md` | shellcheck, shfmt, git-absorb, difftastic |
 | `references/merge-gate-watcher.md` | Waiting on a gate, a hand-rolled watch loop, a watch that returns at once, a watcher the harness killed, merge-driver loop, check taxonomy, stale-SHA rerun, rerun of a superseded run cancelling the newer one, merge-queue entry dropped or stuck in `AWAITING_CHECKS` |
