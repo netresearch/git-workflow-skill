@@ -1552,7 +1552,7 @@
       },
       {
         "type": "content",
-        "pattern": "(?i)(without (any )?.?GIT_|(^|[.;:,] *|then |and )(unset|remove|strip|filter) [^.]{0,60}(GIT_|local-env-vars)|filtered [^.]{0,30}(env|getenv)|exclud(e|es|ing) [^.]{0,30}GIT_)"
+        "pattern": "(?i)(without (any )?.?GIT_(\\*|DIR)|(^|[.;:,] *|then |and )(unset|remove|strip|filter) [^.]{0,60}(GIT_\\*|GIT_DIR|local-env-vars)|filtered [^.]{0,30}(env|getenv)|exclud(e|es|ing) [^.]{0,30}GIT_(\\*|DIR))"
       }
     ],
     "samples": {
@@ -1560,7 +1560,8 @@
       "failing": [
         "Use cd into the temporary directory instead of git -C.",
         "GIT_DIR is set by the hook. Skip the test when it runs in a hook.",
-        "GIT_DIR overrides git -C. Do not remove GIT_* variables; skip the test."
+        "GIT_DIR overrides git -C. Do not remove GIT_* variables; skip the test.",
+        "GIT_DIR overrides git -C. Excluding GIT_INDEX_FILE fixes it."
       ]
     }
   }
