@@ -297,10 +297,11 @@ the same test had been copied from two other repositories).
   `sh -c` carries the variables into every part of a compound command:
 
   ```bash
+  unset $(git rev-parse --local-env-vars)
   probe=$(mktemp -d) && git -C "$probe" init -q
   before=$(find "$probe" -type f -exec sha256sum {} + | sort)
   env GIT_DIR="$probe/.git" GIT_INDEX_FILE="$probe/.git/index" sh -c '<test command>' \
-    && [ "$before" = "$(find "$probe" -type f -exec sha256sum {} + | sort)" ] && echo unchanged
+    && [ -n "$before" ] && [ "$before" = "$(find "$probe" -type f -exec sha256sum {} + | sort)" ] && echo unchanged
   ```
 
   Keep a case in the suite that sets `GIT_DIR` itself, so the filter cannot be

@@ -1552,14 +1552,15 @@
       },
       {
         "type": "content",
-        "pattern": "(?i)(without|unset|remove|filter|strip)[^.]{0,60}(GIT_|local-env-vars)"
+        "pattern": "(?i)(?<!not )(?<!never )(?<!n't )\\b(without|unset|remove|filter|strip)[^.]{0,60}(GIT_|local-env-vars)"
       }
     ],
     "samples": {
       "passing": "The hook of a linked worktree exports GIT_DIR and GIT_INDEX_FILE, and both override git -C. Start every child process of the test with an environment without GIT_* variables, then run the suite with GIT_DIR pointing at a scratch repository and check that it is unchanged.",
       "failing": [
         "Use cd into the temporary directory instead of git -C.",
-        "GIT_DIR is set by the hook. Skip the test when it runs in a hook."
+        "GIT_DIR is set by the hook. Skip the test when it runs in a hook.",
+        "GIT_DIR overrides git -C. Do not remove GIT_* variables; skip the test."
       ]
     }
   }
