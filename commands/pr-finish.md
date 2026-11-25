@@ -122,6 +122,11 @@ description, merge only when the gate is open, clean up); only the commands chan
 No version bumps or CHANGELOG entries in feature PRs. No bot attribution in
 commits or PR bodies. Preserve commit signing.
 
-If the user named a PR (`$ARGUMENTS`), operate on that one; otherwise resolve the
-PR for the current branch. Also check already-closed PRs for unresolved threads
+If the user named a PR (`$ARGUMENTS`), operate on that one. If the user named a set
+("all your opened PRs"), operate on every PR of that set, including a PR you open
+during the run, for example for a discovered issue the user told you to fix: it
+gets the same gate and the same merge, without a second command. A PR you open
+during the run in a third-party repository (outside the accounts and organisations
+the user maintains) is not added to the set. Otherwise resolve the PR for the
+current branch. Also check already-closed PRs for unresolved threads
 when the user asks for a sweep. Confirm before any push to a private repo.

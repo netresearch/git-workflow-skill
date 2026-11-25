@@ -1564,5 +1564,36 @@
         "GIT_DIR overrides git -C. Excluding GIT_INDEX_FILE fixes it."
       ]
     }
+  },
+  {
+    "name": "pr-finish-set-includes-pr-opened-during-run",
+    "prompt": "I ran: /pr-finish all your opened PRs, merge when all green, then fix the issues you discovered. Two PRs were open and are merged now. While the run was going you opened a third PR in our own repository as a draft, for one of the discovered issues. Its checks are green, a reviewer read the current head, and it has no open threads. What do you do with the third PR?",
+    "assertions": [
+      {
+        "type": "content",
+        "pattern": "(third|it|that PR|new PR|draft)[^.]{0,80}(same|joins|part of|belongs|covered|included|in (the|your) (set|queue))|(cover(s|ed)?|includ(es|ed|ing))[^.]{0,60}(third|PRs? ((you|I) )?open)"
+      },
+      {
+        "type": "content",
+        "pattern": "merge"
+      },
+      {
+        "type": "must_not",
+        "pattern": "(^|[.;:] *)(please )?(run|invoke) /pr-finish again|so it waits for your (go|approval|instruction)|I leave (it|the third PR) as a draft"
+      },
+      {
+        "type": "must_not",
+        "pattern": "(not|n't|never) (part of|covered|included)|(will not|won't|do not|don't) merge it until you|(needs|requires) a separate (merge )?(instruction|command|go)"
+      }
+    ],
+    "samples": {
+      "passing": "The third PR is part of the set your command named, so it joins the queue. I take it out of draft, check the gate once more. Then I merge it with pr-merge.sh. You do not need to run /pr-finish again.",
+      "failing": [
+        "The first two are merged. The third PR is a new draft; run /pr-finish again to finish it.",
+        "The third PR was not open when you ran the command, so it waits for your go before I merge it.",
+        "It is not part of the set your command named, so I do not merge it until you say so.",
+        "The third PR isn't covered by your command. It needs a separate merge instruction."
+      ]
+    }
   }
 ]
