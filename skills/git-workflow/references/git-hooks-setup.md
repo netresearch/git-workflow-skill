@@ -331,6 +331,41 @@ Are Fast Feedback — CI Is the Gate"), so a scoped bypass here is safe. Also: i
 fresh worktree, `Read` a file before `Write`/`Edit` — there is no cached state
 for a path the tooling has not seen yet.
 
+**Lasting fix for CaptainHook.** The bypass above covers a command you type; it
+does not reach a tool that runs `git worktree add` itself. Shell hooks written by
+CaptainHook 5.29.2 or earlier exit 127 in a fresh worktree, because the relative
+path to `captainhook` does not exist there yet. A failing `post-checkout` makes
+`git worktree add` return that code although the worktree is complete. Plain
+`captainhook install` writes all eight hook types, also the disabled ones, so the
+failure hits projects that never enabled `post-checkout`.
+
+Shell hooks written by 5.29.3 or later print `CaptainHook executable not found` and
+exit 0 instead (measured: `git worktree add` returns 0). Upgrading the package does
+not rewrite installed hooks. In both layouts below, `post-checkout`, `post-merge`
+and `post-rewrite` count as enabled while the virtual hook `post-change` is enabled,
+because they run its actions; do not delete them then.
+
+- **Plain clone:** upgrade, then run `captainhook install -f --only-enabled` once,
+  with the project's `-c` and `-b` options. `-f` overwrites an enabled hook of any
+  origin, and disabled hooks stay as they are. Remove those by name, each only after
+  `grep -l 'installed by CaptainHook' <file>` lists it.
+- **Worktree of a bare repository:** `install` and `uninstall` report success but
+  miss the hooks git reads, unless `core.hooksPath` is set. Edit the files in
+  `git rev-parse --path-format=absolute --git-path hooks` by hand, after a backup:
+  delete disabled hooks with the same marker check, and insert into an enabled
+  `post-checkout`, directly before its last line, the check that 5.29.3 writes:
+  `[ -x vendor/bin/captainhook ] || exit 0`, with the path from that last line. Do
+  this only for a `#!/bin/sh` hook whose last line starts with a relative path.
+- **Composer plugin:** `captainhook/hook-installer` with
+  `extra.captainhook.only-enabled: true` installs only enabled hooks.
+  `captainhook/plugin-composer` 5.3.3 installs all of them on every
+  `composer install` and can abort in a bare-repository worktree with
+  `git directory not found`; replace it.
+
+The 5.29.3 check also covers `pre-commit` and `commit-msg`: without dependencies
+they pass **without running**. Install the dependencies before the first commit in a
+worktree, and do not add the check to those hooks by hand.
+
 ### pre-commit first run: slow env build, lost stash on interrupt
 
 The **first** commit that triggers `pre-commit` builds a fresh virtualenv for
