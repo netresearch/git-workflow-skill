@@ -308,7 +308,9 @@ failure hits projects that never enabled `post-checkout`.
 
 Shell hooks written by 5.29.3 or later print `CaptainHook executable not found` and
 exit 0 instead (measured: `git worktree add` returns 0). Upgrading the package does
-not rewrite installed hooks:
+not rewrite installed hooks. In both layouts below, `post-checkout`, `post-merge`
+and `post-rewrite` count as enabled while the virtual hook `post-change` is enabled,
+because they run its actions; do not delete them then.
 
 - **Plain clone:** upgrade, then run `captainhook install -f --only-enabled` once,
   with the project's `-c` and `-b` options. `-f` overwrites an enabled hook of any
@@ -321,8 +323,6 @@ not rewrite installed hooks:
   `post-checkout`, directly before its last line, the check that 5.29.3 writes:
   `[ -x vendor/bin/captainhook ] || exit 0`, with the path from that last line. Do
   this only for a `#!/bin/sh` hook whose last line starts with a relative path.
-  Before deleting a disabled `post-checkout`, `post-merge` or `post-rewrite`, check
-  that the virtual hook `post-change` is disabled too: they run its actions.
 - **Composer plugin:** `captainhook/hook-installer` with
   `extra.captainhook.only-enabled: true` installs only enabled hooks.
   `captainhook/plugin-composer` 5.3.3 installs all of them on every
