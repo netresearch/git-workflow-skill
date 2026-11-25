@@ -292,9 +292,10 @@ mechanical:
     pattern: "captainhook/hook-installer"
     severity: info
     desc: >-
-      If captainhook/hook-installer is in composer.json, document the
-      git-worktree workaround (composer install --no-plugins) in README —
-      see references/git-hooks-setup.md 'CaptainHook + git worktrees'
+      If captainhook/hook-installer is in composer.json, require 1.0.5 or
+      later (it skips the install in a git worktree) and set
+      extra.captainhook.only-enabled — see references/git-hooks-setup.md
+      'CaptainHook + git worktrees' and 'Lasting fix for CaptainHook'
 
   # === UNRELEASED COMMITS ===
   # GW-15 was removed rather than fixed: counting commits since the last tag
