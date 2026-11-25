@@ -54,12 +54,13 @@ git -C "$WORK/clone" commit -q --allow-empty -m one
 git -C "$WORK/clone" push -q origin f
 FIRST="$(git -C "$WORK/clone" rev-parse HEAD)"
 
-# graphql <head oid> — a clean, approved, green PR whose head is <head oid>.
+# graphql <head oid> [<CI conclusion>] — a clean, approved PR whose head is
+# <head oid>; green unless the conclusion says otherwise.
 graphql() {
   local head="$1"
-  python3 - "$WORK/graphql.json" "$head" <<'PY'
+  python3 - "$WORK/graphql.json" "$head" "${2:-SUCCESS}" <<'PY'
 import sys, json
-path, head = sys.argv[1:3]
+path, head, conclusion = sys.argv[1:4]
 json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
     "nameWithOwner": "o/r",
     "mergeCommitAllowed": True, "rebaseMergeAllowed": False, "squashMergeAllowed": False,
@@ -80,7 +81,7 @@ json.dump({"data": {"viewer": {"login": "someone"}, "repository": {
         "commits": {"nodes": [{"commit": {"oid": head, "committedDate": "2026-11-04T09:00:00Z",
             "statusCheckRollup": {
             "state": "SUCCESS", "contexts": {"pageInfo": {"hasNextPage": False}, "nodes": [
-                {"__typename": "CheckRun", "name": "CI", "conclusion": "SUCCESS",
+                {"__typename": "CheckRun", "name": "CI", "conclusion": conclusion,
                  "status": "COMPLETED", "detailsUrl": "u",
                  "startedAt": "2026-11-04T09:00:00Z"}]}}}}]},
         "allCommits": {"nodes": [{"commit": {"oid": head, "signature": {"isValid": True}}}]},
@@ -116,6 +117,26 @@ git -C "$WORK/clone" push -q origin f
 check "pushed but the PR still shows the old head: wait" wait \
       '(.next.why | test("not processed") and test("'"${SECOND:0:8}"'") and test("'"${FIRST:0:8}"'"))
        and (.next.cmd | test("--force-with-lease origin HEAD:refs/heads/f$"))'
+
+# watch <name> <text the output must hold> <text it must not hold>
+watch() {
+  local name="$1" want="$2" reject="$3" out
+  out="$(cd "$WORK/clone" && PATH="$WORK/stub:$PATH" bash "$SCRIPT" -R o/r 7 --watch --interval 1 --max-wait 2 2>&1)" || true
+  if grep -qF "$want" <<<"$out" && ! grep -qF "$reject" <<<"$out"; then
+    echo "  ok   $name"
+  else
+    echo "  FAIL $name: $out"
+    fail=1
+  fi
+}
+
+# A check of the replaced commit is not an event: the fix for it is the commit
+# the PR does not show yet (netresearch/typo3-ci-workflows#340).
+graphql "$FIRST" FAILURE
+watch "a failed check of the old head does not end the watch" "not processed" "ACTIONABLE"
+graphql "$SECOND" FAILURE
+watch "a failed check of the current head does" "ACTIONABLE: check failed" "not processed"
+graphql "$FIRST"
 
 # GitHub compares owner and repo names case-insensitively, so must this.
 check "-R in other letter case still finds the remote" wait \

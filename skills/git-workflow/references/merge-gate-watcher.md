@@ -398,7 +398,8 @@ answers `ready` or `merge` for a state that is gone
 Run inside a checkout of the head branch, `pr-status.sh` compares the local
 HEAD with the PR head, through the remote on the GitHub host whose path is the
 `-R` repository (case-insensitive; a mirror on another host does not count).
-Pushed but not on the PR: `NEXT: wait`, naming both commits, with the re-push
+Pushed but not on the PR: `--watch` keeps waiting, a failed check of the old
+head included, and the answer is `NEXT: wait`, naming both commits, with the re-push
 below as `cmd` — left out while the index holds staged changes, which the
 amend would fold into the commit. Local HEAD ahead of, behind or diverged from
 the pushed head: the verdict stands and a note says which. Outside such a
