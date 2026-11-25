@@ -298,6 +298,32 @@ Are Fast Feedback — CI Is the Gate"), so a scoped bypass here is safe. Also: i
 fresh worktree, `Read` a file before `Write`/`Edit` — there is no cached state
 for a path the tooling has not seen yet.
 
+**Lasting fix for CaptainHook.** The bypass above covers a command you type; it
+does not reach a tool that runs `git worktree add` itself. Plain
+`captainhook install` writes all eight hook types, including the ones
+`captainhook.json` disables. Every worktree shares them, and each calls a relative
+path such as `bin/captainhook`. In a fresh worktree `post-checkout` exits 127;
+`git worktree add` returns that code although the worktree is complete, so a tool
+that checks the code reports a failed creation. Measured with CaptainHook 5.29.2:
+
+- **Hook disabled on every branch in use:** work on the shared directory,
+  `$(git rev-parse --path-format=absolute --git-common-dir)/hooks`. Delete the
+  disabled hooks there by name, each only after
+  `grep -l 'installed by CaptainHook' <file>` lists it. A hook enabled later has to
+  be installed again.
+- **Do not run `captainhook install` or `uninstall` in a worktree for this.** Both
+  report success but work on a `…/worktrees/<name>/hooks` path that git does not
+  read; in one run it was created inside the worktree. In a plain clone, `captainhook install --only-enabled` writes
+  only the enabled hooks from the start. Later, `captainhook uninstall --only-disabled`
+  removes stale ones, but it deletes a disabled hook of any origin: check the
+  marker first.
+- **`post-checkout` enabled:** removing it would lose its action. Read the path on
+  the last line of the hook and test exactly that path after the `#!` line, e.g.
+  `[ -x vendor/bin/captainhook ] || exit 0`. A path that does not match disables the
+  hook everywhere. A reinstall with `-f` overwrites the guard.
+- **Never guard `pre-commit`, `commit-msg` or `pre-push` this way:** they would
+  pass without running a check. Install the dependencies instead.
+
 ### pre-commit first run: slow env build, lost stash on interrupt
 
 The **first** commit that triggers `pre-commit` builds a fresh virtualenv for
