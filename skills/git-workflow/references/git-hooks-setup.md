@@ -14,7 +14,7 @@ prevent secrets, and ensure code quality without requiring the agent to "remembe
 | Framework | Language | Config File | Install |
 |-----------|----------|-------------|---------|
 | **lefthook** | Go binary | `lefthook.yml` | `go install github.com/evilmartians/lefthook@latest && lefthook install` |
-| **captainhook** | PHP | `captainhook.json` | `composer install` (auto via plugin) |
+| **captainhook** | PHP | `captainhook.json` | `composer install` (auto via `captainhook/hook-installer`) |
 | **husky** | Node.js | `.husky/` | `npm install` (auto via prepare) |
 | **pre-commit** | Python | `.pre-commit-config.yaml` | `pip install pre-commit && pre-commit install` |
 
