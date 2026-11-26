@@ -4,7 +4,7 @@
 # Regression test: a standing review action must not hide a structural merge
 # blocker.
 #
-# Observed on netresearch/netresearch-branding-skill#110 (2026-10-22): a fork
+# Observed on a skill repository (2026-10-22): a fork
 # pull request, mergeStateStatus BLOCKED, every check green, 0 threads. Classic
 # protection had required_signatures and 6 of 29 commits were unsigned; the
 # required context "All security checks" had not reported on that head; the
@@ -53,10 +53,10 @@ mkdir -p "$(dirname "$MARKER")"
 printf 'copilot review quota exhausted; proven on o/r#1 at 2026-01-01T00:00:00Z\n' > "$MARKER"
 
 COPILOT_RULE='{"type":"copilot_code_review","parameters":{}}'
-# Copied from repos/netresearch/netresearch-branding-skill/rules/branches/main.
-CODEQL_RULE='{"type":"code_scanning","parameters":{"code_scanning_tools":[{"tool":"CodeQL","security_alerts_threshold":"high_or_higher","alerts_threshold":"errors"}]},"ruleset_source_type":"Repository","ruleset_source":"netresearch/netresearch-branding-skill","ruleset_id":25563068}'
+# Copied from that repository's rules/branches/main response.
+CODEQL_RULE='{"type":"code_scanning","parameters":{"code_scanning_tools":[{"tool":"CodeQL","security_alerts_threshold":"high_or_higher","alerts_threshold":"errors"}]},"ruleset_source_type":"Repository","ruleset_source":"netresearch/example-skill","ruleset_id":25563068}'
 SIG_RULE='{"type":"required_signatures"}'
-# The classic protection of netresearch-branding-skill main, trimmed to what
+# The classic protection of that repository's main, trimmed to what
 # the evaluation reads.
 CLASSIC_SIG='{"required_signatures":{"enabled":true},"required_status_checks":{"strict":false,"contexts":["DCO","All security checks"]},"required_pull_request_reviews":{"required_approving_review_count":0,"dismiss_stale_reviews":true}}'
 

@@ -1092,7 +1092,7 @@
          # guards of the rung below apply: no review and no further CI result
          # can lift it. Without this rung a review action outranked it whenever
          # one of those guards failed, and nothing named the signatures
-         # (netresearch-branding-skill#110: BLOCKED, Copilot out of quota, 6 of
+         # (a fork pull request, 2026-10-22: BLOCKED, Copilot out of quota, 6 of
          # 29 commits unsigned under classic required_signatures, a required
          # context not yet reported — NEXT said only request-review). The
          # review state is carried along: it is a second gate, not a lesser one.
@@ -1556,7 +1556,7 @@
     # Structural blockers named beside whatever rung won. A review action sits
     # above every CI rung, so on a BLOCKED pull request it used to be the only
     # thing said while a required context had never reported and CodeQL could
-    # never report (netresearch-branding-skill#110). Rungs that are themselves
+    # never report (a fork pull request, 2026-10-22). Rungs that are themselves
     # about the unreported contexts already name them.
     | if $s.mergeState == "BLOCKED"
          and (.next.action | IN("request-review", "await-review", "fix-signatures"))
