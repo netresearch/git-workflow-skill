@@ -262,6 +262,22 @@ logs show only preamble" (above) is a per-job lottery, not a law — try the job
 endpoint first while the run lives, fall back to the run archive once it is
 complete.
 
+**The failing file and line often come faster from the job's annotations.**
+A job id is also its check-run id, and the annotations endpoint answers
+while the run is still in progress, without escape sequences:
+
+```bash
+gh api "repos/$R/check-runs/$JOB/annotations" --paginate \
+  --jq '.[] | [.path, .start_line, .annotation_level, .message] | @tsv'
+```
+
+Measured on 2026-11-26 on
+[netresearch/t3x-nr-passkeys-be#212](https://github.com/netresearch/t3x-nr-passkeys-be/pull/212):
+for the PHPStan cells it returned `Attribute class … does not exist` with file
+and line, while `gh run view --log-failed` still answered `still in progress`.
+A step that only exits non-zero leaves just `Process completed with exit code
+N` there; then read the job log as above.
+
 Note the archive is per *run*, so for a queue ejection you need the
 `gh-readonly-queue/*` run, not the pull request's own:
 
