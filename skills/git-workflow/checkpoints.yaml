@@ -293,7 +293,9 @@ mechanical:
     severity: info
     desc: >-
       If captainhook/hook-installer is in composer.json, require 1.0.5 or
-      later (it skips the install in a git worktree) and set
+      later (on the host it skips the install in a git worktree; a container
+      that mounts only the worktree still fails until the shared git
+      directory is mounted too) and set
       extra.captainhook.only-enabled — see references/git-hooks-setup.md
       'CaptainHook + git worktrees' and 'Lasting fix for CaptainHook'
 
