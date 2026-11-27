@@ -56,8 +56,9 @@
 #   pr-merge.sh -R owner/repo 123 --wait --request-coderabbit
 #                                     # also wait out a CodeRabbit rate limit:
 #                                     # when the gate answers request-review
-#                                     # because CodeRabbit refused THIS head as
-#                                     # rate limited and its notice names the
+#                                     # with no review on the head while
+#                                     # CodeRabbit refused THIS head as rate
+#                                     # limited and its notice names the
 #                                     # reset, wait until that time plus
 #                                     # PR_MERGE_CODERABBIT_MARGIN seconds
 #                                     # (default 60), reading the gate every
@@ -67,7 +68,7 @@
 #                                     # runs; merge when the gate opens. Nothing
 #                                     # is posted while a check runs or is red,
 #                                     # when a request made after the reset is
-#                                     # not answered by CodeRabbit yet, when the
+#                                     # not refused by CodeRabbit, when the
 #                                     # reset lies past --max-wait, nor on a
 #                                     # draft (CodeRabbit does not review
 #                                     # drafts; that is reported). Refused again
@@ -86,8 +87,9 @@
 # while nothing merged and nothing entered the queue; a merge that would close
 # stacked pull requests (see --retarget-stacked); with --wait also: the last
 # read of the gate or of the PR failed when --max-wait ran out; with
-# --request-coderabbit also: the comment read before the review request or
-# the request itself failed (never retried). 1 is retryable
+# --request-coderabbit also: the comment read before posting the review
+# request, or the post itself, failed (never retried; a failed read while
+# waiting after a request is not an outcome). 1 is retryable
 # later; 2 needs a human.
 
 # SPDX-License-Identifier: MIT
@@ -517,33 +519,41 @@ gate_waitable() {
   case "$CR_STATE" in retry|hold|inflight) return 0 ;; *) return 1 ;; esac
 }
 
-# cr_comments: one REST read of the PR comments, for the refusal of CR_HEAD
-# that names CR_RETRY_AT. Sets CR_OPEN and CR_ANSWERED: the requests by anyone
-# but CodeRabbit created at or after the reset, split by CodeRabbit's last
-# word, the newest write or edit of any CodeRabbit bot comment, replies
-# included (the rule pr-status-evaluate.jq uses for its in-progress verdict).
-# A request after the last word is still open; one before it has its answer,
-# and with the summary still refusing at the same reset that answer was a
-# refusal. pr-status.sh already reads an open request as in-progress, so the
-# reset filter decides only when the GraphQL read and this REST read disagree
-# (a lagging read): it keeps a request made into the limit, before the reset,
-# from counting. A failed read ends the call (exit 2) and is not retried.
+# cr_comments [soft]: one REST read of the PR comments, for the refusal of
+# CR_HEAD that names CR_RETRY_AT. Sets CR_OPEN and CR_ANSWERED: the requests by
+# anyone but CodeRabbit created at or after the reset, split by whether a
+# CodeRabbit bot comment written or edited after the request says "rate
+# limited" (case-insensitive). Such a comment is the refusal of that request;
+# any other later CodeRabbit write ("Review triggered.", "Review finished.", a
+# chat reply) means it was not refused, and the request stays open.
+# pr-status.sh already reads an open request as in-progress, so the reset
+# filter decides only when the GraphQL read and this REST read disagree (a
+# lagging read): it keeps a request made into the limit, before the reset,
+# from counting. A failed read ends the call (exit 2) and is not retried;
+# with "soft" it returns 1 instead and sets nothing.
 cr_comments() {
-  local err comments counts why
+  local soft="${1:-}" err comments counts why
   err=$(mktemp)
   if ! comments=$(gh api "repos/$REPO/issues/$PR/comments?per_page=100" --paginate \
         --jq '.[] | {u: .user.login, t: .user.type, c: .created_at, e: .updated_at, b: .body}' 2>"$err") \
      || ! counts=$(printf '%s' "$comments" | jq -rs --arg reset "$CR_RETRY_AT" '
           ([.[] | select((.u // "") | test("^coderabbitai"; "i"))
                 | select(.t == "Bot")
-                | (.e // .c // "")] | max // "") as $last_word
+                | select((.b // "") | test("rate limited"; "i"))
+                | (.e // .c // "")]) as $refusals
           | [.[] | select((.u // "") | test("^coderabbitai"; "i") | not)
                  | select((.b // "") | test("@coderabbitai (full )?review"))
                  | select((.c // "") >= $reset)
-                 | (.c // "") > $last_word]
+                 | (.c // "") as $asked
+                 | ([$refusals[] | select(. > $asked)] | length == 0)]
           | "\(map(select(.)) | length) \(map(select(. | not)) | length)"' 2>>"$err") \
      || ! [[ "$counts" =~ ^[0-9]+\ [0-9]+$ ]]; then
     why=$(tr '\n' ' ' < "$err"); rm -f "$err"
+    if [ "$soft" = "soft" ]; then
+      printf 'pr-merge: could not read the comments of %s#%s, so whether CodeRabbit refused the request is unknown; reading again at the next step: %s\n' \
+        "$REPO" "$PR" "${why:-unexpected answer}" >&2
+      return 1
+    fi
     die "--request-coderabbit: could not read the comments of $REPO#$PR, so whether a review request is already on its way is unknown; nothing posted: ${why:-unexpected answer}"
   fi
   rm -f "$err"
@@ -559,7 +569,7 @@ cr_refused_again() {
 # cr_request: post `@coderabbitai review` once for the refusal of CR_HEAD that
 # names CR_RETRY_AT. The gate read can lag a comment by a poll, and a restarted
 # call knows nothing of an earlier one, so cr_comments reads first: an open
-# request means one is on its way (no post, keep waiting); an answered one
+# request means one is on its way (no post, keep waiting); a refused one
 # with no open one means CodeRabbit refused it at this same reset, the
 # restarted form of cr_refused_again. A failed post ends the call (exit 2) and
 # is not retried.
@@ -569,7 +579,7 @@ cr_request() {
   cr_comments
   CR_POSTED=$key
   if [ "$CR_OPEN" -gt 0 ]; then
-    printf 'pr-merge: %s#%s already carries an @coderabbitai review request made after the reset %s and not answered by CodeRabbit yet — not posting another\n' \
+    printf 'pr-merge: %s#%s already carries an @coderabbitai review request made after the reset %s that CodeRabbit has not refused — not posting another\n' \
       "$REPO" "$PR" "$CR_RETRY_AT" >&2
     return 0
   fi
@@ -608,11 +618,12 @@ if [ "$WAIT" = "1" ] && [ "$DRY" != "1" ] && gate_waitable && [ "$INQUEUE" != "t
       # refusal at the same reset. Only a CodeRabbit write after the request
       # makes that a second refusal; without one the gate read lags the
       # request, and the next step reads again (one REST read per such step).
-      cr_comments
-      [ "$CR_OPEN" -eq 0 ] && [ "$CR_ANSWERED" -gt 0 ] && cr_refused_again
+      if cr_comments soft; then
+        [ "$CR_OPEN" -eq 0 ] && [ "$CR_ANSWERED" -gt 0 ] && cr_refused_again
+      fi
       if [ "$CR_LAG_SAID" != "$CR_HEAD $CR_RETRY_AT" ]; then
         CR_LAG_SAID="$CR_HEAD $CR_RETRY_AT"
-        printf 'pr-merge: the gate still shows the refusal of %s, but CodeRabbit has not answered the request yet — reading again\n' \
+        printf 'pr-merge: the gate still shows the refusal of %s, but CodeRabbit has not refused the request in a comment — reading again\n' \
           "${CR_HEAD:0:12}" >&2
       fi
     elif [ "$gate_ok" = "1" ] && [ "$CR_STATE" = "retry" ]; then

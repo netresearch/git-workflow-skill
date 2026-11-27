@@ -60,7 +60,9 @@ chmod +x "$STUB_DIR/pr-status.sh"
 # --paginate only the first page, the first two comments. It fails with
 # comments.fail. pr comment logs its arguments and fails with comment.fail;
 # otherwise it adds the request to comments.json, created now, and with a file
-# named reply also a CodeRabbit reply after it (a refusal in a reply).
+# named reply also a CodeRabbit reply after it, reading the file's text or, for
+# an empty file, "Review rate limited." (a refusal in a reply). The n-th
+# comment read fails when comments.<n>.fail exists.
 cat > "$STUB_DIR/gh" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$1 \$2" >> "$STUB_DIR/calls.log"
@@ -76,12 +78,16 @@ case "\$1 \$2" in
     jq --arg c "\$now" '. + [{user: {login: "me", type: "User"}, created_at: \$c, updated_at: \$c, body: "@coderabbitai review"}]' \
       "$STUB_DIR/comments.json" > "$STUB_DIR/comments.tmp" && mv "$STUB_DIR/comments.tmp" "$STUB_DIR/comments.json"
     if [ -f "$STUB_DIR/reply" ]; then
-      jq --arg c "\$later" '. + [{user: {login: "coderabbitai[bot]", type: "Bot"}, created_at: \$c, updated_at: \$c, body: "Review rate limited."}]' \
+      body=\$(cat "$STUB_DIR/reply"); [ -n "\$body" ] || body="Review rate limited."
+      jq --arg c "\$later" --arg b "\$body" '. + [{user: {login: "coderabbitai[bot]", type: "Bot"}, created_at: \$c, updated_at: \$c, body: \$b}]' \
         "$STUB_DIR/comments.json" > "$STUB_DIR/comments.tmp" && mv "$STUB_DIR/comments.tmp" "$STUB_DIR/comments.json"
     fi
     exit 0 ;;
   "api repos/o/r/issues/745/comments?per_page=100")
+    echo x >> "$STUB_DIR/creads.log"
+    cn=\$(wc -l < "$STUB_DIR/creads.log" | tr -d ' ')
     [ -f "$STUB_DIR/comments.fail" ] && { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
+    [ -f "$STUB_DIR/comments.\$cn.fail" ] && { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
     filter=""; prev=""; pages='.[0:2]'
     for a in "\$@"; do [ "\$prev" = "--jq" ] && filter="\$a"; [ "\$a" = "--paginate" ] && pages='.'; prev="\$a"; done
     jq "\$pages" "$STUB_DIR/comments.json" | jq -c "\$filter"; exit 0 ;;
@@ -104,7 +110,7 @@ chmod +x "$STUB_DIR/sleep"
 
 reset() {
     rm -f "$STUB_DIR"/status*.json "$STUB_DIR"/*.fail "$STUB_DIR/json.log" \
-          "$STUB_DIR/sleep.log" "$STUB_DIR/posts.log" "$STUB_DIR/posted_at.log" "$STUB_DIR/posted_epoch.log" "$STUB_DIR/comments.json" "$STUB_DIR/reply"
+          "$STUB_DIR/sleep.log" "$STUB_DIR/posts.log" "$STUB_DIR/posted_at.log" "$STUB_DIR/posted_epoch.log" "$STUB_DIR/comments.json" "$STUB_DIR/reply" "$STUB_DIR/creads.log"
     : > "$STUB_DIR/calls.log"
     printf '%s\n' '{"data":{"repository":{"pullRequest":{"state":"MERGED","isInMergeQueue":false,"autoMergeRequest":null}}}}' \
       > "$STUB_DIR/graphql.json"
@@ -340,7 +346,7 @@ st status.json merge clean null false true
 out=$(run --wait --request-coderabbit); rc=$?
 check "exit code" "0" "$rc"
 check "one request posted" "1" "$(posts)"
-says  "says it reads again" "CodeRabbit has not answered the request yet — reading again" "$(cat "$STUB_DIR/err")"
+says  "says it reads again" "CodeRabbit has not refused the request in a comment — reading again" "$(cat "$STUB_DIR/err")"
 check "merged once" "1" "$(merges)"
 
 echo "case 16: a re-run after a refusal at the same reset — no second post, exit 1"
@@ -386,6 +392,42 @@ out=$(run --wait --request-coderabbit); rc=$?
 check "exit code" "1" "$rc"
 check "nothing posted" "0" "$(posts)"
 check "no sleep" "" "$(sleeps)"
+
+# A CodeRabbit write after the request that is not a refusal: the gate read
+# lags, the call keeps waiting and merges once the review is through.
+for answer in "Review triggered." "Review finished."; do
+    echo "case 20: a CodeRabbit reply '$answer' after the post is no refusal — keeps waiting, merges"
+    reset; comments; printf '%s' "$answer" > "$STUB_DIR/reply"
+    st status.1.json request-review rate-limited '"2026-11-27T11:48:00Z"'
+    st status.2.json request-review rate-limited '"2026-11-27T11:48:00Z"'
+    st status.3.json request-review in-progress null
+    st status.json merge clean null false true
+    out=$(run --wait --request-coderabbit); rc=$?
+    check "exit code" "0" "$rc"
+    check "one request posted" "1" "$(posts)"
+    check "merged once" "1" "$(merges)"
+done
+echo "case 20c: control — a reply 'Review rate limited.' after the post ends the call"
+reset; comments; printf '%s' "Review rate limited." > "$STUB_DIR/reply"
+st status.1.json request-review rate-limited '"2026-11-27T11:48:00Z"'
+st status.2.json request-review rate-limited '"2026-11-27T11:48:00Z"'
+st status.3.json request-review in-progress null
+st status.json merge clean null false true
+out=$(run --wait --request-coderabbit); rc=$?
+check "exit code" "1" "$rc"
+check "one request posted" "1" "$(posts)"
+check "nothing merged" "0" "$(merges)"
+
+echo "case 21: the comment read after the post fails — not an outcome, keeps waiting"
+reset; comments; touch "$STUB_DIR/comments.2.fail"
+st status.1.json request-review rate-limited '"2026-11-27T11:48:00Z"'
+st status.2.json request-review rate-limited '"2026-11-27T11:48:00Z"'
+st status.3.json request-review in-progress null
+st status.json merge clean null false true
+out=$(run --wait --request-coderabbit); rc=$?
+check "exit code" "0" "$rc"
+check "one request posted" "1" "$(posts)"
+says  "says it reads again" "whether CodeRabbit refused the request is unknown; reading again at the next step" "$(cat "$STUB_DIR/err")"
 
 echo "case 8: the post fails — exit 2, tried once"
 reset; comments; touch "$STUB_DIR/comment.fail"
