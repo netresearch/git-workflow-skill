@@ -329,20 +329,20 @@ is_waiting() {
 # still merge (a reviewer's "LGTM" after enqueueing is enough). Once the entry
 # has left the queue, or the wait runs out, pr-status.sh names the next step.
 wait_in_queue() {
-  local label="$1" last_ok=1 out_seen=0 step Q F STATE="" INQ=""
+  local label="$1" last_ok=1 out_seen=0 step q f state="" inq=""
   start_wait
   while :; do
-    if Q=$(outcome "$WAIT_READ_MAX") && F=$(printf '%s' "$Q" | jq -er '.data.repository.pullRequest
+    if q=$(outcome "$WAIT_READ_MAX") && f=$(printf '%s' "$q" | jq -er '.data.repository.pullRequest
           | [ .state, (.isInMergeQueue | tostring) ] | @tsv'); then
       last_ok=1
-      IFS=$'\t' read -r STATE INQ <<EOF
-$F
+      IFS=$'\t' read -r state inq <<EOF
+$f
 EOF
-      if [ "$STATE" = "MERGED" ]; then
+      if [ "$state" = "MERGED" ]; then
         printf 'pr-merge: %s#%s merged (%s)\n' "$REPO" "$PR" "$label"
         exit 0
       fi
-      if [ "$INQ" != "true" ]; then
+      if [ "$inq" != "true" ]; then
         # GitHub can put a dropped entry back by itself while auto-merge is
         # still armed (references/merge-gate-watcher.md), and re-queueing by
         # hand would cancel that run. So a read outside the queue counts only
@@ -350,7 +350,7 @@ EOF
         out_seen=$((out_seen + 1))
         if [ "$out_seen" -ge 2 ]; then
           printf 'pr-merge: %s#%s left the merge queue without merging (state=%s); next step:\n' \
-            "$REPO" "$PR" "$STATE" >&2
+            "$REPO" "$PR" "$state" >&2
           "$SCRIPT_DIR/pr-status.sh" -R "$REPO" "$PR" >&2
           exit 1
         fi
@@ -373,7 +373,7 @@ EOF
   fi
   if [ "$out_seen" -ge 1 ]; then
     printf 'pr-merge: %s#%s was outside the merge queue at the last read (state=%s) when the wait ran out; gate:\n' \
-      "$REPO" "$PR" "$STATE" >&2
+      "$REPO" "$PR" "$state" >&2
   else
     printf 'pr-merge: %s#%s is still in the merge queue after %ss; gate:\n' "$REPO" "$PR" "$WAIT_MAX" >&2
   fi
