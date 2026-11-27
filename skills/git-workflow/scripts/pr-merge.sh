@@ -58,16 +58,20 @@
 #                                     # when the gate answers request-review
 #                                     # because CodeRabbit refused THIS head as
 #                                     # rate limited and its notice names the
-#                                     # reset, sleep until that time plus
+#                                     # reset, wait until that time plus
 #                                     # PR_MERGE_CODERABBIT_MARGIN seconds
-#                                     # (default 60), post ONE
+#                                     # (default 60), reading the gate every
+#                                     # max(--interval, 120 s), post ONE
 #                                     # `@coderabbitai review` comment for the
 #                                     # head, and keep waiting while that review
 #                                     # runs; merge when the gate opens. Nothing
-#                                     # is posted when a request newer than the
-#                                     # head commit and the refusal already
-#                                     # exists, nor on a draft (CodeRabbit does
-#                                     # not review drafts; that is reported).
+#                                     # is posted while a check runs or is red,
+#                                     # when a request made after the reset is
+#                                     # not answered by CodeRabbit yet, when the
+#                                     # reset lies past --max-wait, nor on a
+#                                     # draft (CodeRabbit does not review
+#                                     # drafts; that is reported). Refused again
+#                                     # at the same reset: exit 1.
 #                                     # Only with --wait. pr-status.sh itself
 #                                     # never posts; this flag is the one place
 #                                     # the request is written.
@@ -431,30 +435,31 @@ EOF
 # CodeRabbit does not resume a refused head by itself, so without a new
 # `@coderabbitai review` the wait could only run out (measured on
 # netresearch/terraform-provider-ad#66: 90 minutes of "Review rate limited").
-# The call sleeps to the reset the notice names plus CR_MARGIN in one go, reads
-# the gate again, and posts the request once (cr_request); while CodeRabbit
-# then reviews, pr-status.sh reads the head as in-progress and the wait holds.
-# Nothing moves before the reset that this call could act on, which is why it
-# sleeps through instead of reading every --interval; a push in between shows
-# in the read before the post, and the post is then for the new head or none.
+# The call waits for the reset the notice names plus CR_MARGIN, reading the
+# gate every max(--interval, 120 s) on the way, so a merge, a push, a closed PR
+# or new comments are acted on as --wait does. At the target it posts the
+# request once (cr_request); while CodeRabbit then reviews, pr-status.sh reads
+# the head as in-progress and the wait holds. When CodeRabbit refuses the
+# request again without moving the reset, the call ends (exit 1): posting again
+# at the same reset would only be refused again.
 GATE_WAITED=0
-CR_STATE=""; CR_RETRY_AT=""; CR_TARGET=""; CR_HEAD=""; CR_HEAD_AT=""
+CR_STATE=""; CR_RETRY_AT=""; CR_TARGET=""; CR_HEAD=""
 CR_POSTED=""; CR_DRAFT_SAID=""; CR_WAIT_SAID=""
 
 # cr_read: what the last gate read says about CodeRabbit, for
 # --request-coderabbit only. CR_STATE is
 #   retry    request-review, no review on the head, CodeRabbit refused this
 #            head as rate limited and the reset is known: post after CR_TARGET
-#   hold     the same as retry while checks still run: wait every --interval,
-#            post nothing yet
+#   hold     the same as retry while a check is still running: wait every
+#            --interval, post nothing yet
 #   inflight request-review, no review on the head, CodeRabbit is reviewing it
 #   draft    a draft whose head CodeRabbit refused: never posted, reported
 #   ""       anything else; the flag changes nothing
 # Placeholders instead of empty fields: a tab is IFS whitespace, so an empty
 # field would collapse and shift the ones after it.
 cr_read() {
-  local f verdict reviewed draft epoch settled nfail
-  CR_STATE=""; CR_RETRY_AT=""; CR_TARGET=""; CR_HEAD=""; CR_HEAD_AT=""
+  local f verdict reviewed draft epoch nfail npending nbusy
+  CR_STATE=""; CR_RETRY_AT=""; CR_TARGET=""; CR_HEAD=""
   [ "$REQUEST_CR" = "1" ] || return 0
   f=$(printf '%s' "$STATUS" | jq -er '
     [ (.coderabbit_on_head // "none"),
@@ -462,13 +467,13 @@ cr_read() {
       ((.draft // false) | tostring),
       (.headOid // "-"),
       (.coderabbit_retry_at // "-"),
-      (.body_freshness.head_committed_at // "-"),
       ((.coderabbit_retry_at // "") as $r
        | if $r == "" then "-" else (try ($r | fromdateiso8601 | tostring) catch "-") end),
-      ((.checks_settled // false) | tostring),
-      ((.checks.failing // []) | length | tostring)
+      ((.checks.failing // []) | length | tostring),
+      ((.checks.pending // 0) | tostring),
+      ((.checks.not_started_busy_runs // []) | length | tostring)
     ] | @tsv') || return 0
-  IFS=$'\t' read -r verdict reviewed draft CR_HEAD CR_RETRY_AT CR_HEAD_AT epoch settled nfail <<EOF
+  IFS=$'\t' read -r verdict reviewed draft CR_HEAD CR_RETRY_AT epoch nfail npending nbusy <<EOF
 $f
 EOF
   if [ "$verdict" = "rate-limited" ] && [ "$draft" = "true" ]; then
@@ -481,11 +486,15 @@ EOF
     # The ladder answers request-review while checks still run, so the
     # request waits for them: on a red check the head needs a push, and a
     # review of it would spend the hourly allowance on a head about to go.
+    # Only a check that is actually running holds, as in the ladder's draft
+    # branch: with no checks at all, or a required context that never
+    # reports, checks_settled stays false for good and would hold for ever.
     rate-limited)
-      if [[ "$epoch" =~ ^[0-9]+$ ]] && [ "$settled" = "true" ] && [ "$nfail" = "0" ]; then
-        CR_STATE=retry; CR_TARGET=$((epoch + CR_MARGIN))
-      elif [[ "$epoch" =~ ^[0-9]+$ ]] && [ "$settled" != "true" ] && [ "$nfail" = "0" ]; then
+      [[ "$epoch" =~ ^[0-9]+$ ]] && [ "$nfail" = "0" ] || return 0
+      if [ "$npending" != "0" ] || [ "$nbusy" != "0" ]; then
         CR_STATE=hold
+      else
+        CR_STATE=retry; CR_TARGET=$((epoch + CR_MARGIN))
       fi ;;
     *) ;;
   esac
@@ -508,44 +517,52 @@ gate_waitable() {
 # cr_request: post `@coderabbitai review` once for the refusal of CR_HEAD that
 # names CR_RETRY_AT. The gate read can lag a comment by a poll, and a restarted
 # call knows nothing of an earlier one, so one REST read of the comments comes
-# first: a request by anyone but CodeRabbit, created after the head commit and
-# after CodeRabbit's last edit of the comment naming the head (the refusal),
-# means one is already on its way, and none is posted. A failed read or a
-# failed post ends the call (exit 2); neither is retried.
+# first. A request by anyone but CodeRabbit counts as already on its way when
+# it was created at or after the reset and after CodeRabbit's last word: the
+# newest write or edit of any CodeRabbit bot comment, replies included, the
+# rule pr-status-evaluate.jq uses for its in-progress verdict. An earlier
+# request was made into the limit, and a CodeRabbit comment after it is its
+# answer. A failed read or a failed post ends the call (exit 2); neither is
+# retried.
 cr_request() {
-  local key="$CR_HEAD $CR_RETRY_AT" err comments seen
+  local key="$CR_HEAD $CR_RETRY_AT" err comments seen why
   [ "$key" != "$CR_POSTED" ] || return 0
   err=$(mktemp)
   if ! comments=$(gh api "repos/$REPO/issues/$PR/comments?per_page=100" --paginate \
         --jq '.[] | {u: .user.login, t: .user.type, c: .created_at, e: .updated_at, b: .body}' 2>"$err") \
-     || ! seen=$(printf '%s' "$comments" | jq -rs --arg head "$CR_HEAD" --arg at "$CR_HEAD_AT" '
+     || ! seen=$(printf '%s' "$comments" | jq -rs --arg reset "$CR_RETRY_AT" '
           ([.[] | select((.u // "") | test("^coderabbitai"; "i"))
                 | select(.t == "Bot")
-                | select((.b // "") | contains($head))
-                | (.e // .c // "")] | max // "") as $refused
+                | (.e // .c // "")] | max // "") as $last_word
           | [.[] | select((.u // "") | test("^coderabbitai"; "i") | not)
                  | select((.b // "") | test("@coderabbitai (full )?review"))
-                 | select($at == "-" or (.c // "") > $at)
-                 | select((.c // "") > $refused)] | length') \
+                 | select((.c // "") >= $reset)
+                 | select((.c // "") > $last_word)] | length' 2>>"$err") \
      || ! [[ "$seen" =~ ^[0-9]+$ ]]; then
-    local why; why=$(tr '\n' ' ' < "$err"); rm -f "$err"
+    why=$(tr '\n' ' ' < "$err"); rm -f "$err"
     die "--request-coderabbit: could not read the comments of $REPO#$PR, so whether a review request is already on its way is unknown; nothing posted: ${why:-unexpected answer}"
   fi
   CR_POSTED=$key
   if [ "$seen" -gt 0 ]; then
     rm -f "$err"
-    printf 'pr-merge: %s#%s already carries an @coderabbitai review request newer than %s and its refusal — not posting another\n' \
-      "$REPO" "$PR" "${CR_HEAD:0:12}" >&2
+    printf 'pr-merge: %s#%s already carries an @coderabbitai review request made after the reset %s and not answered by CodeRabbit yet — not posting another\n' \
+      "$REPO" "$PR" "$CR_RETRY_AT" >&2
     return 0
   fi
-  gh pr comment "$PR" --repo "$REPO" --body '@coderabbitai review' >/dev/null 2>"$err" || {
-    local why; why=$(tr '\n' ' ' < "$err"); rm -f "$err"
+  if ! gh pr comment "$PR" --repo "$REPO" --body '@coderabbitai review' >/dev/null 2>"$err"; then
+    why=$(tr '\n' ' ' < "$err"); rm -f "$err"
     die "--request-coderabbit: posting @coderabbitai review on $REPO#$PR failed (not retried): $why"
-  }
+  fi
   rm -f "$err"
   printf 'pr-merge: posted @coderabbitai review for %s on %s#%s (the rate-limit reset was %s)\n' \
     "${CR_HEAD:0:12}" "$REPO" "$PR" "$CR_RETRY_AT" >&2
 }
+
+# The step while waiting for the reset: one gate read every max(--interval,
+# 120 s), so the wait sees a merge or a push without spending a read every
+# --interval on a reset that is often an hour away.
+CR_STEP=$WAIT_INTERVAL
+[ "$CR_STEP" -ge 120 ] || CR_STEP=120
 
 cr_read; cr_draft_note
 if [ "$WAIT" = "1" ] && [ "$DRY" != "1" ] && gate_waitable && [ "$INQUEUE" != "true" ]; then
@@ -560,18 +577,35 @@ if [ "$WAIT" = "1" ] && [ "$DRY" != "1" ] && gate_waitable && [ "$INQUEUE" != "t
       fi
     fi
     step=$(next_step)
-    if [ "$gate_ok" = "1" ] && [ "$CR_STATE" = "retry" ] && [ "$CR_POSTED" != "$CR_HEAD $CR_RETRY_AT" ]; then
+    if [ "$gate_ok" = "1" ] && [ "$CR_STATE" = "retry" ] && [ "$CR_POSTED" = "$CR_HEAD $CR_RETRY_AT" ]; then
+      # Requested (by this call or before it) and still refused at the same
+      # reset: CodeRabbit answered the request with a refusal, and a second
+      # request at that reset gets the same answer.
+      printf 'pr-merge: not merging %s#%s — CodeRabbit refused the @coderabbitai review request for %s again, and the reset its notice names (%s) has not moved; read its reply on the PR before requesting again\n' \
+        "$REPO" "$PR" "${CR_HEAD:0:12}" "$CR_RETRY_AT" >&2
+      exit 1
+    elif [ "$gate_ok" = "1" ] && [ "$CR_STATE" = "retry" ]; then
       now=$(date +%s)
+      left=$((WAIT_MAX - WAITED))
+      [ $((DEADLINE - SECONDS)) -lt "$left" ] && left=$((DEADLINE - SECONDS))
       if [ "$now" -ge "$CR_TARGET" ]; then
+        # Posted only while time is left to watch the review it asks for.
+        [ "$step" -ge 1 ] || break
         cr_request
-      else
-        step=$((CR_TARGET - now))
-        [ $((WAIT_MAX - WAITED)) -lt "$step" ] && step=$((WAIT_MAX - WAITED))
-        [ $((DEADLINE - SECONDS)) -lt "$step" ] && step=$((DEADLINE - SECONDS))
+      elif [ $((CR_TARGET - now)) -ge "$left" ]; then
         if [ "$CR_WAIT_SAID" != "$CR_HEAD $CR_RETRY_AT" ]; then
           CR_WAIT_SAID="$CR_HEAD $CR_RETRY_AT"
-          printf 'pr-merge: CodeRabbit refused %s as rate limited; sleeping until %s plus %ss, then posting @coderabbitai review\n' \
-            "${CR_HEAD:0:12}" "$CR_RETRY_AT" "$CR_MARGIN" >&2
+          printf 'pr-merge: CodeRabbit refused %s as rate limited until %s plus %ss, past what is left of --max-wait (%ss); no request will be posted in this call — waiting for other events only\n' \
+            "${CR_HEAD:0:12}" "$CR_RETRY_AT" "$CR_MARGIN" "$left" >&2
+        fi
+      else
+        step=$CR_STEP
+        [ $((CR_TARGET - now)) -lt "$step" ] && step=$((CR_TARGET - now))
+        [ "$left" -lt "$step" ] && step=$left
+        if [ "$CR_WAIT_SAID" != "$CR_HEAD $CR_RETRY_AT" ]; then
+          CR_WAIT_SAID="$CR_HEAD $CR_RETRY_AT"
+          printf 'pr-merge: CodeRabbit refused %s as rate limited; waiting until %s plus %ss (reading the gate every %ss), then posting @coderabbitai review\n' \
+            "${CR_HEAD:0:12}" "$CR_RETRY_AT" "$CR_MARGIN" "$CR_STEP" >&2
         fi
       fi
     fi

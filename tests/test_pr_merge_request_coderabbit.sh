@@ -8,7 +8,7 @@
 # a refused head by itself. Without the flag, the gate answers request-review
 # and pr-merge.sh --wait returns at once; the operator slept until the reset,
 # posted the comment by hand and armed the wait again (2026-11-27). With the
-# flag the call sleeps to the reset plus a margin, posts one
+# flag the call waits for the reset plus a margin, posts one
 # "@coderabbitai review" for the head, keeps waiting while that review runs,
 # and merges when the gate opens.
 #
@@ -56,9 +56,9 @@ STATUS
 chmod +x "$STUB_DIR/pr-status.sh"
 
 # gh stub: every call is logged. The comment read applies the --jq filter
-# pr-merge.sh passes to comments.json, a REST page of issue comments, or fails
-# with comments.fail; pr comment logs its arguments and fails with
-# comment.fail.
+# pr-merge.sh passes to comments.json, as GitHub would page it: without
+# --paginate only the first page, the first two comments. It fails with
+# comments.fail; pr comment logs its arguments and fails with comment.fail.
 cat > "$STUB_DIR/gh" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$1 \$2" >> "$STUB_DIR/calls.log"
@@ -72,9 +72,9 @@ case "\$1 \$2" in
     exit 0 ;;
   "api repos/o/r/issues/745/comments?per_page=100")
     [ -f "$STUB_DIR/comments.fail" ] && { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
-    filter=""; prev=""
-    for a in "\$@"; do [ "\$prev" = "--jq" ] && filter="\$a"; prev="\$a"; done
-    jq -c "\$filter" "$STUB_DIR/comments.json"; exit 0 ;;
+    filter=""; prev=""; pages='.[0:2]'
+    for a in "\$@"; do [ "\$prev" = "--jq" ] && filter="\$a"; [ "\$a" = "--paginate" ] && pages='.'; prev="\$a"; done
+    jq "\$pages" "$STUB_DIR/comments.json" | jq -c "\$filter"; exit 0 ;;
   "api graphql") cat "$STUB_DIR/graphql.json"; exit 0 ;;
 esac
 echo "gh stub: unexpected call \$*" >&2
@@ -106,7 +106,7 @@ REFUSED_AT=2026-11-27T11:00:00Z
 CRWHY="no review on the current head (499b3ea8) — do not merge unreviewed — CodeRabbit refused THIS head as rate limited"
 
 # st <file> <action> <coderabbit_on_head> <retry_at|null> [draft] [has_review_on_head]
-#    [checks_settled] [failing-json]
+#    [checks_settled] [failing-json] [pending]
 st() {
     cat > "$STUB_DIR/$1" <<JSON
 {
@@ -115,7 +115,7 @@ st() {
   "merge_methods": ["merge", "rebase"], "cross_repository": false,
   "author": "me", "headOid": "$HEAD", "head": "feature/x", "base": "main",
   "has_review_on_head": ${6:-false},
-  "checks_settled": ${7:-true}, "checks": {"failing": ${8:-[]}},
+  "checks_settled": ${7:-true}, "checks": {"failing": ${8:-[]}, "pending": ${9:-0}, "not_started_busy_runs": []},
   "coderabbit_on_head": "$3", "coderabbit_retry_at": $4,
   "body_freshness": {"edited_at": "$HEAD_AT", "edited": false, "head_committed_at": "$HEAD_AT", "older_than_head": false},
   "next": {"action": "$2", "why": "$CRWHY", "method": "--merge"}
@@ -124,7 +124,7 @@ JSON
 }
 # The comments the REST read returns, as GitHub sends them: CodeRabbit's
 # summary naming the head, last edited at the refusal, and an operator's
-# request from before the refusal. comment <login> <type> <created> <updated> <body>
+# request from before the refusal. These two are the first page. comment <login> <type> <created> <updated> <body>
 # appends one more.
 comments() {
     cat > "$STUB_DIR/comments.json" <<JSON
@@ -162,7 +162,7 @@ check "exit code" "0" "$rc"
 says  "reports merged" "745 merged (--merge)" "$out"
 check "one request posted" "1" "$(posts)"
 says  "the request is @coderabbitai review on the PR" "pr comment 745 --repo o/r --body @coderabbitai review" "$(cat "$STUB_DIR/posts.log" 2>/dev/null)"
-says  "names the reset it waits for" "sleeping until $RETRY plus 1s" "$err"
+says  "names the reset it waits for" "waiting until $RETRY plus 1s" "$err"
 says  "says it posted" "posted @coderabbitai review for 499b3ea8dead on o/r#745" "$err"
 check "not posted before the reset plus margin" "true" "$([ $((t1 - t0)) -ge 2 ] && echo true || echo false)"
 check "merged once" "1" "$(merges)"
@@ -171,9 +171,9 @@ case "$(sleeps)" in
     *) echo "  FAIL sleeps: expected '<1-3> 20 20', got '$(sleeps)'"; fail=1 ;;
 esac
 
-echo "case 2: a request newer than the head commit and the refusal exists — no second post"
+echo "case 2: a request made after the reset and not answered yet exists (on page 2) — no second post"
 reset; comments
-comment me User 2026-11-27T11:30:00Z 2026-11-27T11:30:00Z "@coderabbitai review"
+comment me User 2026-11-27T11:50:00Z 2026-11-27T11:50:00Z "@coderabbitai review"
 st status.1.json request-review rate-limited '"2026-11-27T11:48:00Z"'
 st status.2.json request-review in-progress null
 st status.json merge clean null false true
@@ -181,14 +181,36 @@ out=$(run --wait --request-coderabbit); rc=$?
 err=$(cat "$STUB_DIR/err")
 check "exit code" "0" "$rc"
 check "nothing posted" "0" "$(posts)"
-says  "says why" "already carries an @coderabbitai review request newer than 499b3ea8dead" "$err"
+says  "says why" "already carries an @coderabbitai review request made after the reset 2026-11-27T11:48:00Z" "$err"
 check "merged once" "1" "$(merges)"
 
-echo "case 2b: no comment names the head; a request older than the head commit does not count"
-reset
-printf '%s\n' '[]' > "$STUB_DIR/comments.json"
-comment coderabbitai[bot] Bot 2026-11-27T08:00:00Z 2026-11-27T08:00:00Z "Review rate limited ... an older head"
-comment me User 2026-11-27T09:30:00Z 2026-11-27T09:30:00Z "@coderabbitai review"
+echo "case 2b: an early request that CodeRabbit refused in a reply — posts after the reset"
+reset; comments
+comment me User 2026-11-27T11:30:00Z 2026-11-27T11:30:00Z "@coderabbitai review"
+comment coderabbitai[bot] Bot 2026-11-27T11:30:05Z 2026-11-27T11:30:40Z "Review rate limited."
+RETRY=$(soon)
+st status.1.json request-review rate-limited "\"$RETRY\""
+st status.2.json request-review rate-limited "\"$RETRY\""
+st status.3.json request-review in-progress null
+st status.json merge clean null false true
+out=$(run --wait --request-coderabbit); rc=$?
+check "exit code" "0" "$rc"
+check "one request posted" "1" "$(posts)"
+
+echo "case 2c: a request after the reset that a CodeRabbit reply answered does not count"
+reset; comments
+comment me User 2026-11-27T11:50:00Z 2026-11-27T11:50:00Z "@coderabbitai review"
+comment coderabbitai[bot] Bot 2026-11-27T11:50:05Z 2026-11-27T11:50:40Z "Review rate limited."
+st status.1.json request-review rate-limited '"2026-11-27T11:48:00Z"'
+st status.2.json request-review in-progress null
+st status.json merge clean null false true
+out=$(run --wait --request-coderabbit); rc=$?
+check "exit code" "0" "$rc"
+check "one request posted" "1" "$(posts)"
+
+echo "case 2d: a request before the reset, with no CodeRabbit comment after it, does not count"
+reset; comments
+comment me User 2026-11-27T11:30:00Z 2026-11-27T11:30:00Z "@coderabbitai review"
 st status.1.json request-review rate-limited '"2026-11-27T11:48:00Z"'
 st status.2.json request-review in-progress null
 st status.json merge clean null false true
@@ -227,8 +249,8 @@ says  "reported there too" "is a draft, and CodeRabbit does not review drafts" "
 
 echo "case 5: checks still running — no request until they settle"
 reset; comments
-st status.1.json request-review rate-limited '"2026-11-27T11:48:00Z"' false false false
-st status.2.json request-review rate-limited '"2026-11-27T11:48:00Z"' false false false
+st status.1.json request-review rate-limited '"2026-11-27T11:48:00Z"' false false false '[]' 1
+st status.2.json request-review rate-limited '"2026-11-27T11:48:00Z"' false false false '[]' 1
 st status.3.json request-review rate-limited '"2026-11-27T11:48:00Z"'
 st status.4.json request-review in-progress null
 st status.json merge clean null false true
@@ -252,6 +274,53 @@ out=$(run --wait --dry-run --request-coderabbit); rc=$?
 check "exit code" "1" "$rc"
 check "nothing posted" "0" "$(posts)"
 check "no sleep" "" "$(sleeps)"
+
+echo "case 10: no checks at all (checks_settled false, nothing pending) — does not hold, posts"
+reset; comments
+st status.1.json request-review rate-limited '"2026-11-27T11:48:00Z"' false false false
+st status.2.json request-review in-progress null
+st status.json merge clean null false true
+out=$(run --wait --request-coderabbit); rc=$?
+check "exit code" "0" "$rc"
+check "posted on the first read" "1" "$(cat "$STUB_DIR/posted_at.log" 2>/dev/null)"
+
+echo "case 11: refused again at the same reset after the post — exit 1 at once"
+reset; comments
+st status.json request-review rate-limited '"2026-11-27T11:48:00Z"'
+out=$(run --wait --request-coderabbit); rc=$?
+err=$(cat "$STUB_DIR/err")
+check "exit code" "1" "$rc"
+check "one request posted" "1" "$(posts)"
+check "one read after the post" "2" "$(wc -l < "$STUB_DIR/json.log" | tr -d ' ')"
+says  "says why" "CodeRabbit refused the @coderabbitai review request for 499b3ea8dead again, and the reset its notice names (2026-11-27T11:48:00Z) has not moved" "$err"
+
+echo "case 12: the gate opens while waiting for a reset 30 minutes off — merges at the next step, no post"
+reset; comments
+FAR=$(date -u -d "@$(( $(date +%s) + 1800 ))" +%Y-%m-%dT%H:%M:%SZ)
+st status.1.json request-review rate-limited "\"$FAR\""
+st status.json merge clean null false true
+out=$(run --wait --request-coderabbit); rc=$?
+check "exit code" "0" "$rc"
+check "nothing posted" "0" "$(posts)"
+check "one step of 120 s, not one sleep to the reset" "120" "$(sleeps)"
+check "merged once" "1" "$(merges)"
+
+echo "case 13: the reset lies past --max-wait — said at once, waits at --interval, no post"
+reset; comments
+FAR=$(date -u -d "@$(( $(date +%s) + 4000 ))" +%Y-%m-%dT%H:%M:%SZ)
+st status.json request-review rate-limited "\"$FAR\""
+out=$(run --wait --request-coderabbit --max-wait 30); rc=$?
+check "exit code" "1" "$rc"
+check "nothing posted" "0" "$(posts)"
+check "--interval steps" "20 10" "$(sleeps)"
+says  "says the reset is out of reach" "past what is left of --max-wait" "$(cat "$STUB_DIR/err")"
+
+echo "case 14: no wait time left at the reset — no post"
+reset; comments
+st status.json request-review rate-limited '"2026-11-27T11:48:00Z"'
+out=$(run --wait --request-coderabbit --max-wait 0); rc=$?
+check "exit code" "1" "$rc"
+check "nothing posted" "0" "$(posts)"
 
 echo "case 8: the post fails — exit 2, tried once"
 reset; comments; touch "$STUB_DIR/comment.fail"
