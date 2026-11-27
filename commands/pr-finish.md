@@ -119,8 +119,11 @@ description, merge only when the gate is open, clean up); only the commands chan
    (see the skill's pull-request-workflow reference, "Arming Gate").
 6. **Post-merge:** confirm any merge-triggered async jobs, and clean up the branch.
 
-No version bumps or CHANGELOG entries in feature PRs. No bot attribution in
-commits or PR bodies. Preserve commit signing.
+No version bumps and no edits to `CHANGELOG.md` in feature PRs. Where the repo has
+`changelog.d/`, the feature PR adds its fragment there as
+`changelog.d/<branch-slug>.<section>.md` (format in that directory's `README.md`);
+the release bump collects the fragments. No bot attribution in commits or PR
+bodies. Preserve commit signing.
 
 If the user named a PR (`$ARGUMENTS`), operate on that one. If the user named a set
 ("all your opened PRs"), operate on every PR of that set, including a PR you open
