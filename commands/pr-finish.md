@@ -120,9 +120,9 @@ description, merge only when the gate is open, clean up); only the commands chan
 6. **Post-merge:** confirm any merge-triggered async jobs, and clean up the branch.
 
 No version bumps and no edits to `CHANGELOG.md` in feature PRs. Where the repo has
-`changelog.d/`, the feature PR adds its fragment there as
-`changelog.d/<branch-slug>.<section>.md` (format in that directory's `README.md`);
-the release bump collects the fragments. No bot attribution in commits or PR
+`changelog.d/`, the feature PR adds its fragment there, named and formatted as that
+directory's `README.md` specifies (for example `<branch-slug>.<section>.md`); the
+release bump collects the fragments. No bot attribution in commits or PR
 bodies. Preserve commit signing.
 
 If the user named a PR (`$ARGUMENTS`), operate on that one. If the user named a set
