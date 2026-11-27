@@ -123,8 +123,11 @@ of this skill still applies.
 ```
 
 It reads `pr-status.sh --json` and refuses unless `NEXT` is `merge`, printing
-the gate that is shut instead. When it does merge it uses the method the
-repository allows and drops `--delete-branch` where a merge queue is active,
+the gate that is shut instead. With `--wait` it re-reads a waiting step
+(`wait`, `await-review`, `await-checks`, `await-capacity`) until it turns into
+`merge` or another step, and waits for a queue entry until it merges, within
+`--max-wait`; see `references/merge-gate-watcher.md` § *Watching a queued
+PR*. When it does merge it uses the method the repository allows and drops `--delete-branch` where a merge queue is active,
 where the head branch lives in a fork (*Taking over a contributor's fork pull
 request* below), or where another open pull request is based on that branch
 (*Stacked PRs: retarget before you merge* below) — it asks
@@ -3461,7 +3464,8 @@ carries `position`, `state` (`QUEUED`, `AWAITING_CHECKS`, `MERGEABLE`,
 `merge_queue` ruleset exists — answers a different question and cannot stand in
 for it. `pr-status.sh` reports both, as `queue=` and an `in queue` line, and
 answers `wait` rather than `merge` while an entry is held; `pr-merge.sh`
-refuses on that same verdict. Enqueueing an entry that already exists only
+refuses on that same verdict, or with `--wait` waits for the entry without
+enqueueing it again. Enqueueing an entry that already exists only
 restarts its checks and pushes the merge further out.
 The exception is an entry that stays `AWAITING_CHECKS` after every queue run
 finished green and nothing is in flight, and every required context reported

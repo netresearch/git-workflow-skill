@@ -41,20 +41,30 @@
 #                                     # the authenticated gh user is not the
 #                                     # PR author (#203).
 #   pr-merge.sh -R owner/repo 123 --wait [--interval 20] [--max-wait 3600]
-#                                     # on a merge queue: stay until the entry
-#                                     # has merged or left the queue, reading
-#                                     # the PR every --interval seconds for at
-#                                     # most --max-wait (plus one read of up to
-#                                     # 15 s), instead of returning at "queued".
+#                                     # stay instead of returning early, for at
+#                                     # most --max-wait seconds in total (plus
+#                                     # one read), reading every --interval:
+#                                     # - while the gate answers a waiting step
+#                                     #   (wait, await-review, await-checks,
+#                                     #   await-capacity), re-read it until it
+#                                     #   answers merge, then merge;
+#                                     # - on a merge queue, until the entry has
+#                                     #   merged or left the queue, also for an
+#                                     #   entry that was queued before this
+#                                     #   call (it is not enqueued again).
+#                                     # With --dry-run nothing is waited for.
 #
 # Exit codes: 0 merged (or queued) AND confirmed by reading the PR back.
-# 1 the gate is shut and nothing was attempted; with --wait also: the entry
-# left the queue unmerged, or was still queued when --max-wait ran out.
+# With --wait, 0 also when the PR merged while the gate was being waited for.
+# 1 the gate is shut and nothing was attempted; with --wait also: the gate
+# turned to a step that is not a waiting one, it still answered a waiting step
+# when --max-wait ran out, the entry left the queue unmerged, or was still
+# queued when --max-wait ran out.
 # 2 an error — usage, lookup, the merge call itself failed, or it exited 0
 # while nothing merged and nothing entered the queue; a merge that would close
 # stacked pull requests (see --retarget-stacked); with --wait also: the last
-# read of the PR failed when --max-wait ran out. 1 is retryable later; 2 needs
-# a human.
+# read of the gate or of the PR failed when --max-wait ran out. 1 is retryable
+# later; 2 needs a human.
 
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: Netresearch DTT GmbH
@@ -143,30 +153,48 @@ command -v gh >/dev/null || die "gh not found"
 command -v jq >/dev/null || die "jq not found"
 [ -x "$SCRIPT_DIR/pr-status.sh" ] || die "pr-status.sh not found next to this script"
 
+# With "soft" (the re-reads of --wait), a failed read returns 1 and leaves
+# every variable as the previous read set it: one failed read is not a gate
+# state. Without it, a failed read ends the script with exit 2.
 read_status() {
-  STATUS=$("$SCRIPT_DIR/pr-status.sh" ${REPO:+-R "$REPO"} ${PR:+"$PR"} --json) \
-    || die "pr-status.sh failed"
+  local soft="${1:-}" st fields a w r p q iq ps m c h b
+  if ! st=$("$SCRIPT_DIR/pr-status.sh" ${REPO:+-R "$REPO"} ${PR:+"$PR"} --json); then
+    [ "$soft" = "soft" ] && return 1
+    die "pr-status.sh failed"
+  fi
 
   # Tab-separated, read with a tab-only IFS: the default IFS splits on spaces
-  # too, which would tear `why` apart, and it collapses an empty field so every
-  # later variable shifts by one. `jq -e` turns a schema change or truncated
-  # output into a failure here rather than an empty ACTION further down.
-  FIELDS=$(printf '%s' "$STATUS" | jq -er '
+  # too, which would tear `why` apart. A tab is still IFS whitespace, so an
+  # empty field collapses and every later variable shifts by one — which is
+  # why the fields that can be empty come last. `jq -e` turns a schema change
+  # or truncated output into a failure here rather than an empty ACTION
+  # further down.
+  if ! fields=$(printf '%s' "$st" | jq -er '
     [ .next.action,
       (.next.why // "-"),
       .repo,
       (.number|tostring),
       (.queue_active|tostring),
+      (.queue_entry != null | tostring),
+      (.state // "-"),
       (.merge_methods|join(",")),
       (.cross_repository|tostring),
       (.head // ""),
       (.base // "")
-    ] | @tsv') || die "pr-status.sh returned unexpected JSON"
+    ] | @tsv'); then
+    [ "$soft" = "soft" ] && return 1
+    die "pr-status.sh returned unexpected JSON"
+  fi
 
-  IFS=$'\t' read -r ACTION WHY REPO PR QUEUE METHODS CROSS HEADREF BASEREF <<EOF
-$FIELDS
+  IFS=$'\t' read -r a w r p q iq ps m c h b <<EOF
+$fields
 EOF
-  [ -n "$ACTION" ] && [ -n "$REPO" ] && [ -n "$PR" ] || die "pr-status.sh returned no action"
+  if [ -z "$a" ] || [ -z "$r" ] || [ -z "$p" ]; then
+    [ "$soft" = "soft" ] && return 1
+    die "pr-status.sh returned no action"
+  fi
+  STATUS=$st; ACTION=$a; WHY=$w; REPO=$r; PR=$p; QUEUE=$q; INQUEUE=$iq
+  PRSTATE=$ps; METHODS=$m; CROSS=$c; HEADREF=$h; BASEREF=$b
 }
 
 read_status
@@ -241,7 +269,175 @@ EOF
   read_status
 fi
 
+OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
+
+outcome() {
+  # --wait passes a bound in seconds: a read that hangs then ends as a failed
+  # read instead of holding the wait past --max-wait. Without timeout(1) (e.g.
+  # stock macOS) the read stays unbounded.
+  local bound=()
+  if [ -n "${1:-}" ] && command -v timeout >/dev/null 2>&1; then
+    bound=(timeout "$1")
+  fi
+  # shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
+  ${bound[@]+"${bound[@]}"} gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
+  query($owner:String!,$name:String!,$pr:Int!){
+    repository(owner:$owner,name:$name){
+      pullRequest(number:$pr){
+        state isInMergeQueue autoMergeRequest{ enabledBy{ login } }
+      }
+    }
+  }' 2>/dev/null
+}
+
+# --wait spends one budget across both waits below — for the gate to open and
+# for a queue entry to merge — so --max-wait bounds the whole call. Two bounds:
+# the sum of the sleeps, which a test can drive, and the wall clock, which also
+# counts the time each read takes. The clock starts with the first wait, so a
+# call that never waits behaves as it did before.
+WAITED=0; DEADLINE=""
+start_wait() { [ -n "$DEADLINE" ] || DEADLINE=$((SECONDS + WAIT_MAX)); }
+# The next sleep: what is left of --max-wait and of the wall-clock deadline,
+# at most --interval. Once either is used up it is 0 or less, which ends the
+# wait.
+next_step() {
+  local step=$WAIT_INTERVAL
+  [ $((WAIT_MAX - WAITED)) -lt "$step" ] && step=$((WAIT_MAX - WAITED))
+  [ $((DEADLINE - SECONDS)) -lt "$step" ] && step=$((DEADLINE - SECONDS))
+  printf '%s\n' "$step"
+}
+
+# The steps pr-status.sh answers while something is still on its way: checks
+# running, a requested bot review not delivered yet, a queue entry, a runner
+# shortage. The same list pr-sweep.sh keeps waiting on.
+is_waiting() {
+  case "$1" in
+    wait|await-review|await-checks|await-capacity) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# wait_in_queue <label>: stay until the queue entry has merged or left the
+# queue, then exit. Returning at "queued" left the wait to the caller, who
+# wrote a poll of their own instead of running the waiter pr-merge.sh names,
+# and that poll read a field gh pr view does not have.
+#
+# This polls the two facts the wait is about, state and isInMergeQueue, and
+# nothing else. pr-status.sh --watch is the wrong waiter here: its NEXT ladder
+# ranks rebase, fix-ci, resolve-threads and address-comments above the
+# queued-entry `wait`, so it returns while the entry is still queued and may
+# still merge (a reviewer's "LGTM" after enqueueing is enough). Once the entry
+# has left the queue, or the wait runs out, pr-status.sh names the next step.
+wait_in_queue() {
+  local label="$1" last_ok=1 out_seen=0 step Q F STATE="" INQ=""
+  start_wait
+  while :; do
+    if Q=$(outcome "$WAIT_READ_MAX") && F=$(printf '%s' "$Q" | jq -er '.data.repository.pullRequest
+          | [ .state, (.isInMergeQueue | tostring) ] | @tsv'); then
+      last_ok=1
+      IFS=$'\t' read -r STATE INQ <<EOF
+$F
+EOF
+      if [ "$STATE" = "MERGED" ]; then
+        printf 'pr-merge: %s#%s merged (%s)\n' "$REPO" "$PR" "$label"
+        exit 0
+      fi
+      if [ "$INQ" != "true" ]; then
+        # GitHub can put a dropped entry back by itself while auto-merge is
+        # still armed (references/merge-gate-watcher.md), and re-queueing by
+        # hand would cancel that run. So a read outside the queue counts only
+        # once the next read confirms it.
+        out_seen=$((out_seen + 1))
+        if [ "$out_seen" -ge 2 ]; then
+          printf 'pr-merge: %s#%s left the merge queue without merging (state=%s); next step:\n' \
+            "$REPO" "$PR" "$STATE" >&2
+          "$SCRIPT_DIR/pr-status.sh" -R "$REPO" "$PR" >&2
+          exit 1
+        fi
+      else
+        out_seen=0
+      fi
+    else
+      # One failed read is not an outcome; the next poll may succeed.
+      last_ok=0
+    fi
+    step=$(next_step)
+    [ "$step" -ge 1 ] || break
+    sleep "$step"
+    WAITED=$((WAITED + step))
+  done
+  if [ "$last_ok" = "0" ]; then
+    printf 'pr-merge: %s#%s: the wait ran out and the last read of the pull request failed; check it before reporting anything:\n    gh pr view %s --repo %s --json state,mergedAt\n' \
+      "$REPO" "$PR" "$PR" "$REPO" >&2
+    exit 2
+  fi
+  if [ "$out_seen" -ge 1 ]; then
+    printf 'pr-merge: %s#%s was outside the merge queue at the last read (state=%s) when the wait ran out; gate:\n' \
+      "$REPO" "$PR" "$STATE" >&2
+  else
+    printf 'pr-merge: %s#%s is still in the merge queue after %ss; gate:\n' "$REPO" "$PR" "$WAIT_MAX" >&2
+  fi
+  "$SCRIPT_DIR/pr-status.sh" -R "$REPO" "$PR" >&2
+  exit 1
+}
+
+# --wait on a waiting step: re-read the gate every --interval seconds until it
+# answers something else. Without this, `--wait` covered only the entry this
+# call itself queued, and every other waiting step — an entry queued earlier,
+# a bot review in flight, a non-required check still running — returned exit
+# 1 at once, so the caller wrote a poll loop of their own (#496).
+#
+# Only the waiting steps are waited out. merge goes on to the merge below; an
+# entry that is already queued goes to wait_in_queue and is not enqueued again
+# (that would restart its checks); any other step is the caller's, and ends
+# the call with exit 1 as without --wait. That includes request-review: the
+# Self-review attestation of --self-reviewed is posted for the head the call
+# started on, and only on the first read, never minted mid-wait for a head the
+# operator may not have seen.
+#
+# A dry run waits for nothing: it reports what the gate answers now.
+GATE_WAITED=0
+if [ "$WAIT" = "1" ] && [ "$DRY" != "1" ] && is_waiting "$ACTION" && [ "$INQUEUE" != "true" ]; then
+  start_wait
+  gate_ok=1; shown=""
+  while :; do
+    if [ "$gate_ok" = "1" ]; then
+      is_waiting "$ACTION" && [ "$INQUEUE" != "true" ] || break
+      if [ "$ACTION: $WHY" != "$shown" ]; then
+        shown="$ACTION: $WHY"
+        printf 'pr-merge: waiting on %s#%s — %s\n' "$REPO" "$PR" "$shown" >&2
+      fi
+    fi
+    step=$(next_step)
+    [ "$step" -ge 1 ] || break
+    sleep "$step"
+    WAITED=$((WAITED + step))
+    GATE_WAITED=1
+    if read_status soft; then gate_ok=1; else gate_ok=0; fi
+  done
+  if [ "$gate_ok" = "0" ]; then
+    printf 'pr-merge: %s#%s: the wait ran out and the last read of the gate failed; read it before reporting anything:\n    pr-status.sh -R %s %s\n' \
+      "$REPO" "$PR" "$REPO" "$PR" >&2
+    exit 2
+  fi
+  if is_waiting "$ACTION" && [ "$INQUEUE" != "true" ]; then
+    printf 'pr-merge: not merging %s#%s — still %s: %s after %ss\n' "$REPO" "$PR" "$ACTION" "$WHY" "$WAIT_MAX" >&2
+    exit 1
+  fi
+fi
+
 if [ "$ACTION" != "merge" ]; then
+  if [ "$WAIT" = "1" ] && [ "$DRY" != "1" ] && [ "$INQUEUE" = "true" ] && is_waiting "$ACTION"; then
+    printf 'pr-merge: %s#%s is already in the merge queue — waiting for it, not enqueueing again: %s\n' \
+      "$REPO" "$PR" "$WHY" >&2
+    wait_in_queue "through the merge queue"
+  fi
+  # Merged by someone else, or by auto-merge, while this call waited for the
+  # gate: the outcome the caller waited for, not a refusal.
+  if [ "$GATE_WAITED" = "1" ] && [ "$PRSTATE" = "MERGED" ]; then
+    printf 'pr-merge: %s#%s merged while waiting for the gate (not by this call)\n' "$REPO" "$PR"
+    exit 0
+  fi
   printf 'pr-merge: not merging %s#%s — %s: %s\n' "$REPO" "$PR" "$ACTION" "$WHY" >&2
   exit 1
 fi
@@ -450,27 +646,7 @@ fi
 # exist and cost hours of misdiagnosis, so the outcome is read back before it is
 # claimed. This script reports; clearing the auto-merge request is the caller's
 # decision, not a side effect of asking to merge.
-OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
-
-outcome() {
-  # --wait passes a bound in seconds: a read that hangs then ends as a failed
-  # read instead of holding the wait past --max-wait. Without timeout(1) (e.g.
-  # stock macOS) the read stays unbounded.
-  local bound=()
-  if [ -n "${1:-}" ] && command -v timeout >/dev/null 2>&1; then
-    bound=(timeout "$1")
-  fi
-  # shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
-  ${bound[@]+"${bound[@]}"} gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
-  query($owner:String!,$name:String!,$pr:Int!){
-    repository(owner:$owner,name:$name){
-      pullRequest(number:$pr){
-        state isInMergeQueue autoMergeRequest{ enabledBy{ login } }
-      }
-    }
-  }' 2>/dev/null
-}
-
+#
 # A queue entry is registered asynchronously, so the first read can legitimately
 # answer false for an entry that lands a second later. The poll is bounded: a PR
 # that has not appeared by then does not appear on its own, and a longer wait
@@ -501,73 +677,7 @@ fi
 if [ "$INQ" = "true" ]; then
   printf 'pr-merge: %s#%s queued (%s, strategy set by the queue)\n' "$REPO" "$PR" "$METHOD"
   if [ "$WAIT" = "1" ]; then
-    # --wait: queueing and waiting in one call. Returning at "queued" left the
-    # wait to the caller, who wrote a poll of their own instead of running the
-    # waiter named below, and that poll read a field gh pr view does not have.
-    #
-    # This polls the two facts the wait is about, state and isInMergeQueue,
-    # and nothing else. pr-status.sh --watch is the wrong waiter here: its NEXT
-    # ladder ranks rebase, fix-ci, resolve-threads and address-comments above
-    # the queued-entry `wait`, so it returns while the entry is still queued
-    # and may still merge (a reviewer's "LGTM" after enqueueing is enough).
-    # Once the entry has left the queue, or the wait runs out, pr-status.sh
-    # names the next step.
-    waited=0; last_ok=1; out_seen=0
-    # Two bounds: the sum of the sleeps, which a test can drive, and the wall
-    # clock, which also counts the time each GraphQL read takes.
-    deadline=$((SECONDS + WAIT_MAX))
-    while :; do
-      if Q=$(outcome "$WAIT_READ_MAX") && F=$(printf '%s' "$Q" | jq -er '.data.repository.pullRequest
-            | [ .state, (.isInMergeQueue | tostring) ] | @tsv'); then
-        last_ok=1
-        IFS=$'\t' read -r STATE INQ <<EOF
-$F
-EOF
-        if [ "$STATE" = "MERGED" ]; then
-          printf 'pr-merge: %s#%s merged (%s, through the merge queue)\n' "$REPO" "$PR" "$METHOD"
-          exit 0
-        fi
-        if [ "$INQ" != "true" ]; then
-          # GitHub can put a dropped entry back by itself while auto-merge is
-          # still armed (references/merge-gate-watcher.md), and re-queueing by
-          # hand would cancel that run. So a read outside the queue counts
-          # only once the next read confirms it.
-          out_seen=$((out_seen + 1))
-          if [ "$out_seen" -ge 2 ]; then
-            printf 'pr-merge: %s#%s left the merge queue without merging (state=%s); next step:\n' \
-              "$REPO" "$PR" "$STATE" >&2
-            "$SCRIPT_DIR/pr-status.sh" -R "$REPO" "$PR" >&2
-            exit 1
-          fi
-        else
-          out_seen=0
-        fi
-      else
-        # One failed read is not an outcome; the next poll may succeed.
-        last_ok=0
-      fi
-      # The step is what is left of --max-wait and of the wall-clock deadline;
-      # once either is used up it is 0 or less, which ends the wait.
-      step=$WAIT_INTERVAL
-      [ $((WAIT_MAX - waited)) -lt "$step" ] && step=$((WAIT_MAX - waited))
-      [ $((deadline - SECONDS)) -lt "$step" ] && step=$((deadline - SECONDS))
-      [ "$step" -ge 1 ] || break
-      sleep "$step"
-      waited=$((waited + step))
-    done
-    if [ "$last_ok" = "0" ]; then
-      printf 'pr-merge: %s#%s: the wait ran out and the last read of the pull request failed; check it before reporting anything:\n    gh pr view %s --repo %s --json state,mergedAt\n' \
-        "$REPO" "$PR" "$PR" "$REPO" >&2
-      exit 2
-    fi
-    if [ "$out_seen" -ge 1 ]; then
-      printf 'pr-merge: %s#%s was outside the merge queue at the last read (state=%s) when the wait ran out; gate:\n' \
-        "$REPO" "$PR" "$STATE" >&2
-    else
-      printf 'pr-merge: %s#%s is still in the merge queue after %ss; gate:\n' "$REPO" "$PR" "$WAIT_MAX" >&2
-    fi
-    "$SCRIPT_DIR/pr-status.sh" -R "$REPO" "$PR" >&2
-    exit 1
+    wait_in_queue "$METHOD, through the merge queue"
   fi
   # Name the waiter at the moment it is needed. Without it the next step was a
   # hand-written poll on `gh pr view --json isInMergeQueue` -- a field that
