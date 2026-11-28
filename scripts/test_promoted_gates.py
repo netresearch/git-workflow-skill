@@ -261,5 +261,73 @@ class UnresolvableSha(unittest.TestCase):
         )
 
 
+class UnresolvableShaOnGitLab(unittest.TestCase):
+    """A glab body names a GitLab project; github.com cannot answer for it.
+
+    As denied on 2026-11-28: a `glab mr note --repo group/project` body named a
+    real commit of a self-hosted GitLab project. The gate asked
+    `gh api repos/group/project/commits/<sha>`, github.com answered 404 for the
+    unknown repository, and the gate called the hash invented.
+    """
+
+    BODY = 'glab mr note 1 --repo group/project -m "fixed in 8e1c9b0"'
+
+    def setUp(self) -> None:
+        self._saved = (hook._resolve_commit, hook._resolve_gitlab_commit)
+
+    def tearDown(self) -> None:
+        hook._resolve_commit, hook._resolve_gitlab_commit = self._saved
+
+    def test_glab_body_is_resolved_on_gitlab(self) -> None:
+        asked = []
+        hook._resolve_commit = lambda repo, token: asked.append("github") or False
+        hook._resolve_gitlab_commit = lambda repo, token: asked.append("gitlab") or True
+        self.assertIsNone(hook.unresolvable_sha(self.BODY))
+        self.assertEqual(asked, ["gitlab"])
+
+    def test_glab_body_with_unknown_hash_is_reported(self) -> None:
+        hook._resolve_commit = lambda repo, token: True
+        hook._resolve_gitlab_commit = lambda repo, token: False
+        self.assertIn("8e1c9b0", hook.unresolvable_sha(self.BODY) or "")
+
+    def test_gh_body_is_still_resolved_on_github(self) -> None:
+        asked = []
+        hook._resolve_commit = lambda repo, token: asked.append("github") or True
+        hook._resolve_gitlab_commit = lambda repo, token: (
+            asked.append("gitlab") or False
+        )
+        self.assertIsNone(
+            hook.unresolvable_sha('gh pr comment 1 --repo o/r --body "in 8e1c9b0"')
+        )
+        self.assertEqual(asked, ["github"])
+
+
+class GitLabCommitLookup(unittest.TestCase):
+    """How the glab answer maps to known, unknown and could-not-check."""
+
+    def _run(self, rc: int, stderr: str):
+        fake = subprocess.CompletedProcess(
+            args=[], returncode=rc, stdout="", stderr=stderr
+        )
+        saved = hook.subprocess.run
+        hook.subprocess.run = lambda *a, **k: fake
+        try:
+            return hook._resolve_gitlab_commit("group/project", "8e1c9b0")
+        finally:
+            hook.subprocess.run = saved
+
+    def test_found(self) -> None:
+        self.assertIs(self._run(0, ""), True)
+
+    def test_unknown_commit(self) -> None:
+        self.assertIs(self._run(1, "glab: 404 Commit Not Found (HTTP 404)"), False)
+
+    def test_unknown_project_is_no_verdict(self) -> None:
+        self.assertIsNone(self._run(1, "glab: 404 Project Not Found (HTTP 404)"))
+
+    def test_auth_failure_is_no_verdict(self) -> None:
+        self.assertIsNone(self._run(1, "glab: 401 Unauthorized (HTTP 401)"))
+
+
 if __name__ == "__main__":
     unittest.main()
