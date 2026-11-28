@@ -62,7 +62,8 @@ chmod +x "$STUB_DIR/pr-status.sh"
 # otherwise it adds the request to comments.json, created now, and with a file
 # named reply also a CodeRabbit reply after it, reading the file's text or, for
 # an empty file, "Review rate limited." (a refusal in a reply). The n-th
-# comment read fails when comments.<n>.fail exists.
+# comment read fails when comments.<n>.fail exists; with comments.slow every
+# comment read takes 4 s of real time.
 cat > "$STUB_DIR/gh" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$1 \$2" >> "$STUB_DIR/calls.log"
@@ -87,6 +88,7 @@ case "\$1 \$2" in
     echo x >> "$STUB_DIR/creads.log"
     cn=\$(wc -l < "$STUB_DIR/creads.log" | tr -d ' ')
     [ -f "$STUB_DIR/comments.fail" ] && { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
+    [ -f "$STUB_DIR/comments.slow" ] && /bin/sleep 4
     [ -f "$STUB_DIR/comments.\$cn.fail" ] && { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
     filter=""; prev=""; pages='.[0:2]'
     for a in "\$@"; do [ "\$prev" = "--jq" ] && filter="\$a"; [ "\$a" = "--paginate" ] && pages='.'; prev="\$a"; done
@@ -110,7 +112,7 @@ chmod +x "$STUB_DIR/sleep"
 
 reset() {
     rm -f "$STUB_DIR"/status*.json "$STUB_DIR"/*.fail "$STUB_DIR/json.log" \
-          "$STUB_DIR/sleep.log" "$STUB_DIR/posts.log" "$STUB_DIR/posted_at.log" "$STUB_DIR/posted_epoch.log" "$STUB_DIR/comments.json" "$STUB_DIR/reply" "$STUB_DIR/creads.log"
+          "$STUB_DIR/sleep.log" "$STUB_DIR/posts.log" "$STUB_DIR/posted_at.log" "$STUB_DIR/posted_epoch.log" "$STUB_DIR/comments.json" "$STUB_DIR/reply" "$STUB_DIR/creads.log" "$STUB_DIR/comments.slow"
     : > "$STUB_DIR/calls.log"
     printf '%s\n' '{"data":{"repository":{"pullRequest":{"state":"MERGED","isInMergeQueue":false,"autoMergeRequest":null}}}}' \
       > "$STUB_DIR/graphql.json"
@@ -428,6 +430,14 @@ out=$(run --wait --request-coderabbit); rc=$?
 check "exit code" "0" "$rc"
 check "one request posted" "1" "$(posts)"
 says  "says it reads again" "whether CodeRabbit refused the request is unknown; reading again at the next step" "$(cat "$STUB_DIR/err")"
+
+echo "case 22: --max-wait runs out during the comment read — no post"
+reset; comments; touch "$STUB_DIR/comments.slow"
+st status.json request-review rate-limited '"2026-11-27T11:48:00Z"'
+out=$(run --wait --request-coderabbit --max-wait 3); rc=$?
+check "exit code" "1" "$rc"
+check "nothing posted" "0" "$(posts)"
+says  "says why" "no @coderabbitai review posted on o/r#745 — --max-wait ran out during the comment read" "$(cat "$STUB_DIR/err")"
 
 echo "case 8: the post fails — exit 2, tried once"
 reset; comments; touch "$STUB_DIR/comment.fail"

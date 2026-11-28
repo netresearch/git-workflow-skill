@@ -584,6 +584,15 @@ cr_request() {
     return 0
   fi
   [ "$CR_ANSWERED" -eq 0 ] || cr_refused_again
+  # The comment read takes time of its own: a request posted after --max-wait
+  # ran out would go unwatched, so the budget is checked again here.
+  local left=$((WAIT_MAX - WAITED))
+  [ $((DEADLINE - SECONDS)) -lt "$left" ] && left=$((DEADLINE - SECONDS))
+  if [ "$left" -lt 1 ]; then
+    printf 'pr-merge: no @coderabbitai review posted on %s#%s — --max-wait ran out during the comment read\n' \
+      "$REPO" "$PR" >&2
+    return 0
+  fi
   err=$(mktemp)
   if ! gh pr comment "$PR" --repo "$REPO" --body '@coderabbitai review' >/dev/null 2>"$err"; then
     why=$(tr '\n' ' ' < "$err"); rm -f "$err"
@@ -634,6 +643,7 @@ if [ "$WAIT" = "1" ] && [ "$DRY" != "1" ] && gate_waitable && [ "$INQUEUE" != "t
         # Posted only while time is left to watch the review it asks for.
         [ "$step" -ge 1 ] || break
         cr_request
+        step=$(next_step)
       elif [ $((CR_TARGET - now)) -ge "$left" ]; then
         if [ "$CR_WAIT_SAID" != "$CR_HEAD $CR_RETRY_AT" ]; then
           CR_WAIT_SAID="$CR_HEAD $CR_RETRY_AT"
