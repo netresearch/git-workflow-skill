@@ -305,7 +305,10 @@ These properties decide whether waiting for CodeRabbit is worth anything:
   dropped the procedure. `pr-status.sh` reads the time from the block and prints
   it as `coderabbit=rate-limited (request again after …)`, and in `--json` as
   `coderabbit_retry_at`. It counts from the summary's last edit, so it can be
-  later than the real reset, never earlier.
+  later than the real reset, never earlier. `pr-merge.sh --wait
+  --request-coderabbit` takes that timer and the one request off your hands
+  (references/merge-gate-watcher.md, *CodeRabbit refused the head as rate
+  limited*).
 
 - **A clean review leaves no review object.** With nothing to report it posts a
   summary comment reading `No actionable comments were generated in the recent

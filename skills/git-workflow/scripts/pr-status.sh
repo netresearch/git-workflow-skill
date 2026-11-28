@@ -68,6 +68,13 @@
 # required checks concluded. Waiting for `pending == 0` means learning nothing
 # until the slowest matrix job ends, long after the first failure was visible.
 #
+# pr-status.sh is read-only on the forge, --watch included: it never posts,
+# requests, resolves or merges; every command it names is printed, not run.
+# A head CodeRabbit refused as rate limited comes back as request-review with
+# the reset to send `@coderabbitai review` after (coderabbit_retry_at); the
+# script that waits for that reset and sends the one request is
+# `pr-merge.sh --wait --request-coderabbit`, not this one.
+#
 # --ignore-action exists for the standing state the first-event rule cannot
 # serve (#165): when `.next.action` is already actionable at invocation and
 # retrying cannot clear it — a request-review made unsatisfiable by an
