@@ -283,7 +283,7 @@ class UnresolvableShaOnGitLab(unittest.TestCase):
         hook._resolve_commit = lambda repo, token: asked.append("github") or False
         hook._resolve_gitlab_commit = lambda repo, token: asked.append("gitlab") or True
         self.assertIsNone(hook.unresolvable_sha(self.BODY))
-        self.assertEqual(asked, ["gitlab"])
+        self.assertEqual(["gitlab"], asked)
 
     def test_glab_body_with_unknown_hash_is_reported(self) -> None:
         hook._resolve_commit = lambda repo, token: True
@@ -299,7 +299,24 @@ class UnresolvableShaOnGitLab(unittest.TestCase):
         self.assertIsNone(
             hook.unresolvable_sha('gh pr comment 1 --repo o/r --body "in 8e1c9b0"')
         )
-        self.assertEqual(asked, ["github"])
+        self.assertEqual(["github"], asked)
+
+    def test_glab_named_inside_a_gh_body_keeps_the_github_lookup(self) -> None:
+        """The CLI that posts decides, not a command quoted in the body."""
+        asked = []
+        hook._resolve_commit = lambda repo, token: asked.append("github") or False
+        hook._resolve_gitlab_commit = lambda repo, token: asked.append("gitlab") or None
+        cmd = 'gh pr comment 1 --repo o/r --body "use glab mr note; fixed in 8e1c9b0"'
+        self.assertIn("8e1c9b0", hook.unresolvable_sha(cmd) or "")
+        self.assertEqual(["github"], asked)
+
+    def test_glab_inside_a_shell_wrapper_is_resolved_on_gitlab(self) -> None:
+        asked = []
+        hook._resolve_commit = lambda repo, token: asked.append("github") or False
+        hook._resolve_gitlab_commit = lambda repo, token: asked.append("gitlab") or True
+        cmd = "bash -c 'glab mr note 1 --repo group/project -m \"fixed in 8e1c9b0\"'"
+        self.assertIsNone(hook.unresolvable_sha(cmd))
+        self.assertEqual(["gitlab"], asked)
 
 
 class GitLabCommitLookup(unittest.TestCase):
@@ -317,10 +334,10 @@ class GitLabCommitLookup(unittest.TestCase):
             hook.subprocess.run = saved
 
     def test_found(self) -> None:
-        self.assertIs(self._run(0, ""), True)
+        self.assertIs(True, self._run(0, ""))
 
     def test_unknown_commit(self) -> None:
-        self.assertIs(self._run(1, "glab: 404 Commit Not Found (HTTP 404)"), False)
+        self.assertIs(False, self._run(1, "glab: 404 Commit Not Found (HTTP 404)"))
 
     def test_unknown_project_is_no_verdict(self) -> None:
         self.assertIsNone(self._run(1, "glab: 404 Project Not Found (HTTP 404)"))

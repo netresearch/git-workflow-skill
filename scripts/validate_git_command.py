@@ -532,6 +532,23 @@ def _resolve_gitlab_commit(repo: str, token: str):
 
 
 GLAB_POSTS_TEXT = re.compile(r"\bglab\s+(?:mr|issue)\s+(?:note|create|update)\b")
+GH_POSTS_TEXT = re.compile(r"\bgh\s+(?:pr|issue|api)\b")
+QUOTED_SPAN = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+
+
+def _posts_on_gitlab(cmd: str) -> bool:
+    """True when glab, not gh, is the CLI that publishes the body.
+
+    Quoted text is a body, so a `glab mr note` quoted inside a gh comment does
+    not count. When the quotes hide every forge call (`bash -c '...'`), the
+    unmasked command decides.
+    """
+    masked = QUOTED_SPAN.sub('""', cmd)
+    if GH_POSTS_TEXT.search(masked):
+        return False
+    if GLAB_POSTS_TEXT.search(masked):
+        return True
+    return bool(GLAB_POSTS_TEXT.search(cmd)) and not GH_POSTS_TEXT.search(cmd)
 
 
 def unresolvable_sha(cmd: str, resolve=None) -> str | None:
@@ -542,9 +559,7 @@ def unresolvable_sha(cmd: str, resolve=None) -> str | None:
     if resolve is None:
         # A glab body names a GitLab project; github.com answers 404 for it,
         # which read as "invented" for every real hash (2026-11-28).
-        resolve = (
-            _resolve_gitlab_commit if GLAB_POSTS_TEXT.search(cmd) else _resolve_commit
-        )
+        resolve = _resolve_gitlab_commit if _posts_on_gitlab(cmd) else _resolve_commit
     m = TARGET_REPO.search(cmd)
     if not m:
         return None
