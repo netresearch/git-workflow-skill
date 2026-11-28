@@ -53,7 +53,7 @@ n=\$(wc -l < "$STUB_DIR/json.log" | tr -d ' ')
 if [ -f "$STUB_DIR/status.\$n.json" ]; then cat "$STUB_DIR/status.\$n.json"; exit 0; fi
 cat "$STUB_DIR/status.json"
 STATUS
-chmod +x "$STUB_DIR/pr-status.sh"
+chmod +x "$STUB_DIR/pr-status.sh" || { echo "setup: cannot make the fake pr-status.sh executable" >&2; exit 2; }
 
 # gh stub: every call is logged. The comment read applies the --jq filter
 # pr-merge.sh passes to comments.json, as GitHub would page it: without
@@ -98,7 +98,7 @@ esac
 echo "gh stub: unexpected call \$*" >&2
 exit 1
 STUB
-chmod +x "$STUB_DIR/gh"
+chmod +x "$STUB_DIR/gh" || { echo "setup: cannot make the fake gh executable" >&2; exit 2; }
 
 # Waits up to 5 s are real, so the time the reset names can pass; longer
 # ones (the --interval waits) are only logged.
@@ -108,7 +108,7 @@ printf '%s\n' "\$1" >> "$STUB_DIR/sleep.log"
 [ "\$1" -le 5 ] && /bin/sleep "\$1"
 exit 0
 SLEEP
-chmod +x "$STUB_DIR/sleep"
+chmod +x "$STUB_DIR/sleep" || { echo "setup: cannot make the fake sleep executable" >&2; exit 2; }
 
 reset() {
     rm -f "$STUB_DIR"/status*.json "$STUB_DIR"/*.fail "$STUB_DIR/json.log" \
