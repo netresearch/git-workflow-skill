@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 
 # Enough of a body to count wrapped lines in; a cap so an accidentally huge
 # file cannot stall the hook.
@@ -505,11 +506,60 @@ def _resolve_commit(repo: str, token: str):
     return None
 
 
-def unresolvable_sha(cmd: str, resolve=_resolve_commit) -> str | None:
+def _resolve_gitlab_commit(repo: str, token: str):
+    """Ask the GitLab instance glab is configured for (GITLAB_HOST).
+
+    True/False when GitLab answered for a project it knows, None when it could
+    not be asked: an unknown project (another host, a typo) or an auth failure
+    says nothing about the hash.
+    """
+    project = urllib.parse.quote(repo, safe="")
+    try:
+        p = subprocess.run(
+            ["glab", "api", f"projects/{project}/repository/commits/{token}"],
+            capture_output=True,
+            timeout=8,
+            check=False,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if p.returncode == 0:
+        return True
+    if "Commit Not Found" in ((p.stderr or "") + (p.stdout or "")):
+        return False
+    return None
+
+
+GLAB_POSTS_TEXT = re.compile(r"\bglab\s+(?:mr|issue)\s+(?:note|create|update)\b")
+GH_POSTS_TEXT = re.compile(r"\bgh\s+(?:pr|issue|api)\b")
+QUOTED_SPAN = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+
+
+def _posts_on_gitlab(cmd: str) -> bool:
+    """True when glab, not gh, is the CLI that publishes the body.
+
+    Quoted text is a body, so a `glab mr note` quoted inside a gh comment does
+    not count. When the quotes hide every forge call (`bash -c '...'`), the
+    unmasked command decides.
+    """
+    masked = QUOTED_SPAN.sub('""', cmd)
+    if GH_POSTS_TEXT.search(masked):
+        return False
+    if GLAB_POSTS_TEXT.search(masked):
+        return True
+    return bool(GLAB_POSTS_TEXT.search(cmd)) and not GH_POSTS_TEXT.search(cmd)
+
+
+def unresolvable_sha(cmd: str, resolve=None) -> str | None:
     """Deny a published body naming a commit the target repo does not know."""
     cmd = QUOTED_HEREDOC.sub(" ", cmd or "")
     if not POSTS_TEXT.search(cmd):
         return None
+    if resolve is None:
+        # A glab body names a GitLab project; github.com answers 404 for it,
+        # which read as "invented" for every real hash (2026-11-28).
+        resolve = _resolve_gitlab_commit if _posts_on_gitlab(cmd) else _resolve_commit
     m = TARGET_REPO.search(cmd)
     if not m:
         return None
