@@ -526,9 +526,9 @@ gate_waitable() {
 # limited" (case-insensitive). Such a comment is the refusal of that request;
 # any other later CodeRabbit write ("Review triggered.", "Review finished.", a
 # chat reply) means it was not refused, and the request stays open.
-# pr-status.sh already reads an open request as in-progress, so the reset
-# filter decides only when the GraphQL read and this REST read disagree (a
-# lagging read): it keeps a request made into the limit, before the reset,
+# pr-status.sh reads a request as in-progress until any CodeRabbit write after
+# it, while this read closes it only on a "rate limited" one; the reset filter
+# matters only when the two reads disagree (a lagging read): it keeps a request made into the limit, before the reset,
 # from counting. A failed read ends the call (exit 2) and is not retried;
 # with "soft" it returns 1 instead and sets nothing.
 cr_comments() {
@@ -615,8 +615,8 @@ if [ "$WAIT" = "1" ] && [ "$DRY" != "1" ] && gate_waitable && [ "$INQUEUE" != "t
     step=$(next_step)
     if [ "$gate_ok" = "1" ] && [ "$CR_STATE" = "retry" ] && [ "$CR_POSTED" = "$CR_HEAD $CR_RETRY_AT" ]; then
       # Requested (by this call or before it) and the gate still shows the
-      # refusal at the same reset. Only a CodeRabbit write after the request
-      # makes that a second refusal; without one the gate read lags the
+      # refusal at the same reset. Only a later CodeRabbit comment saying "rate
+      # limited" makes that a second refusal; without one the gate read lags the
       # request, and the next step reads again (one REST read per such step).
       if cr_comments soft; then
         [ "$CR_OPEN" -eq 0 ] && [ "$CR_ANSWERED" -gt 0 ] && cr_refused_again
